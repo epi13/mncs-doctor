@@ -1,0 +1,44 @@
+mncs 0.16;
+module doctor.transaction.v1;
+
+// doctor.transaction — mutation decision policy in MNCS.
+//
+// The host supplies filesystem facts (existence, symlink identity, regular
+// file kind, and independently computed fingerprints). This module decides
+// whether those facts permit a staged operation. It never performs a write,
+// rename, chmod, or rollback: those remain narrow host mechanisms.
+//
+// Verdicts: 0=allow, 1=identical/no-op, 2=symlink refusal,
+// 3=stale/presence mismatch, 4=non-file refusal.
+
+fn validate_target(
+    expected_present: bool,
+    actual_present: bool,
+    is_symlink: bool,
+    is_file: bool,
+    fingerprint_matches: bool,
+    identical: bool
+) -> (result: u64) {
+    if is_symlink {
+        return 2;
+    }
+    if expected_present {
+        if !actual_present {
+            return 3;
+        }
+        if !is_file {
+            return 4;
+        }
+        if !fingerprint_matches {
+            return 3;
+        }
+        if identical {
+            return 1;
+        }
+        return 0;
+    }
+    if actual_present {
+        return 3;
+    }
+    return 0;
+}

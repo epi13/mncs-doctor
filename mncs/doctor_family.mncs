@@ -1,0 +1,59 @@
+mncs 0.16;
+module doctor.family.v1;
+
+// Freeze root for the production Doctor policy family. The wrappers keep
+// every imported policy module live in one artifact; callers still target the
+// imported doctor.* module identities, not these probe functions.
+use doctor.discovery.v1 as discovery;
+use doctor.edits.v1 as edits;
+use doctor.fix.v1 as fix;
+use doctor.health.v1 as health;
+use doctor.migration.v1 as migration;
+use doctor.report.v1 as report;
+use doctor.scanner.v1 as scanner;
+use doctor.transaction.v1 as transaction;
+use doctor.verify.v1 as verify;
+use doctor.version.v1 as version;
+
+fn discovery_code() -> (result: u64) {
+    return discovery.file_class(0, 1);
+}
+
+fn edits_code() -> (result: u64) {
+    return edits.pair_conflict(1, 4, 3, 6);
+}
+
+fn fix_code() -> (result: u64) {
+    return fix.merge_verdict(0);
+}
+
+fn health_code() -> (result: u64) {
+    return health.combine(1, 2);
+}
+
+fn migration_code() -> (result: i64) {
+    let kinds: [i64; 16] = [0; 16];
+    return migration.plan_verdict(8, 16, kinds, 0);
+}
+
+fn report_code() -> (result: u64) {
+    return report.exit_for(1, false, false, true);
+}
+
+fn scanner_code() -> (result: [u64; 6]) {
+    let bytes: [byte; 1] = [10];
+    let state: [u64; 6] = [0; 6];
+    return scanner.feed(bytes, state);
+}
+
+fn transaction_code() -> (result: u64) {
+    return transaction.validate_target(true, true, false, true, true, false);
+}
+
+fn verify_code() -> (result: u64) {
+    return verify.compose(1, 1, 1);
+}
+
+fn version_code() -> (result: i64) {
+    return version.classify(0, 16, 0, 16);
+}

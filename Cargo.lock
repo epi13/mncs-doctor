@@ -459,7 +459,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "mncs-codegen"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=85051d2a44db77133e831c7cca30eba67123a60b#85051d2a44db77133e831c7cca30eba67123a60b"
+source = "git+https://github.com/epi13/mncs-language?rev=a0255f8405484481b203117a659b0c1ca0fa7a5e#a0255f8405484481b203117a659b0c1ca0fa7a5e"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -478,7 +478,7 @@ dependencies = [
 [[package]]
 name = "mncs-compiler"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=85051d2a44db77133e831c7cca30eba67123a60b#85051d2a44db77133e831c7cca30eba67123a60b"
+source = "git+https://github.com/epi13/mncs-language?rev=a0255f8405484481b203117a659b0c1ca0fa7a5e#a0255f8405484481b203117a659b0c1ca0fa7a5e"
 dependencies = [
  "mncs-codegen",
  "mncs-model",
@@ -502,7 +502,7 @@ dependencies = [
 [[package]]
 name = "mncs-embed"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=85051d2a44db77133e831c7cca30eba67123a60b#85051d2a44db77133e831c7cca30eba67123a60b"
+source = "git+https://github.com/epi13/mncs-language?rev=a0255f8405484481b203117a659b0c1ca0fa7a5e#a0255f8405484481b203117a659b0c1ca0fa7a5e"
 dependencies = [
  "mncs-codegen",
  "mncs-compiler",
@@ -515,7 +515,7 @@ dependencies = [
 [[package]]
 name = "mncs-model"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=85051d2a44db77133e831c7cca30eba67123a60b#85051d2a44db77133e831c7cca30eba67123a60b"
+source = "git+https://github.com/epi13/mncs-language?rev=a0255f8405484481b203117a659b0c1ca0fa7a5e#a0255f8405484481b203117a659b0c1ca0fa7a5e"
 dependencies = [
  "ed25519-dalek",
  "libc",
@@ -528,7 +528,7 @@ dependencies = [
 [[package]]
 name = "mncs-syntax"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=85051d2a44db77133e831c7cca30eba67123a60b#85051d2a44db77133e831c7cca30eba67123a60b"
+source = "git+https://github.com/epi13/mncs-language?rev=a0255f8405484481b203117a659b0c1ca0fa7a5e#a0255f8405484481b203117a659b0c1ca0fa7a5e"
 dependencies = [
  "serde",
  "serde_json",

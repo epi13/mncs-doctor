@@ -19,6 +19,7 @@ pub mod edits;
 pub mod fix;
 pub mod health;
 pub mod migration;
+pub mod mncs_runtime;
 pub mod report;
 pub mod toolchain;
 pub mod transaction;

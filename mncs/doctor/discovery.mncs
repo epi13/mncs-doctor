@@ -1,0 +1,58 @@
+mncs 0.16;
+module doctor.discovery.v1;
+
+// doctor.discovery — classification policy over host directory-entry facts.
+//
+// The host still performs recursive enumeration, metadata acquisition, path
+// joining, cycle identity, and byte reads. Compact name/extension codes are
+// the transport because arbitrary strings and path values are not yet a
+// bounded MNCS boundary. This module decides what those facts mean.
+
+// Directory name codes:
+// 1..17 are the known tool/cache exclusions; 0 is an ordinary name.
+// Verdicts: 0=descend, 1=depth, 2=excluded, 3=cycle, 4=symlink policy.
+fn directory_decision(
+    name_code: u64,
+    extra_excluded: bool,
+    is_symlink: bool,
+    follow_symlink: bool,
+    cycle: bool,
+    depth: u64,
+    max_depth: u64
+) -> (result: u64) {
+    if depth > max_depth {
+        return 1;
+    }
+    if !is_symlink && (extra_excluded || (name_code >= 1 && name_code <= 17)) {
+        return 2;
+    }
+    if is_symlink && cycle {
+        return 3;
+    }
+    if is_symlink && !follow_symlink {
+        return 4;
+    }
+    return 0;
+}
+
+// File name codes: 1=Forge TOML, 2=workspace TOML, 3=Cargo TOML,
+// 4=*.mncs.json. Extension code 1 is `.mncs`. Classes: 0=ignore,
+// 1=source, 2=Forge, 3=workspace, 4=JSON sidecar, 5=Cargo.
+fn file_class(name_code: u64, extension_code: u64) -> (result: u64) {
+    if name_code == 1 {
+        return 2;
+    }
+    if name_code == 2 {
+        return 3;
+    }
+    if name_code == 3 {
+        return 5;
+    }
+    if name_code == 4 {
+        return 4;
+    }
+    if extension_code == 1 {
+        return 1;
+    }
+    return 0;
+}

@@ -20,28 +20,62 @@ use thiserror::Error;
 /// walk-up order from the start directory).
 const ROOT_MARKERS: &[&str] = &["mncs-forge.toml", "mncs-workspace.toml", ".mncs-forge"];
 
-/// Directories never descended into.
-const DEFAULT_EXCLUDED_DIRS: &[&str] = &[
-    ".git",
-    ".hg",
-    ".svn",
-    "target",
-    "node_modules",
-    ".venv",
-    "venv",
-    "__pycache__",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".mypy_cache",
-    "dist",
-    ".worktrees",
-];
-
 /// File extensions inventoried as MNCS sources.
 const SOURCE_EXTENSIONS: &[&str] = &["mncs"];
 
-/// Manifest sidecars inventoried alongside sources.
-const MANIFEST_FILES: &[&str] = &["mncs-forge.toml", "mncs-workspace.toml"];
+/// Facts acquired by the host before MNCS decides whether a directory should
+/// be visited. Names are compact identity codes because arbitrary strings do
+/// not yet cross the bounded value boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectoryFacts {
+    pub name_code: u64,
+    pub extra_excluded: bool,
+    pub is_symlink: bool,
+    pub follow_symlink: bool,
+    pub cycle: bool,
+    pub depth: u64,
+    pub max_depth: u64,
+}
+
+/// MNCS directory policy verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectoryDecision {
+    Descend,
+    SkipDepth,
+    SkipExcluded,
+    SkipCycle,
+    SkipSymlink,
+}
+
+impl DirectoryDecision {
+    fn reason(self) -> &'static str {
+        match self {
+            Self::Descend => "",
+            Self::SkipDepth => "max depth exceeded",
+            Self::SkipExcluded => "excluded directory",
+            Self::SkipCycle => "symlink cycle",
+            Self::SkipSymlink => "symlinked directory (policy=skip)",
+        }
+    }
+}
+
+/// Facts used to classify one regular file or a followed file symlink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileFacts {
+    pub name_code: u64,
+    pub extension_code: u64,
+}
+
+/// MNCS file classification. The host retains path and byte acquisition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileClass {
+    Ignore,
+    Source,
+    ForgeManifest,
+    WorkspaceManifest,
+    ManifestJson,
+    Cargo,
+}
 
 #[derive(Debug, Error)]
 pub enum DiscoveryError {
@@ -53,6 +87,8 @@ pub enum DiscoveryError {
     },
     #[error("workspace root has no file name: {0}")]
     BadRoot(PathBuf),
+    #[error("MNCS discovery policy failed: {0}")]
+    Policy(String),
 }
 
 fn io_err(path: &Path, source: std::io::Error) -> DiscoveryError {
@@ -285,6 +321,20 @@ fn canonicalize(path: &Path) -> Result<PathBuf, DiscoveryError> {
 /// Traversal is deterministic: directory entries are visited in sorted order
 /// and all output vectors are sorted by slash-separated relative path.
 pub fn discover(root: &Path, options: &DiscoveryOptions) -> Result<Inventory, DiscoveryError> {
+    let directory_policy = |facts| Ok(rust_directory_decision(facts));
+    let file_policy = |facts| Ok(rust_file_class(facts));
+    discover_with_policy(root, options, &directory_policy, &file_policy)
+}
+
+/// Discover using explicit host-facts → policy callbacks. Production Doctor
+/// supplies MNCS callbacks; `discover` above keeps an independent Rust
+/// reference policy for differential tests and non-production callers.
+pub fn discover_with_policy(
+    root: &Path,
+    options: &DiscoveryOptions,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+) -> Result<Inventory, DiscoveryError> {
     let mut sources = Vec::new();
     let mut manifests = Vec::new();
     let mut skipped = Vec::new();
@@ -300,6 +350,8 @@ pub fn discover(root: &Path, options: &DiscoveryOptions) -> Result<Inventory, Di
         &mut skipped,
         &mut extension_counts,
         &mut visited,
+        directory_policy,
+        file_policy,
     )?;
     sources.sort_by(|a: &SourceFile, b: &SourceFile| a.relative.cmp(&b.relative));
     manifests.sort_by(|a: &ManifestHit, b: &ManifestHit| a.relative.cmp(&b.relative));
@@ -324,11 +376,23 @@ fn visit_dir(
     skipped: &mut Vec<SkippedDir>,
     extension_counts: &mut BTreeMap<String, u64>,
     visited: &mut Vec<(u64, u64)>,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
 ) -> Result<(), DiscoveryError> {
-    if depth > options.max_depth {
+    let boundary = directory_policy(DirectoryFacts {
+        name_code: 0,
+        extra_excluded: false,
+        is_symlink: false,
+        follow_symlink: false,
+        cycle: false,
+        depth: depth as u64,
+        max_depth: options.max_depth as u64,
+    })
+    .map_err(DiscoveryError::Policy)?;
+    if boundary != DirectoryDecision::Descend {
         skipped.push(SkippedDir {
             relative: rel_string(root, dir),
-            reason: "max depth exceeded".to_owned(),
+            reason: boundary.reason().to_owned(),
         });
         return Ok(());
     }
@@ -351,15 +415,30 @@ fn visit_dir(
                 skipped,
                 extension_counts,
                 visited,
+                directory_policy,
+                file_policy,
             )?;
             continue;
         }
         if file_type.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if is_excluded(&name, options) {
+            let decision = directory_policy(DirectoryFacts {
+                name_code: directory_name_code(&name),
+                extra_excluded: options
+                    .extra_excluded_dirs
+                    .iter()
+                    .any(|excluded| excluded == &name),
+                is_symlink: false,
+                follow_symlink: false,
+                cycle: false,
+                depth: (depth + 1) as u64,
+                max_depth: options.max_depth as u64,
+            })
+            .map_err(DiscoveryError::Policy)?;
+            if decision != DirectoryDecision::Descend {
                 skipped.push(SkippedDir {
                     relative: rel_string(root, &path),
-                    reason: "excluded directory".to_owned(),
+                    reason: decision.reason().to_owned(),
                 });
                 continue;
             }
@@ -373,11 +452,21 @@ fn visit_dir(
                 skipped,
                 extension_counts,
                 visited,
+                directory_policy,
+                file_policy,
             )?;
             continue;
         }
         if file_type.is_file() {
-            record_file(root, &path, false, sources, manifests, extension_counts)?;
+            record_file(
+                root,
+                &path,
+                false,
+                sources,
+                manifests,
+                extension_counts,
+                file_policy,
+            )?;
         }
     }
     Ok(())
@@ -394,19 +483,28 @@ fn handle_symlink(
     skipped: &mut Vec<SkippedDir>,
     extension_counts: &mut BTreeMap<String, u64>,
     visited: &mut Vec<(u64, u64)>,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
 ) -> Result<(), DiscoveryError> {
     let meta = fs::metadata(path);
     match meta {
         Ok(md) if md.is_dir() => {
-            if options.symlink_policy == SymlinkPolicy::Follow {
-                let id = dir_id(&md);
-                if visited.contains(&id) {
-                    skipped.push(SkippedDir {
-                        relative: rel_string(root, path),
-                        reason: "symlink cycle".to_owned(),
-                    });
-                    return Ok(());
-                }
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let id = dir_id(&md);
+            let decision = directory_policy(DirectoryFacts {
+                name_code: directory_name_code(&name),
+                extra_excluded: false,
+                is_symlink: true,
+                follow_symlink: options.symlink_policy == SymlinkPolicy::Follow,
+                cycle: visited.contains(&id),
+                depth: (depth + 1) as u64,
+                max_depth: options.max_depth as u64,
+            })
+            .map_err(DiscoveryError::Policy)?;
+            if decision == DirectoryDecision::Descend {
                 visited.push(id);
                 visit_dir(
                     root,
@@ -418,18 +516,28 @@ fn handle_symlink(
                     skipped,
                     extension_counts,
                     visited,
+                    directory_policy,
+                    file_policy,
                 )?;
             } else {
                 skipped.push(SkippedDir {
                     relative: rel_string(root, path),
-                    reason: "symlinked directory (policy=skip)".to_owned(),
+                    reason: decision.reason().to_owned(),
                 });
             }
             Ok(())
         }
         Ok(md) if md.is_file() => {
             if options.follow_file_symlinks {
-                record_file(root, path, true, sources, manifests, extension_counts)?;
+                record_file(
+                    root,
+                    path,
+                    true,
+                    sources,
+                    manifests,
+                    extension_counts,
+                    file_policy,
+                )?;
             } else {
                 skipped.push(SkippedDir {
                     relative: rel_string(root, path),
@@ -459,35 +567,68 @@ fn dir_id(_md: &fs::Metadata) -> (u64, u64) {
     (0, 0)
 }
 
-fn is_excluded(name: &str, options: &DiscoveryOptions) -> bool {
-    if DEFAULT_EXCLUDED_DIRS.contains(&name) {
-        return true;
+fn rust_directory_decision(facts: DirectoryFacts) -> DirectoryDecision {
+    if facts.depth > facts.max_depth {
+        return DirectoryDecision::SkipDepth;
     }
-    if name.starts_with('.') && name.len() > 1 && is_hidden_excluded(name) {
-        return true;
+    if !facts.is_symlink && (facts.extra_excluded || is_excluded_name_code(facts.name_code)) {
+        return DirectoryDecision::SkipExcluded;
     }
-    options.extra_excluded_dirs.iter().any(|d| d == name)
+    if facts.is_symlink && facts.cycle {
+        return DirectoryDecision::SkipCycle;
+    }
+    if facts.is_symlink && !facts.follow_symlink {
+        return DirectoryDecision::SkipSymlink;
+    }
+    DirectoryDecision::Descend
 }
 
-/// Hidden directories are excluded only when they are known tool caches, not
-/// unconditionally: `.mncs-forge` and `.mncs` carry project meaning and must
-/// be traversed.
-fn is_hidden_excluded(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | ".hg"
-            | ".svn"
-            | ".venv"
-            | ".tox"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | ".worktrees"
-            | ".idea"
-            | ".vscode"
-            | ".atlas-joern-baseline"
-    )
+fn rust_file_class(facts: FileFacts) -> FileClass {
+    match facts.name_code {
+        1 => FileClass::ForgeManifest,
+        2 => FileClass::WorkspaceManifest,
+        3 => FileClass::Cargo,
+        4 => FileClass::ManifestJson,
+        _ if facts.extension_code == 1 => FileClass::Source,
+        _ => FileClass::Ignore,
+    }
+}
+
+fn directory_name_code(name: &str) -> u64 {
+    match name {
+        ".git" => 1,
+        ".hg" => 2,
+        ".svn" => 3,
+        "target" => 4,
+        "node_modules" => 5,
+        "venv" => 6,
+        "__pycache__" => 7,
+        ".pytest_cache" => 8,
+        ".ruff_cache" => 9,
+        ".mypy_cache" => 10,
+        "dist" => 11,
+        ".worktrees" => 12,
+        ".tox" => 13,
+        ".idea" => 14,
+        ".vscode" => 15,
+        ".atlas-joern-baseline" => 16,
+        ".venv" => 17,
+        _ => 0,
+    }
+}
+
+fn is_excluded_name_code(code: u64) -> bool {
+    (1..=17).contains(&code)
+}
+
+fn file_name_code(name: &str) -> u64 {
+    match name {
+        "mncs-forge.toml" => 1,
+        "mncs-workspace.toml" => 2,
+        "Cargo.toml" => 3,
+        _ if name.ends_with(".mncs.json") => 4,
+        _ => 0,
+    }
 }
 
 fn record_file(
@@ -497,6 +638,7 @@ fn record_file(
     sources: &mut Vec<SourceFile>,
     manifests: &mut Vec<ManifestHit>,
     extension_counts: &mut BTreeMap<String, u64>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
 ) -> Result<(), DiscoveryError> {
     let name = path
         .file_name()
@@ -508,50 +650,47 @@ fn record_file(
         .unwrap_or_default();
     *extension_counts.entry(ext.clone()).or_insert(0) += 1;
 
-    if MANIFEST_FILES.contains(&name.as_str()) {
-        manifests.push(ManifestHit {
-            path: path.to_path_buf(),
-            relative: rel_string(root, path),
-            kind: if name == "mncs-forge.toml" {
-                ManifestKind::Forge
-            } else {
-                ManifestKind::Workspace
-            },
-        });
-        return Ok(());
-    }
-    if name == "Cargo.toml" {
-        manifests.push(ManifestHit {
-            path: path.to_path_buf(),
-            relative: rel_string(root, path),
-            kind: ManifestKind::Cargo,
-        });
-        return Ok(());
-    }
-    if name.ends_with(".mncs.json") {
-        manifests.push(ManifestHit {
-            path: path.to_path_buf(),
-            relative: rel_string(root, path),
-            kind: ManifestKind::ManifestJson,
-        });
-        return Ok(());
-    }
-    if SOURCE_EXTENSIONS.contains(&ext.as_str()) {
-        let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
-        let mode = file_mode(path);
-        let text = String::from_utf8(bytes.clone()).ok();
-        sources.push(SourceFile {
-            relative: rel_string(root, path),
-            path: path.to_path_buf(),
-            sha256: fingerprint(&bytes),
-            len: bytes.len() as u64,
-            newline: detect_newline(&bytes),
-            has_bom: bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
-            mode,
-            is_symlink,
-            bytes,
-            text,
-        });
+    let class = file_policy(FileFacts {
+        name_code: file_name_code(&name),
+        extension_code: u64::from(SOURCE_EXTENSIONS.contains(&ext.as_str())),
+    })
+    .map_err(DiscoveryError::Policy)?;
+    match class {
+        FileClass::ForgeManifest
+        | FileClass::WorkspaceManifest
+        | FileClass::ManifestJson
+        | FileClass::Cargo => {
+            let kind = match class {
+                FileClass::ForgeManifest => ManifestKind::Forge,
+                FileClass::WorkspaceManifest => ManifestKind::Workspace,
+                FileClass::ManifestJson => ManifestKind::ManifestJson,
+                FileClass::Cargo => ManifestKind::Cargo,
+                _ => unreachable!(),
+            };
+            manifests.push(ManifestHit {
+                path: path.to_path_buf(),
+                relative: rel_string(root, path),
+                kind,
+            });
+        }
+        FileClass::Source => {
+            let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
+            let mode = file_mode(path);
+            let text = String::from_utf8(bytes.clone()).ok();
+            sources.push(SourceFile {
+                relative: rel_string(root, path),
+                path: path.to_path_buf(),
+                sha256: fingerprint(&bytes),
+                len: bytes.len() as u64,
+                newline: detect_newline(&bytes),
+                has_bom: bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
+                mode,
+                is_symlink,
+                bytes,
+                text,
+            });
+        }
+        FileClass::Ignore => {}
     }
     Ok(())
 }

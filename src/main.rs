@@ -13,19 +13,21 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode as ProcExit;
 
-use mncs_doctor::diagnostics::{scan_header, LanguageBackend, ScannerBackend};
-use mncs_doctor::discovery::{discover, find_root, DiscoveryOptions, SourceFile};
+use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
+use mncs_doctor::discovery::{discover_with_policy, find_root, DiscoveryOptions, SourceFile};
 use mncs_doctor::fix::{
-    default_providers, plan_workspace, repair_to_fixpoint, union_apply, Eligibility,
+    default_providers, plan_workspace_with_mncs_policy, repair_to_fixpoint_with_diagnose,
+    union_apply_with_mncs, Eligibility,
 };
-use mncs_doctor::health::{run_all_checks, HealthContext};
+use mncs_doctor::health::{run_all_checks, CheckResult, HealthContext, Status};
 use mncs_doctor::migration::{
     apply_plan, default_registry, plan as plan_migration, resolve_target,
 };
-use mncs_doctor::report::{exit_for, render_human, ExitCode, Report};
+use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
+use mncs_doctor::report::{render_human, ExitCode, Report};
 use mncs_doctor::toolchain::{find_rust_cli, probe_toolchain, RustCliBackend};
 use mncs_doctor::transaction::{summarize_diff, CommitReport, FileOp, Transaction};
-use mncs_doctor::verify::{run_external, verify_after, ExternalCheck};
+use mncs_doctor::verify::{run_external, verify_after_with_diagnostics, ExternalCheck};
 use mncs_doctor::{DOCTOR_VERSION, REPORT_SCHEMA_VERSION};
 
 fn main() -> ProcExit {
@@ -100,11 +102,33 @@ fn workspace_root(flag: &Option<PathBuf>) -> Result<PathBuf, String> {
     find_root(&start).map_err(|e| format!("cannot locate workspace root: {e}"))
 }
 
-fn diagnose_all(
+fn discover_with_mncs_policy(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    policy: &DoctorMncsRuntime,
+) -> Result<mncs_doctor::discovery::Inventory, String> {
+    discover_with_policy(
+        root,
+        options,
+        &|facts| {
+            policy
+                .discovery_directory_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_file_class(facts)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn diagnose_all_with_mncs_policy(
     sources: &[SourceFile],
     with_backend: bool,
-) -> BTreeMap<String, Vec<mncs_doctor::diagnostics::Diagnostic>> {
-    let scanner = ScannerBackend;
+    policy: &DoctorMncsRuntime,
+) -> Result<BTreeMap<String, Vec<mncs_doctor::diagnostics::Diagnostic>>, String> {
     let rust_backend = if with_backend {
         find_rust_cli().map(|exe| RustCliBackend { exe })
     } else {
@@ -112,7 +136,7 @@ fn diagnose_all(
     };
     let mut map = BTreeMap::new();
     for file in sources {
-        let mut diags = scanner.diagnose(file);
+        let mut diags = diagnose_one_with_mncs_policy(file, policy)?;
         if let Some(backend) = &rust_backend {
             diags.extend(backend.diagnose(file));
         }
@@ -121,7 +145,32 @@ fn diagnose_all(
         });
         map.insert(file.relative.clone(), diags);
     }
-    map
+    Ok(map)
+}
+
+fn diagnose_one_with_mncs_policy(
+    file: &SourceFile,
+    policy: &DoctorMncsRuntime,
+) -> Result<Vec<Diagnostic>, String> {
+    let scanner = ScannerBackend;
+    let scan = policy
+        .scan_bytes(&file.bytes)
+        .map_err(|error| format!("MNCS byte scanner failed for {}: {error}", file.relative))?;
+    let mut scanned_file = file.clone();
+    scanned_file.has_bom = scan.has_bom;
+    scanned_file.newline = scan.newline;
+    scanner
+        .diagnose_with_version_classifier(&scanned_file, |version| {
+            policy
+                .classify_version(version)
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| {
+            format!(
+                "MNCS diagnostic policy failed for {}: {error}",
+                file.relative
+            )
+        })
 }
 
 fn emit(report: &Report, json: bool, quiet: bool) {
@@ -137,6 +186,22 @@ fn report_print_explain(report: &Report) -> bool {
     report.notes.iter().any(|n| n == "explain")
 }
 
+fn migration_policy_check(unmigratable: &[String], fully_known: bool) -> CheckResult {
+    let (status, title) = if !unmigratable.is_empty() {
+        (Status::Fail, "Migration path has unplannable files")
+    } else if !fully_known {
+        (Status::Warning, "Migration path contains unknown edges")
+    } else {
+        (Status::Pass, "Migration path is fully known")
+    };
+    CheckResult {
+        id: "migration-path".to_owned(),
+        title: title.to_owned(),
+        status,
+        findings: Vec::new(),
+    }
+}
+
 fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
     let mut rest = Vec::new();
     let flags = parse_globals(args, 0, &mut rest)?;
@@ -148,17 +213,24 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let _ = check_only; // doctor never mutates; --check selects CI-oriented wording
+    let policy = DoctorMncsRuntime::production()
+        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("discovery failed: {e}"))?;
-    let diags = diagnose_all(&inventory.sources, flags.with_language_backend);
+    let options = DiscoveryOptions::default();
+    let inventory = discover_with_mncs_policy(&root, &options, policy)
+        .map_err(|error| format!("discovery failed: {error}"))?;
+    let diags =
+        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
     let toolchain = probe_toolchain();
     let ctx = HealthContext {
         inventory: &inventory,
         diagnostics: &diags,
         toolchain: &toolchain,
     };
-    let checks = run_all_checks(&ctx);
+    let mut checks = run_all_checks(&ctx);
+    policy
+        .apply_health_policy(&mut checks)
+        .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
     let review_blocked = diags.values().flatten().any(|d| {
         matches!(
             d.applicability,
@@ -168,12 +240,19 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
             mncs_doctor::diagnostics::Severity::Error | mncs_doctor::diagnostics::Severity::Warning
         )
     });
-    let code = exit_for(&checks, review_blocked, None);
+    let code = policy
+        .exit_for(&checks, review_blocked, None)
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
     let mut report = Report::new("doctor", root.to_string_lossy());
     report.inventory = Some(inventory.summary());
     report.checks = checks;
     report.file_diagnostics = diags;
     report.toolchain = Some(toolchain);
+    report.policy = Some(
+        policy
+            .provenance()
+            .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
+    );
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
     if flags.explain {
@@ -219,12 +298,17 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     } else {
         Eligibility::with_proven()
     };
+    let policy = DoctorMncsRuntime::production()
+        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("discovery failed: {e}"))?;
-    let diags = diagnose_all(&inventory.sources, flags.with_language_backend);
+    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
+        .map_err(|error| format!("discovery failed: {error}"))?;
+    let diags =
+        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
     let providers = default_providers();
-    let workspace = plan_workspace(&inventory.sources, &diags, &providers, eligibility);
+    let workspace =
+        plan_workspace_with_mncs_policy(&inventory.sources, &diags, &providers, eligibility)
+            .map_err(|error| format!("MNCS fix planning failed (fail-closed): {error}"))?;
     let plans = workspace.plans;
     let blocked_review = workspace.blocked_review;
     let blocked_manual = workspace.blocked_manual;
@@ -236,8 +320,12 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     report.toolchain = Some(probe_toolchain());
     for (file, plan) in &plans {
         let base = file.text.as_deref().unwrap_or("");
-        let next = union_apply(plan, base)
-            .ok_or_else(|| format!("internal error: plan failed for {}", file.relative))?;
+        let next = union_apply_with_mncs(plan, base).map_err(|error| {
+            format!(
+                "MNCS fix plan failed for {} (fail-closed): {error}",
+                file.relative
+            )
+        })?;
         report
             .planned_diffs
             .push(summarize_diff(&file.relative, base, &next));
@@ -258,7 +346,17 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
             toolchain: &toolchain,
         };
         report.checks = run_all_checks(&ctx);
-        let code = exit_for(&report.checks, blocked_review + blocked_manual > 0, None);
+        policy
+            .apply_health_policy(&mut report.checks)
+            .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
+        let code = policy
+            .exit_for(&report.checks, blocked_review + blocked_manual > 0, None)
+            .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+        report.policy = Some(
+            policy
+                .provenance()
+                .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
+        );
         report.exit_code = code.as_i32();
         report.exit_meaning = exit_meaning(code).to_owned();
         emit(&report, flags.json, flags.quiet);
@@ -269,8 +367,12 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let mut tx = Transaction::new();
     for (file, plan) in &plans {
         let base = file.text.as_deref().unwrap_or("");
-        let next = union_apply(plan, base)
-            .ok_or_else(|| format!("internal error: plan failed for {}", file.relative))?;
+        let next = union_apply_with_mncs(plan, base).map_err(|error| {
+            format!(
+                "MNCS fix plan failed for {} (fail-closed): {error}",
+                file.relative
+            )
+        })?;
         tx.push(FileOp {
             relative: file.relative.clone(),
             old_fingerprint: Some(file.sha256.clone()),
@@ -300,17 +402,33 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     }
 
     // Re-read and verify: full convergence check + re-diagnose.
-    let fresh = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("re-discovery failed: {e}"))?;
-    let fresh_diags = diagnose_all(&fresh.sources, flags.with_language_backend);
+    let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
+        .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh_diags =
+        diagnose_all_with_mncs_policy(&fresh.sources, flags.with_language_backend, policy)?;
     // Convergence evidence: re-running the full repair loop over the
     // committed tree must reach an immediate fixpoint with nothing applied.
     let mut idempotent = true;
     let converged_providers = default_providers();
     for file in &fresh.sources {
         if file.text.is_some() {
-            let (_, conv) =
-                repair_to_fixpoint(file, &ScannerBackend, &converged_providers, eligibility);
+            let (_, conv) = repair_to_fixpoint_with_diagnose(
+                file,
+                &converged_providers,
+                eligibility,
+                &|planned_empty, fired_before, iterations, budget| {
+                    policy
+                        .fix_stop_rule(planned_empty, fired_before, iterations, budget)
+                        .map_err(|error| error.to_string())
+                },
+                &|fired, id| {
+                    policy
+                        .fix_seen_before(fired, id)
+                        .map_err(|error| error.to_string())
+                },
+                &|current| diagnose_one_with_mncs_policy(current, policy),
+            )
+            .map_err(|error| format!("MNCS fix policy failed (fail-closed): {error}"))?;
             if !conv.applied.is_empty() || conv.stopped != mncs_doctor::fix::StopReason::Fixpoint {
                 idempotent = false;
             }
@@ -323,13 +441,22 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let external: Vec<ExternalCheck> = verify_cmd
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
-    let verification = verify_after(
-        &fresh.sources,
-        &ScannerBackend,
+    let mut verification = verify_after_with_diagnostics(
+        fresh.sources.len(),
         &diags,
+        &fresh_diags,
         Some(idempotent),
         external,
     );
+    let external_pass = verification.external.iter().all(|check| check.success);
+    verification.passed = policy
+        .verify_compose(
+            verification.errors_before,
+            verification.errors_after,
+            verification.idempotent.unwrap_or(true),
+            external_pass,
+        )
+        .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
     report.verification = Some(verification);
     let toolchain = probe_toolchain();
     let ctx = HealthContext {
@@ -339,10 +466,20 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     };
     report.checks = run_all_checks(&ctx);
     report.toolchain = Some(toolchain);
-    let code = exit_for(
-        &report.checks,
-        blocked_review + blocked_manual > 0,
-        report.verification.as_ref(),
+    policy
+        .apply_health_policy(&mut report.checks)
+        .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
+    let code = policy
+        .exit_for(
+            &report.checks,
+            blocked_review + blocked_manual > 0,
+            report.verification.as_ref(),
+        )
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+    report.policy = Some(
+        policy
+            .provenance()
+            .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
     );
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
@@ -390,6 +527,8 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     let target_raw = target.ok_or("migrate requires --to <version|latest>")?;
     let target_version =
         resolve_target(&target_raw).map_err(|e| format!("bad migration target: {e}"))?;
+    let policy = DoctorMncsRuntime::production()
+        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let mut registry = default_registry();
     if let Some(path) = &registry_path {
         let json = std::fs::read_to_string(path)
@@ -401,9 +540,10 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let root = workspace_root(&flags.root)?;
-    let inventory = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("discovery failed: {e}"))?;
-    let diags = diagnose_all(&inventory.sources, flags.with_language_backend);
+    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
+        .map_err(|error| format!("discovery failed: {error}"))?;
+    let diags =
+        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
 
     // Per-file: declared version -> plan to target.
     let mut report = Report::new("migrate", root.to_string_lossy());
@@ -426,7 +566,37 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
             continue;
         };
         match plan_migration(from, target_version, &registry) {
-            Ok(plan) => file_plans.push((file.clone(), plan)),
+            Ok(plan) => {
+                let kinds: Vec<i64> = plan
+                    .steps
+                    .iter()
+                    .map(|step| match step.kind {
+                        mncs_doctor::migration::TransitionKind::Noop => 0,
+                        mncs_doctor::migration::TransitionKind::Metadata => 1,
+                        mncs_doctor::migration::TransitionKind::Source => 2,
+                        mncs_doctor::migration::TransitionKind::Unknown => 3,
+                    })
+                    .collect();
+                let observed = policy
+                    .migration_plan_verdict(from, target_version, &kinds)
+                    .map_err(|error| {
+                        format!("MNCS migration policy failed (fail-closed): {error}")
+                    })?;
+                let expected = if plan.is_noop {
+                    1
+                } else if !plan.fully_known {
+                    4
+                } else {
+                    0
+                };
+                if observed != expected {
+                    return Err(format!(
+                        "MNCS/Rust migration verdict mismatch for {}: MNCS={observed}, reference={expected}",
+                        file.relative
+                    ));
+                }
+                file_plans.push((file.clone(), plan));
+            }
             Err(e) => unmigratable.push(format!("{}: {e}", file.relative)),
         }
     }
@@ -487,12 +657,20 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         if flags.explain {
             report.notes.push("explain".to_owned());
         }
-        let code = if unmigratable.is_empty() && fully_known {
-            ExitCode::Healthy
-        } else if fully_known {
+        let migration_check = migration_policy_check(&unmigratable, fully_known);
+        report.checks.push(migration_check.clone());
+        let code = policy
+            .exit_for(&[migration_check], !fully_known, None)
+            .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+        report.policy = Some(
+            policy
+                .provenance()
+                .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
+        );
+        let code = if code == ExitCode::Healthy && !unmigratable.is_empty() {
             ExitCode::Findings
         } else {
-            ExitCode::ReviewRequired
+            code
         };
         report.exit_code = code.as_i32();
         report.exit_meaning = exit_meaning(code).to_owned();
@@ -537,9 +715,10 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     if flags.explain {
         report.notes.push("explain".to_owned());
     }
-    let fresh = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("re-discovery failed: {e}"))?;
-    let fresh_diags = diagnose_all(&fresh.sources, flags.with_language_backend);
+    let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
+        .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh_diags =
+        diagnose_all_with_mncs_policy(&fresh.sources, flags.with_language_backend, policy)?;
     report.file_diagnostics = fresh_diags.clone();
     let fresh_toolchain = probe_toolchain();
     report.checks = run_all_checks(&HealthContext {
@@ -567,20 +746,45 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     let external: Vec<ExternalCheck> = verify_cmd
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
-    let verification = verify_after(
-        &fresh.sources,
-        &ScannerBackend,
+    let mut verification = verify_after_with_diagnostics(
+        fresh.sources.len(),
         &diags,
+        &fresh_diags,
         Some(idempotent),
         external,
     );
+    let external_pass = verification.external.iter().all(|check| check.success);
+    verification.passed = policy
+        .verify_compose(
+            verification.errors_before,
+            verification.errors_after,
+            verification.idempotent.unwrap_or(true),
+            external_pass,
+        )
+        .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
     report.verification = Some(verification);
-    let code = exit_for(&[], false, report.verification.as_ref());
+    policy
+        .apply_health_policy(&mut report.checks)
+        .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
+    let migration_check = migration_policy_check(&unmigratable, fully_known);
+    report.checks.push(migration_check.clone());
+    let code = policy
+        .exit_for(
+            &[migration_check],
+            !fully_known,
+            report.verification.as_ref(),
+        )
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
     let code = if code == ExitCode::Healthy && !unmigratable.is_empty() {
         ExitCode::Findings
     } else {
         code
     };
+    report.policy = Some(
+        policy
+            .provenance()
+            .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
+    );
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
     emit(&report, flags.json, flags.quiet);
@@ -598,16 +802,29 @@ fn cmd_verify(args: &[String]) -> Result<ExitCode, String> {
             return Err(format!("verify: unexpected argument {arg:?}"));
         }
     }
+    let policy = DoctorMncsRuntime::production()
+        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover(&root, &DiscoveryOptions::default())
-        .map_err(|e| format!("discovery failed: {e}"))?;
-    let diags = diagnose_all(&inventory.sources, flags.with_language_backend);
+    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
+        .map_err(|error| format!("discovery failed: {error}"))?;
+    let diags =
+        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
     let external: Vec<ExternalCheck> = verify_cmd
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
     // Standalone verify judges the current tree against itself: the verdict
     // is about *new* breakage, so the pre-map is the present diagnosis.
-    let verification = verify_after(&inventory.sources, &ScannerBackend, &diags, None, external);
+    let mut verification =
+        verify_after_with_diagnostics(inventory.sources.len(), &diags, &diags, None, external);
+    let external_pass = verification.external.iter().all(|check| check.success);
+    verification.passed = policy
+        .verify_compose(
+            verification.errors_before,
+            verification.errors_after,
+            true,
+            external_pass,
+        )
+        .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
     // Standalone verify passes on zero errors; pre-existing diagnostics are
     // reported as findings, not as verification failure, unless errors exist.
     let errors: usize = diags
@@ -623,11 +840,19 @@ fn cmd_verify(args: &[String]) -> Result<ExitCode, String> {
     if flags.explain {
         report.notes.push("explain".to_owned());
     }
-    let code = match &report.verification {
-        Some(v) if !v.external.iter().all(|c| c.success) => ExitCode::VerificationFailed,
-        _ if errors > 0 => ExitCode::Findings,
-        _ => ExitCode::Healthy,
+    let code = policy
+        .exit_for(&[], false, report.verification.as_ref())
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+    let code = if code == ExitCode::Healthy && errors > 0 {
+        ExitCode::Findings
+    } else {
+        code
     };
+    report.policy = Some(
+        policy
+            .provenance()
+            .map_err(|error| format!("MNCS provenance unavailable (fail-closed): {error}"))?,
+    );
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
     emit(&report, flags.json, flags.quiet);
