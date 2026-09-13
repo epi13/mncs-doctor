@@ -1,0 +1,6 @@
+mncs 0.16;
+module outdated.messy;  
+
+fn run() -> (result: i64) {   
+    return 3;  
+}  

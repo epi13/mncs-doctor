@@ -1,0 +1,27 @@
+[package]
+name = "mncs-doctor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/epi13/mncs-doctor"
+description = "MNCS repository diagnostics, automated repair, and version-aware source migration tooling."
+keywords = ["mncs", "diagnostics", "migration", "refactoring", "tooling"]
+categories = ["development-tools"]
+
+[lib]
+name = "mncs_doctor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mncs-doctor"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 2

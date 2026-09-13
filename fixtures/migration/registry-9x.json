@@ -1,0 +1,31 @@
+{
+  "provenance": "mncs-doctor fixtures: synthetic 9.x transition line for engine validation (never real profiles)",
+  "transitions": [
+    {
+      "id": { "from": { "major": 9, "minor": 0 }, "to": { "major": 9, "minor": 1 } },
+      "kind": "source",
+      "title": "9.0 -> 9.1: rename oldfn to newfn (fixture)",
+      "description": "Synthetic fixture transition for engine validation.",
+      "applicability": "safe",
+      "provenance": "fixture/synthetic-rename",
+      "transforms": [
+        {
+          "id": "rename-oldfn",
+          "title": "Rename oldfn to newfn",
+          "review_required": false,
+          "detail": "Fixture-only construct rename.",
+          "op": { "replace_all": { "needle": "oldfn", "replacement": "newfn" } }
+        }
+      ]
+    },
+    {
+      "id": { "from": { "major": 9, "minor": 1 }, "to": { "major": 9, "minor": 2 } },
+      "kind": "noop",
+      "title": "9.1 -> 9.2: no source changes (fixture)",
+      "description": "Synthetic no-op edge.",
+      "applicability": "safe",
+      "provenance": "fixture/synthetic-noop",
+      "transforms": []
+    }
+  ]
+}

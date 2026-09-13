@@ -1,0 +1,6 @@
+mncs 0.15;
+module outdated.legacy;
+
+fn value() -> (result: i64) {
+    return 7;
+}

@@ -1,0 +1,6 @@
+mncs 0.16;
+module healthy.lib;
+
+fn answer() -> (result: i64) {
+    return 42;
+}

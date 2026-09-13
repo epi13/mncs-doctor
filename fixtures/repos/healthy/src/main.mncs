@@ -1,0 +1,8 @@
+mncs 0.16;
+module healthy.main;
+
+use healthy.lib;
+
+fn run() -> (result: i64) {
+    return lib.answer();
+}
