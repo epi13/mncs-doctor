@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-transaction-backend-v1",
+  "cases": [
+    {
+      "id": "changed-existing-file",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.transaction.v1", "function": "validate_target"},
+        "arguments": [
+          {"boolean": {"value": true}},
+          {"boolean": {"value": true}},
+          {"boolean": {"value": false}},
+          {"boolean": {"value": true}},
+          {"boolean": {"value": true}},
+          {"boolean": {"value": false}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 0, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

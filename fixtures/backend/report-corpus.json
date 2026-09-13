@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-report-backend-v1",
+  "cases": [
+    {
+      "id": "plain-finding",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.report.v1", "function": "exit_for"},
+        "arguments": [
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+          {"boolean": {"value": false}},
+          {"boolean": {"value": false}},
+          {"boolean": {"value": true}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

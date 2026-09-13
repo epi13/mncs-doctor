@@ -1,0 +1,20 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-verify-backend-v1",
+  "cases": [
+    {
+      "id": "all-channels-pass",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.verify.v1", "function": "compose"},
+        "arguments": [
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

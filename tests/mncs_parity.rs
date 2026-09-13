@@ -14,10 +14,12 @@
 use std::sync::OnceLock;
 
 use mncs_doctor::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
+use mncs_doctor::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts};
 use mncs_doctor::edits::{EditSet, TextEdit};
 use mncs_doctor::fix::Applicability;
 use mncs_doctor::health::{worst_of, CheckResult, Status};
 use mncs_doctor::migration::{default_registry, fixture_registry, plan};
+use mncs_doctor::mncs_runtime::TransactionTargetVerdict;
 use mncs_doctor::version::{classify, LanguageVersion, VersionClass};
 
 fn session_for(source: &str) -> mncs_embed::Session {
@@ -67,6 +69,11 @@ module_session!(
     "../mncs/doctor/verify.mncs",
     "doctor.verify.v1"
 );
+module_session!(
+    scanner_session,
+    "../mncs/doctor/scanner.mncs",
+    "doctor.scanner.v1"
+);
 
 fn i64_arg(value: i64) -> String {
     format!("{{\"integer\": {{\"value\": {value}, \"type\": {{\"bits\": 64, \"signed\": true}}}}}}")
@@ -84,6 +91,14 @@ fn bool_arg(value: bool) -> String {
 
 fn seq_arg(items: &[String]) -> String {
     format!("{{\"sequence\": {{\"values\": [{}]}}}}", items.join(", "))
+}
+
+fn byte_seq_arg(bytes: &[u8]) -> String {
+    let items = bytes
+        .iter()
+        .map(|byte| format!("{{\"byte\": {{\"value\": {byte}}}}}"))
+        .collect::<Vec<_>>();
+    seq_arg(&items)
 }
 
 fn call(
@@ -316,6 +331,185 @@ fn parity_health_overall() {
         );
         assert_eq!(got, status_code(expected), "{statuses:?}");
     }
+}
+
+#[test]
+fn parity_health_check_status_with_advisories() {
+    // (errors, warnings, infos, promote_info, skipped) -> status code.
+    let cases = [
+        ((0, 0, 0, false, false), 0),
+        ((0, 0, 2, false, false), 0),
+        ((0, 0, 2, true, false), 1),
+        ((0, 1, 2, false, false), 1),
+        ((1, 0, 0, false, true), 2),
+        ((0, 0, 0, false, true), 3),
+    ];
+    for ((errors, warnings, infos, promote, skipped), expected) in cases {
+        let args = format!(
+            "{}, {}, {}, {}, {}",
+            u64_arg(errors),
+            u64_arg(warnings),
+            u64_arg(infos),
+            bool_arg(promote),
+            bool_arg(skipped)
+        );
+        let got = as_u64(&call(
+            health_session(),
+            "doctor.health.v1",
+            "check_status_with_skip",
+            &args,
+        ));
+        assert_eq!(
+            got, expected,
+            "{errors} {warnings} {infos} {promote} {skipped}"
+        );
+    }
+}
+
+#[test]
+fn parity_transaction_target_policy() {
+    let session = session_for(include_str!("../mncs/doctor/transaction.mncs"));
+    let cases = [
+        ((false, false, false, false, false, false), 0),
+        ((false, true, false, true, false, false), 3),
+        ((false, true, true, false, false, false), 2),
+        ((true, false, false, false, false, false), 3),
+        ((true, true, false, false, true, false), 4),
+        ((true, true, false, true, false, true), 3),
+        ((true, true, false, true, true, true), 1),
+        ((true, true, false, true, true, false), 0),
+    ];
+    for ((expected, actual, symlink, file, matches, identical), expected_code) in cases {
+        let args = format!(
+            "{}, {}, {}, {}, {}, {}",
+            bool_arg(expected),
+            bool_arg(actual),
+            bool_arg(symlink),
+            bool_arg(file),
+            bool_arg(matches),
+            bool_arg(identical)
+        );
+        let got = as_u64(&call(
+            &session,
+            "doctor.transaction.v1",
+            "validate_target",
+            &args,
+        ));
+        assert_eq!(got, expected_code);
+    }
+    let runtime = mncs_doctor::mncs_runtime::DoctorMncsRuntime::new().unwrap();
+    assert_eq!(
+        runtime
+            .transaction_target_verdict(false, false, false, false, false, false)
+            .unwrap(),
+        TransactionTargetVerdict::Allow
+    );
+}
+
+#[test]
+fn parity_discovery_fact_classification() {
+    let session = session_for(include_str!("../mncs/doctor/discovery.mncs"));
+    let directory_cases = [
+        ((0, false, false, false, false, 0, 64), 0),
+        ((4, false, false, false, false, 1, 64), 2),
+        ((0, false, true, false, false, 1, 64), 4),
+        ((0, false, true, true, true, 1, 64), 3),
+        ((0, false, false, false, false, 65, 64), 1),
+        ((0, true, false, false, false, 1, 64), 2),
+        ((17, false, false, false, false, 1, 64), 2),
+    ];
+    for ((name, extra, symlink, follow, cycle, depth, max_depth), expected) in directory_cases {
+        let args = format!(
+            "{}, {}, {}, {}, {}, {}, {}",
+            u64_arg(name),
+            bool_arg(extra),
+            bool_arg(symlink),
+            bool_arg(follow),
+            bool_arg(cycle),
+            u64_arg(depth),
+            u64_arg(max_depth)
+        );
+        assert_eq!(
+            as_u64(&call(
+                &session,
+                "doctor.discovery.v1",
+                "directory_decision",
+                &args,
+            )),
+            expected
+        );
+    }
+    let file_cases = [
+        // Recognised manifest names take precedence over the extension code.
+        ((1, 1), 2),
+        ((1, 0), 2),
+        ((4, 0), 4),
+        ((0, 1), 1),
+        ((0, 0), 0),
+    ];
+    for ((name, extension), expected) in file_cases {
+        let args = format!("{}, {}", u64_arg(name), u64_arg(extension));
+        assert_eq!(
+            as_u64(&call(&session, "doctor.discovery.v1", "file_class", &args,)),
+            expected
+        );
+    }
+    let runtime = mncs_doctor::mncs_runtime::DoctorMncsRuntime::new().unwrap();
+    assert_eq!(
+        runtime
+            .discovery_directory_decision(DirectoryFacts {
+                name_code: 4,
+                extra_excluded: false,
+                is_symlink: false,
+                follow_symlink: false,
+                cycle: false,
+                depth: 1,
+                max_depth: 64,
+            })
+            .unwrap(),
+        DirectoryDecision::SkipExcluded
+    );
+    assert_eq!(
+        runtime
+            .discovery_file_class(FileFacts {
+                name_code: 0,
+                extension_code: 1,
+            })
+            .unwrap(),
+        FileClass::Source
+    );
+}
+
+#[test]
+fn parity_chunked_scanner_state_machine() {
+    let mut state = [0_u64; 6];
+    let chunks: &[&[u8]] = &[&[239], &[187], &[191, b'a', b'\r'], b"\nb\n\r"];
+    let expected_after_feed: [[u64; 6]; 4] = [
+        [1, 0, 0, 0, 0, 0],
+        [2, 0, 0, 0, 0, 0],
+        [3, 1, 0, 0, 0, 1],
+        [3, 1, 1, 1, 0, 1],
+    ];
+    for (chunk, expected) in chunks.iter().zip(expected_after_feed) {
+        let state_arg = seq_arg(&state.iter().copied().map(u64_arg).collect::<Vec<_>>());
+        let got = as_seq(&call(
+            scanner_session(),
+            "doctor.scanner.v1",
+            "feed",
+            &format!("{}, {}", byte_seq_arg(chunk), state_arg),
+        ));
+        let got: Vec<u64> = got.iter().map(as_u64).collect();
+        assert_eq!(got, expected);
+        state.copy_from_slice(&got);
+    }
+    let got = as_seq(&call(
+        scanner_session(),
+        "doctor.scanner.v1",
+        "finish",
+        &seq_arg(&state.iter().copied().map(u64_arg).collect::<Vec<_>>()),
+    ));
+    let got: Vec<u64> = got.iter().map(as_u64).collect();
+    assert_eq!(got, [3, 1, 1, 1, 1, 0]);
 }
 
 // ---- migration planning ----
@@ -620,7 +814,7 @@ fn transport_mismatches_refuse_fail_closed() {
     // Record values require exact canonical type identities; sequence
     // length and scalar signedness are enforced at the boundary. None of
     // these may silently coerce: the verdict must be invalid_request.
-    const RECORD_SOURCE: &str = "mncs 0.16;\nmodule probe.records;\nrecord Version { major: i64, minor: i64 }\nfn major_of(v: Version) -> (result: i64) {\n    return v.major;\n}\n";
+    const RECORD_SOURCE: &str = "mncs 0.16;\nmodule probe.records;\nrecord Version { major: i64, minor: i64 }\nfn make() -> (result: Version) {\n    return Version { major: 7, minor: 1 };\n}\nfn major_of(v: Version) -> (result: i64) {\n    return v.major;\n}\nfn echo(v: Version) -> (result: Version) {\n    return v;\n}\n";
     static RECORD_SESSION: OnceLock<mncs_embed::Session> = OnceLock::new();
     let session = RECORD_SESSION.get_or_init(|| session_for(RECORD_SOURCE));
     let options = mncs_embed::CallOptions::budgeted(8192);
@@ -635,6 +829,41 @@ fn transport_mismatches_refuse_fail_closed() {
         .as_deref()
         .unwrap_or("")
         .contains("type_identity"));
+    // A compiler-produced record can make the round trip through the host
+    // ABI when its canonical identity is preserved. This is the concrete
+    // typed-transport case Doctor would eventually use for health/version
+    // result records instead of scalar codes.
+    let made = session
+        .call_json("probe.records", "make", "[]", &options)
+        .expect("make record");
+    assert_eq!(made.status, "returned");
+    let record = serde_json::to_value(&made.returned[0]).expect("record JSON");
+    let record_args = serde_json::to_string(std::slice::from_ref(&record)).expect("record args");
+    let major = session
+        .call_json("probe.records", "major_of", &record_args, &options)
+        .expect("record input");
+    assert_eq!(major.status, "returned");
+    let major_json = serde_json::to_value(&major.returned[0]).expect("major JSON");
+    assert_eq!(major_json["integer"]["value"], 7);
+    let echoed = session
+        .call_json("probe.records", "echo", &record_args, &options)
+        .expect("record output");
+    assert_eq!(echoed.status, "returned");
+    assert_eq!(serde_json::to_value(&echoed.returned[0]).unwrap(), record);
+
+    // Artifact identity tampering is rejected before a session can open.
+    let artifact = mncs_embed::Artifact::from_source(RECORD_SOURCE, "mncs-research-bytecode")
+        .expect("record artifact");
+    let mut artifact_json: serde_json::Value =
+        serde_json::from_slice(&artifact.to_json_bytes()).expect("artifact JSON");
+    artifact_json["identity"] = serde_json::json!("tampered");
+    let invalid = match mncs_embed::Artifact::from_json(
+        &serde_json::to_vec(&artifact_json).expect("tampered artifact JSON"),
+    ) {
+        Ok(_) => panic!("tampered identity must fail closed"),
+        Err(error) => error,
+    };
+    assert_eq!(invalid.code, "invalid_identity");
     // Unsigned element into an [i64; 16] window.
     let args = format!(
         "{}, {}, {}, {}",
@@ -652,6 +881,16 @@ fn transport_mismatches_refuse_fail_closed() {
         )
         .expect("call");
     assert_eq!(out.status, "invalid_request");
+}
+
+#[test]
+fn embedding_import_closure_is_not_available_without_freeze() {
+    const IMPORT_SOURCE: &str = "mncs 0.16;\nmodule probe.imported;\nuse mncs.std.text_utf8.v1;\nfn value() -> (result: u64) {\n    return 1;\n}\n";
+    let error = match mncs_embed::Artifact::from_source(IMPORT_SOURCE, "mncs-research-bytecode") {
+        Ok(_) => panic!("source embedding unexpectedly resolved an import"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "compile_failed");
 }
 
 // ---- diagnostic model parity (codes flow through both sides) ----

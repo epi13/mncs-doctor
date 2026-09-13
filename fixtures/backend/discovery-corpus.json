@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-discovery-backend-v1",
+  "cases": [
+    {
+      "id": "mncs-source",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.discovery.v1", "function": "file_class"},
+        "arguments": [
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

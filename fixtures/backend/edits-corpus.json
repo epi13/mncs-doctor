@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-edits-backend-v1",
+  "cases": [
+    {
+      "id": "overlap",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.edits.v1", "function": "pair_conflict"},
+        "arguments": [
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 4, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 3, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 6, "type": {"bits": 64, "signed": false}}}
+        ],
+        "step_budget": 1024
+      },
+      "expected": [{"integer": {"value": 1, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

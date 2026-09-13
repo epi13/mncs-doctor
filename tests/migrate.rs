@@ -164,6 +164,27 @@ fn fixture_migration_applies_and_converges() {
         String::from_utf8_lossy(&out.stderr)
     );
     let applied = stdout_json(&out);
+    assert_eq!(applied["policy"]["engine"], "mncs");
+    let entrypoints = applied["policy"]["entrypoints"].as_array().unwrap();
+    for expected in [
+        "doctor.discovery.v1::directory_decision",
+        "doctor.discovery.v1::file_class",
+        "doctor.scanner.v1::feed",
+        "doctor.scanner.v1::finish",
+        "doctor.version.v1::classify",
+        "doctor.migration.v1::plan_verdict",
+        "doctor.transaction.v1::validate_target",
+        "doctor.verify.v1::delta_ok",
+        "doctor.verify.v1::compose",
+        "doctor.health.v1::check_status_with_skip",
+        "doctor.health.v1::overall",
+        "doctor.report.v1::exit_for",
+    ] {
+        assert!(
+            entrypoints.iter().any(|entrypoint| entrypoint == expected),
+            "live migrate path omitted {expected}: {entrypoints:?}"
+        );
+    }
     let after = read(&root, "src/demo.mncs");
     assert!(after.starts_with("mncs 9.2;"), "{after:?}");
     assert!(

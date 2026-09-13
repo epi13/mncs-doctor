@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-health-backend-v1",
+  "cases": [
+    {
+      "id": "fail-dominates",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.health.v1", "function": "combine"},
+        "arguments": [
+          {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+          {"integer": {"value": 2, "type": {"bits": 64, "signed": false}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 2, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

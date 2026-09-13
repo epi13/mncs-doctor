@@ -1,0 +1,51 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-version-backend-v1",
+  "cases": [
+    {
+      "id": "classify-current",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.version.v1", "function": "classify"},
+        "arguments": [
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 16, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 16, "type": {"bits": 64, "signed": true}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 0, "type": {"bits": 64, "signed": true}}}]
+    },
+    {
+      "id": "compare-newer",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.version.v1", "function": "compare"},
+        "arguments": [
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 16, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 15, "type": {"bits": 64, "signed": true}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 1, "type": {"bits": 64, "signed": true}}}]
+    },
+    {
+      "id": "span-planned",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.version.v1", "function": "plan_span"},
+        "arguments": [
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 8, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 0, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 16, "type": {"bits": 64, "signed": true}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 8, "type": {"bits": 64, "signed": true}}}]
+    }
+  ]
+}
