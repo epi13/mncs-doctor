@@ -1,0 +1,29 @@
+mncs 0.16;
+module doctor.verify.v1;
+
+// doctor.verify — verification *composition policy* in MNCS.
+//
+// Boundary: re-diagnosis execution and external process spawning stay
+// host-side (narrow seams). What lives here is how verification evidence
+// composes into a pass/fail verdict: error deltas, idempotence, and
+// external-check outcomes. All inputs are scalar evidence codes.
+
+// Error-delta verdict: passing means no NEW errors appeared.
+// Returns 1=pass, 0=fail.
+fn delta_ok(errors_before: u64, errors_after: u64) -> (result: u64) {
+    if errors_after <= errors_before {
+        return 1;
+    }
+    return 0;
+}
+
+// Full verification verdict over the three evidence channels:
+// the error delta, the idempotence witness (1=idempotent, 0=not), and
+// the external-command channel (1=all succeeded, 0=some failed).
+// Every channel must pass.
+fn compose(delta_pass: u64, idempotent: u64, external_pass: u64) -> (result: u64) {
+    if delta_pass == 1 && idempotent == 1 && external_pass == 1 {
+        return 1;
+    }
+    return 0;
+}

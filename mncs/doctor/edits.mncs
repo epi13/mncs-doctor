@@ -1,0 +1,68 @@
+mncs 0.16;
+module doctor.edits.v1;
+
+// doctor.edits — structured edit *planning* policy in MNCS.
+//
+// Boundary: content fingerprinting stays a host primitive (DOC-P new:
+// sha256 over bytes has no natural MNCS spelling at the boundary; the
+// policy here consumes fingerprints as opaque codes and never hashes).
+// Spans cross as (start: u64, end: u64) pairs with start <= end and
+// end <= content length validated host-side before planning.
+//
+// Rules (mirror EditSet::validate):
+//   inverted spans are rejected upstream of planning (valid flag).
+//   adjacent edits (a.end == b.start) do NOT conflict.
+//   two insertions at the same point conflict (ambiguous order).
+//   otherwise any overlap conflicts.
+
+// Pairwise conflict verdict: 1=conflict, 0=clean.
+fn pair_conflict(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> (result: u64) {
+    // Normalized order: the pair is unordered, so test both directions
+    // through one ordered check.
+    let a_first: bool = a_start < b_start || (a_start == b_start && a_end < b_end);
+    let first_start: u64 = select(a_first, a_start, b_start);
+    let first_end: u64 = select(a_first, a_end, b_end);
+    let second_start: u64 = select(a_first, b_start, a_start);
+    let second_end: u64 = select(a_first, b_end, a_end);
+    // Strictly ordered (first ends before second starts) is clean, with
+    // one exception: two insertions at the same point.
+    let ordered: bool = first_end < second_start
+        || (first_end == second_start && first_start < second_start);
+    let same_point: bool = first_start == first_end && first_start == second_start
+        && second_start == second_end;
+    if same_point {
+        return 1;
+    }
+    if ordered {
+        return 0;
+    }
+    return 1;
+}
+
+// Classify one edit shape: 0=insertion, 1=deletion, 2=replacement.
+fn shape(start: u64, end: u64, replacement_len: u64) -> (result: u64) {
+    if start == end {
+        return 0;
+    }
+    if replacement_len == 0 {
+        return 1;
+    }
+    return 2;
+}
+
+// Count conflicts of one candidate span against a window of kept spans.
+// Kept spans pack as parallel start/end windows plus a live count.
+fn conflicts_with_kept(
+    start: u64,
+    end: u64,
+    kept_starts: [u64; 8],
+    kept_ends: [u64; 8],
+    kept_count: u64,
+) -> (result: u64) {
+    iterate i over kept_starts carrying hits: u64 = 0 {
+        let live: bool = i < kept_count && i < kept_starts.len && i < kept_ends.len;
+        let hit: bool = live && pair_conflict(start, end, kept_starts[i], kept_ends[i]) == 1;
+        next hits = hits + select(hit, 1, 0);
+    }
+    return hits;
+}

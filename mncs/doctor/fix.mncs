@@ -1,0 +1,63 @@
+mncs 0.16;
+module doctor.fix.v1;
+
+// doctor.fix — repair orchestration *policy* in MNCS.
+//
+// Boundary: provider execution (text scanning, edit construction) and
+// backend diagnosis stay host-side; upstream semantic fixes belong to
+// mncs-language (DOC-P-002). What lives here is the decision procedure:
+// eligibility gating, per-round merge verdicts, and the fixed-point
+// stopping rule. The host loop calls these entrypoints once per round
+// with scalar state, so iteration itself needs no MNCS heap.
+//
+// Applicability codes: 0=safe, 1=proven, 2=review, 3=manual.
+// Stop codes: 0=continue, 1=fixpoint, 2=budget-exhausted, 3=oscillation.
+
+// Eligibility gate: safe always (when enabled), proven only with opt-in,
+// review/manual never automatic.
+fn eligible(level: u64, allow_safe: bool, allow_proven: bool) -> (result: bool) {
+    if level == 0 {
+        return allow_safe;
+    }
+    if level == 1 {
+        return allow_proven;
+    }
+    return false;
+}
+
+// Merge verdict for one candidate fix against the kept set: 0=keep,
+// 1=skip (conflicts). A conflicting fix is recorded and skipped, never
+// fatal to the surviving plan.
+fn merge_verdict(conflicts: u64) -> (result: u64) {
+    if conflicts > 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// Fixed-point stopping rule. `planned_empty` means this round produced no
+// applicable fixes; `fired_before` means a provider in this round already
+// fired on an earlier round (non-idempotent or oscillating pair);
+// `iterations` counts applied rounds against `budget`.
+fn stop_rule(planned_empty: bool, fired_before: bool, iterations: u64, budget: u64) -> (result: u64) {
+    if planned_empty {
+        return 1;
+    }
+    if fired_before {
+        return 3;
+    }
+    if iterations >= budget {
+        return 2;
+    }
+    return 0;
+}
+
+// Provider-seen check over a packed window of previously fired provider
+// codes plus a live count: 1=fired before (oscillation risk), 0=fresh.
+fn seen_before(fired: [u64; 8], count: u64, id: u64) -> (result: u64) {
+    iterate i over fired carrying hit: u64 = 0 {
+        let live: bool = i < count && i < fired.len;
+        next hit = select(live && fired[i] == id, 1, hit);
+    }
+    return hit;
+}

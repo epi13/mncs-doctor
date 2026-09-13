@@ -1,0 +1,64 @@
+mncs 0.16;
+module doctor.health.v1;
+
+// doctor.health — health-status aggregation policy in MNCS.
+//
+// Scalar contract (codes cross the host boundary; severities render
+// host-side):
+//   severity: 0=info, 1=warning, 2=error.
+//   status:   0=pass, 1=warning, 2=fail, 3=skipped.
+// Statuses order pass < warning < fail; skipped is neutral and never
+// wins over a decided status. Counts and windows use u64 (the index
+// domain); verdicts are small codes in u64 as well.
+
+// Combine two check statuses. Fail dominates, then warning; skipped
+// yields to any decided status.
+fn combine(a: u64, b: u64) -> (result: u64) {
+    if a == 2 || b == 2 {
+        return 2;
+    }
+    if a == 1 || b == 1 {
+        return 1;
+    }
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    return 3;
+}
+
+// Check status from finding counts: any error fails, else any warning
+// warns, else pass. Infos never affect the verdict.
+fn check_status(error_count: u64, warning_count: u64) -> (result: u64) {
+    if error_count > 0 {
+        return 2;
+    }
+    if warning_count > 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// Overall status over a fixed window of check statuses plus a live count.
+// The tail beyond count is never observed, so callers pack any number of
+// checks into the window. The fold starts at pass, matching the reference:
+// an empty check set is vacuously healthy (individual skips still fold
+// through combine, which treats skipped as neutral).
+fn overall(statuses: [u64; 8], count: u64) -> (result: u64) {
+    iterate i over statuses carrying acc: u64 = 0 {
+        let live: bool = i < count && i < statuses.len;
+        next acc = select(live, combine(acc, statuses[i]), acc);
+    }
+    return acc;
+}
+
+// Severity rank passthrough (documents the ordering; keeps the mapping
+// in one place with the aggregation that consumes it).
+fn rank(severity: u64) -> (result: u64) {
+    if severity == 2 {
+        return 2;
+    }
+    if severity == 1 {
+        return 1;
+    }
+    return 0;
+}
