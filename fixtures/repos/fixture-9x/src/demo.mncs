@@ -1,0 +1,6 @@
+mncs 9.0;
+module demo.old;
+
+fn oldfn() -> (result: i64) {
+    return oldfn_helper();
+}

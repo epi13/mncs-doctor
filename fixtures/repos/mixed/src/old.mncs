@@ -1,0 +1,6 @@
+mncs 0.8;
+module mixed.old;
+
+fn oldfn() -> (result: i64) {
+    return 0;
+}

@@ -1,0 +1,6 @@
+mncs 0.8;
+module outdated.main;
+
+fn run() -> (result: i64) {
+    return 1;
+}

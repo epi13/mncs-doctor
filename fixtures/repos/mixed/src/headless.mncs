@@ -1,0 +1,3 @@
+fn headless() -> (result: i64) {
+    return 0;
+}

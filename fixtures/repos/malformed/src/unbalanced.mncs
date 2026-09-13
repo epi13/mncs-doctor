@@ -1,0 +1,5 @@
+mncs 0.16;
+module mixed.unbalanced;
+
+fn broken() -> (result: i64) {
+    return 1;

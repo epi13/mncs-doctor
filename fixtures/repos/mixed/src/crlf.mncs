@@ -1,0 +1,7 @@
+mncs 0.16;
+module mixed.crlf;
+
+// café → unicode comment preserved
+fn run() -> (result: i64) {
+    return 5;
+}
