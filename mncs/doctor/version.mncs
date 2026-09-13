@@ -1,0 +1,79 @@
+mncs 0.16;
+module doctor.version.v1;
+
+// doctor.version — language-version policy in MNCS.
+//
+// Boundary: the profile *registry data* (which versions exist, which is
+// current) is host-loaded knowledge (DOC-P-007). This module encodes the
+// *reasoning rules* over versions supplied as plain scalars, so no registry
+// table is mirrored here: the caller passes the current profile in, and
+// classification follows the sealed-line rule (0.x with 1 <= minor <
+// current is sealed). Comparison is total and uses no arithmetic on the
+// compared values, so no overflow obligation can arise.
+//
+// Scalar contract (token_set pattern: codes cross the host boundary):
+//   versions cross as (major: i64, minor: i64) pairs.
+//   classify returns 0=current, 1=sealed, 2=unsupported, 3=unknown.
+//   compare returns -1/0/1 (left relative to right).
+//   plan_span returns the edge count from->to, -1 for downgrades,
+//     -2 when either endpoint is off the known 0.x line.
+
+// Total order on (major, minor) pairs. No subtraction anywhere.
+fn compare(a_major: i64, a_minor: i64, b_major: i64, b_minor: i64) -> (result: i64) {
+    if a_major < b_major {
+        return 0 - 1;
+    }
+    if a_major > b_major {
+        return 1;
+    }
+    if a_minor < b_minor {
+        return 0 - 1;
+    }
+    if a_minor > b_minor {
+        return 1;
+    }
+    return 0;
+}
+
+// Classification against an explicitly supplied current profile.
+// cur_major/cur_minor arrive from the host registry; nothing here names
+// a current version.
+fn classify(major: i64, minor: i64, cur_major: i64, cur_minor: i64) -> (result: i64) {
+    if major == cur_major && minor == cur_minor {
+        return 0;
+    }
+    // Reserved/unsupported line: 1.0 is known but rejected upstream.
+    if major == 1 && minor == 0 {
+        return 2;
+    }
+    // Sealed line: 0.x strictly below current, minor at least 1.
+    if major == 0 && cur_major == 0 && minor >= 1 && minor < cur_minor {
+        return 1;
+    }
+    return 3;
+}
+
+// True exactly for versions the toolchain accepts (current or sealed).
+fn is_supported(code: i64) -> (result: bool) {
+    return code == 0 || code == 1;
+}
+
+// Migration span over the linear 0.x chain: edge count from->to.
+// Downgrades refuse (-1); endpoints off the 0.x line refuse (-2).
+// The chain needs no graph search: every real profile edge is adjacent.
+fn plan_span(from_major: i64, from_minor: i64, to_major: i64, to_minor: i64) -> (result: i64) {
+    if from_major != 0 || to_major != 0 {
+        return 0 - 2;
+    }
+    if from_minor < 1 || to_minor < 1 {
+        return 0 - 2;
+    }
+    let order: i64 = compare(from_major, from_minor, to_major, to_minor);
+    if order == 0 {
+        return 0;
+    }
+    if order > 0 {
+        return 0 - 1;
+    }
+    return to_minor - from_minor;
+}

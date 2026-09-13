@@ -1,0 +1,81 @@
+mncs 0.16;
+module doctor.migration.v1;
+
+// doctor.migration — migration *planning* policy in MNCS.
+//
+// Boundary: transition *knowledge* (which edges are noop/metadata/source,
+// per-edge provenance) belongs upstream in mncs-language (DOC-P-003) and
+// arrives as host-loaded data. This module computes *path structure* over
+// the linear profile chain: span validation, edge enumeration, no-op
+// detection, and refusal classification. Edge kinds cross as codes:
+//   kind: 0=noop, 1=metadata, 2=source, 3=unknown.
+// Plan verdicts:
+//   0=planned, 1=noop (already there), 2=downgrade-refused,
+//   3=off-line-refused, 4=blocked (an unknown edge lies on the path).
+
+// Span verdict for from->to on the 0.x line. Mirrors the structural half
+// of plan(): same version is a no-op plan, downgrades refuse, off-line
+// endpoints refuse.
+fn span_verdict(from_minor: i64, to_minor: i64) -> (result: i64) {
+    if from_minor < 1 || to_minor < 1 {
+        return 3;
+    }
+    if from_minor == to_minor {
+        return 1;
+    }
+    if to_minor < from_minor {
+        return 2;
+    }
+    return 0;
+}
+
+// Edge count for a planned span (to_minor - from_minor, valid only when
+// span_verdict is 0; the guard keeps the subtraction in-domain).
+fn span_edges(from_minor: i64, to_minor: i64) -> (result: i64) {
+    if from_minor < 1 || to_minor < 1 {
+        return 0 - 1;
+    }
+    if to_minor <= from_minor {
+        return 0 - 1;
+    }
+    return to_minor - from_minor;
+}
+
+// Enumerate the from-minors of each edge on the path into a fixed window.
+// edges_out[k] holds the k-th edge's from-minor for k < count; the tail
+// is zero-filled and never observed. Window 16 covers the whole profile
+// line with room to spare.
+fn enumerate(from_minor: i64, count: u64) -> (result: [i64; 16]) {
+    let blank: [i64; 16] = [0; 16];
+    iterate i over blank carrying row: [i64; 16] = blank {
+        let live: bool = i < count;
+        next row = replace(row, i, select(live, from_minor + i as i64, 0));
+    }
+    return row;
+}
+
+// Scan the kinds of the enumerated edges for the worst blocker:
+// unknown (3) blocks, source (2) and metadata (1) pass with work,
+// all-noop (0) passes clean. Returns 0=fully-known, 1=has-unknown.
+fn scan_kinds(kinds: [i64; 16], count: u64) -> (result: i64) {
+    iterate i over kinds carrying blocked: i64 = 0 {
+        let live: bool = i < count;
+        let unknown: bool = live && kinds[i] == 3;
+        next blocked = select(unknown, 1, blocked);
+    }
+    return blocked;
+}
+
+// Full plan verdict: structural verdict first, then the unknown-edge
+// scan. `kinds`/`count` describe the enumerated edges; they are only
+// consulted when the span itself plans (verdict 0).
+fn plan_verdict(from_minor: i64, to_minor: i64, kinds: [i64; 16], count: u64) -> (result: i64) {
+    let span: i64 = span_verdict(from_minor, to_minor);
+    if span != 0 {
+        return span;
+    }
+    if scan_kinds(kinds, count) == 1 {
+        return 4;
+    }
+    return 0;
+}

@@ -25,3 +25,9 @@ sha2 = "0.10"
 
 [profile.release]
 opt-level = 2
+
+[dev-dependencies]
+# Host bridge for MNCS-core parity tests: compile policy sources
+# in-process and call entrypoints with canonical ABI values.
+# Pinned to a verified mncs-language rev; see docs/RUST-BOUNDARY-AUDIT.md.
+mncs-embed = { git = "https://github.com/epi13/mncs-language", rev = "85051d2a44db77133e831c7cca30eba67123a60b" }

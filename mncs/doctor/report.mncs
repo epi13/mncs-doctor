@@ -1,0 +1,30 @@
+mncs 0.16;
+module doctor.report.v1;
+
+// doctor.report — exit/status *policy* in MNCS.
+//
+// Boundary: human rendering and JSON encoding stay host-side (byte-string
+// shaping has no compact MNCS spelling; narrow host seam, see pressure).
+// What lives here is the decision procedure shared by every command:
+// worst-status folding is in doctor.health; this module maps the folded
+// outcome plus run state to the documented exit code.
+//
+// Exit codes (docs/EXIT-CODES.md):
+//   0=healthy, 1=findings, 2=review-required, 3=verification-failed.
+// (4=tool failure never arises from policy: it is a host trap.)
+
+// Exit policy: verification failure dominates; then review-blocked
+// warnings/failures; then plain findings; pass stays healthy.
+// worst: 0=pass, 1=warning, 2=fail (skipped folds to pass upstream).
+fn exit_for(worst: u64, review_blocked: bool, verified: bool, verify_passed: bool) -> (result: u64) {
+    if verified && !verify_passed {
+        return 3;
+    }
+    if worst == 0 {
+        return 0;
+    }
+    if review_blocked {
+        return 2;
+    }
+    return 1;
+}

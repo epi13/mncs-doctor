@@ -79,17 +79,23 @@ pub fn run_all_checks(ctx: &HealthContext<'_>) -> Vec<CheckResult> {
     ]
 }
 
+/// Worst of two check statuses: fail dominates, then warning; skipped is
+/// neutral and yields to any decided status.
+pub fn worst_of(a: Status, b: Status) -> Status {
+    match (a, b) {
+        (_, Status::Fail) | (Status::Fail, _) => Status::Fail,
+        (_, Status::Warning) | (Status::Warning, _) => Status::Warning,
+        (Status::Skipped, s) => s,
+        (s, Status::Skipped) => s,
+        _ => Status::Pass,
+    }
+}
+
 /// Worst status across all checks.
 pub fn overall_status(results: &[CheckResult]) -> Status {
     let mut overall = Status::Pass;
     for result in results {
-        overall = match (overall, result.status) {
-            (_, Status::Fail) | (Status::Fail, _) => Status::Fail,
-            (_, Status::Warning) | (Status::Warning, _) => Status::Warning,
-            (Status::Skipped, s) => s,
-            (s, Status::Skipped) => s,
-            _ => Status::Pass,
-        };
+        overall = worst_of(overall, result.status);
     }
     overall
 }
