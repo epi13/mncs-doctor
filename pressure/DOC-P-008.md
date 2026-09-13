@@ -21,7 +21,7 @@ effect fs_list authorized_by cap;
 // needs per-directory listing handles across levels.
 ```
 
-## Current behavior (verified 2026-09-13 against `mncs-language` main)
+## Current behavior (verified 2026-09-12 against `mncs-language` main)
 
 `fs_list_count()`, `fs_entry_name_at(i)`, `fs_entry_kind_at(i)`
 (0=file, 1=dir, 2=other), `fs_generation()` cover a **single level**
@@ -30,9 +30,10 @@ the 0.16 scope doc lists recursive delete among explicit non-goals.
 Multi-level navigation (open a listing for a subdirectory entry, with
 containment kept) is not exposed, so a bounded worklist walker cannot be
 assembled from documented parts. Attempt status: capability analysis
-against the scope doc + registry (no recursion intrinsic present);
-a full walker attempt is queued behind DOC-P-018 (multi-module sources
-would be needed for a walker + policy split).
+against the scope doc + registry (no recursion intrinsic present). The
+multi-module freeze prerequisite is no longer the blocker (DOC-P-018 is
+fixed-upstream); the missing listing-handle/recursive surface is the
+remaining reason the walker stays host-side.
 
 ## Workaround
 

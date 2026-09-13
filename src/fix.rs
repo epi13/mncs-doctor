@@ -18,7 +18,7 @@
 //! eligible fix remains, an oscillation is detected, or the iteration budget
 //! is exhausted.
 
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -281,6 +281,45 @@ pub fn plan_workspace(
     providers: &[Box<dyn FixProvider>],
     eligibility: Eligibility,
 ) -> WorkspacePlan {
+    plan_workspace_with_policies(
+        sources,
+        diagnostics,
+        providers,
+        eligibility,
+        &rust_validate_edits,
+        &rust_apply_edits,
+    )
+    .expect("reference edit policy is infallible")
+}
+
+/// Plan repairs with an explicit edit-policy boundary. The production
+/// command supplies MNCS validation/application callbacks; the public
+/// [`plan_workspace`] wrapper supplies the independent Rust oracle used by
+/// unit and differential tests.
+pub fn plan_workspace_with_mncs_policy(
+    sources: &[SourceFile],
+    diagnostics: &std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+) -> Result<WorkspacePlan, String> {
+    plan_workspace_with_policies(
+        sources,
+        diagnostics,
+        providers,
+        eligibility,
+        &mncs_validate_edits,
+        &mncs_apply_edits,
+    )
+}
+
+fn plan_workspace_with_policies(
+    sources: &[SourceFile],
+    diagnostics: &std::collections::BTreeMap<String, Vec<Diagnostic>>,
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+    validate_edits: &dyn Fn(&EditSet, usize) -> Result<bool, String>,
+    apply_edits: &dyn Fn(&EditSet, &str) -> Result<String, String>,
+) -> Result<WorkspacePlan, String> {
     let empty = Vec::new();
     let mut ordered: Vec<&SourceFile> = sources.iter().collect();
     ordered.sort_by(|a, b| a.relative.cmp(&b.relative));
@@ -296,7 +335,7 @@ pub fn plan_workspace(
         let mut round_manual = Vec::new();
         let mut round_conflicts = Vec::new();
         let file_diags = diagnostics.get(&file.relative).unwrap_or(&empty);
-        if let Some(plan) = plan_file(
+        if let Some(plan) = plan_file_with_policies(
             &file.relative,
             text,
             file_diags,
@@ -305,7 +344,9 @@ pub fn plan_workspace(
             &mut round_review,
             &mut round_manual,
             &mut round_conflicts,
-        ) {
+            validate_edits,
+            apply_edits,
+        )? {
             plans.push(((*file).clone(), plan));
         }
         blocked_review += round_review.len();
@@ -318,12 +359,12 @@ pub fn plan_workspace(
             ));
         }
     }
-    WorkspacePlan {
+    Ok(WorkspacePlan {
         plans,
         blocked_review,
         blocked_manual,
         conflict_notes,
-    }
+    })
 }
 
 /// One planned file repair: ordered fixes plus the resulting content.
@@ -370,6 +411,21 @@ pub enum StopReason {
     EditConflict,
 }
 
+type StopRule = dyn Fn(bool, bool, u32, u32) -> Result<Option<StopReason>, String>;
+type SeenBefore = dyn Fn(&[u64], u64) -> Result<bool, String>;
+pub type Diagnose<'a> = dyn Fn(&SourceFile) -> Result<Vec<Diagnostic>, String> + 'a;
+type PlanBuilder = dyn Fn(
+    &str,
+    &str,
+    &[Diagnostic],
+    &[Box<dyn FixProvider>],
+    Eligibility,
+    &mut Vec<String>,
+    &mut Vec<String>,
+    &mut Vec<String>,
+) -> Result<Option<FilePlan>, String>;
+type PlanApply = dyn Fn(&FilePlan, &str) -> Result<String, String>;
+
 impl std::fmt::Display for StopReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -400,6 +456,34 @@ pub fn plan_file(
     blocked_manual: &mut Vec<String>,
     skipped_conflicts: &mut Vec<String>,
 ) -> Option<FilePlan> {
+    plan_file_with_policies(
+        relative,
+        text,
+        diagnostics,
+        providers,
+        eligibility,
+        blocked_review,
+        blocked_manual,
+        skipped_conflicts,
+        &rust_validate_edits,
+        &rust_apply_edits,
+    )
+    .expect("reference edit policy is infallible")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_file_with_policies(
+    relative: &str,
+    text: &str,
+    diagnostics: &[Diagnostic],
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+    blocked_review: &mut Vec<String>,
+    blocked_manual: &mut Vec<String>,
+    skipped_conflicts: &mut Vec<String>,
+    validate_edits: &dyn Fn(&EditSet, usize) -> Result<bool, String>,
+    apply_edits: &dyn Fn(&EditSet, &str) -> Result<String, String>,
+) -> Result<Option<FilePlan>, String> {
     let mut union = EditSet::new(relative, fp(text));
     let mut kept: Vec<Fix> = Vec::new();
     for provider in providers {
@@ -416,7 +500,7 @@ pub fn plan_file(
             for edit in &fix.edits.edits {
                 union.push(edit.clone());
             }
-            if union.validate(text.len()).is_err() {
+            if !validate_edits(&union, text.len())? {
                 union.edits.truncate(before);
                 skipped_conflicts.push(format!(
                     "{}: conflicts with an earlier fix; skipped",
@@ -428,16 +512,39 @@ pub fn plan_file(
         }
     }
     if kept.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let result = union.apply(text).ok()?;
+    let result = apply_edits(&union, text)?;
     let changed_lines = count_changed_lines(text, &result);
-    Some(FilePlan {
+    Ok(Some(FilePlan {
         relative: relative.to_owned(),
         base_fingerprint: fp(text),
         fixes: kept,
         result_fingerprint: fp(&result),
         changed_lines,
+    }))
+}
+
+fn rust_validate_edits(union: &EditSet, base_len: usize) -> Result<bool, String> {
+    Ok(union.validate(base_len).is_ok())
+}
+
+fn mncs_validate_edits(union: &EditSet, base_len: usize) -> Result<bool, String> {
+    match union.validate_with_mncs(base_len) {
+        Ok(()) => Ok(true),
+        Err(crate::edits::EditError::Policy(error)) => Err(error.to_string()),
+        Err(_) => Ok(false),
+    }
+}
+
+fn rust_apply_edits(union: &EditSet, base: &str) -> Result<String, String> {
+    union.apply(base).map_err(|error| error.to_string())
+}
+
+fn mncs_apply_edits(union: &EditSet, base: &str) -> Result<String, String> {
+    union.apply_with_mncs(base).map_err(|error| match error {
+        crate::edits::EditError::Policy(policy) => policy.to_string(),
+        other => other.to_string(),
     })
 }
 
@@ -524,20 +631,158 @@ pub fn repair_to_fixpoint(
     providers: &[Box<dyn FixProvider>],
     eligibility: Eligibility,
 ) -> (String, Convergence) {
+    let stop_rule = |planned_empty: bool,
+                     fired_before: bool,
+                     iterations: u32,
+                     budget: u32|
+     -> Result<Option<StopReason>, String> {
+        if planned_empty {
+            return Ok(Some(StopReason::Fixpoint));
+        }
+        if fired_before {
+            return Ok(Some(StopReason::Oscillation));
+        }
+        if iterations >= budget {
+            return Ok(Some(StopReason::BudgetExhausted));
+        }
+        Ok(None)
+    };
+    let seen_before = |fired: &[u64], id: u64| -> Result<bool, String> { Ok(fired.contains(&id)) };
+    let diagnose = |current: &SourceFile| Ok(backend.diagnose(current));
+    let plan_builder = |relative: &str,
+                        text: &str,
+                        diagnostics: &[Diagnostic],
+                        providers: &[Box<dyn FixProvider>],
+                        eligibility: Eligibility,
+                        blocked_review: &mut Vec<String>,
+                        blocked_manual: &mut Vec<String>,
+                        skipped_conflicts: &mut Vec<String>| {
+        Ok(self::plan_file(
+            relative,
+            text,
+            diagnostics,
+            providers,
+            eligibility,
+            blocked_review,
+            blocked_manual,
+            skipped_conflicts,
+        ))
+    };
+    let apply = |plan: &FilePlan, text: &str| union_apply_reference(plan, text);
+    repair_to_fixpoint_core(
+        file,
+        providers,
+        eligibility,
+        &stop_rule,
+        &seen_before,
+        &diagnose,
+        &plan_builder,
+        &apply,
+    )
+    .expect("reference fix policy is infallible")
+}
+
+/// Iteratively repair one file using explicit MNCS-backed loop policy.
+///
+/// Providers still acquire text and construct edits in the host. The loop's
+/// state transitions (budget, oscillation, and repeated-provider detection)
+/// are delegated through the supplied policy callbacks so production can use
+/// `doctor.fix.v1`, while the wrapper above remains an independent Rust
+/// reference for differential tests.
+pub fn repair_to_fixpoint_with_policy(
+    file: &SourceFile,
+    backend: &dyn LanguageBackend,
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+    stop_rule: &StopRule,
+    seen_before: &SeenBefore,
+) -> Result<(String, Convergence), String> {
+    let diagnose = |current: &SourceFile| Ok(backend.diagnose(current));
+    repair_to_fixpoint_with_diagnose(
+        file,
+        providers,
+        eligibility,
+        stop_rule,
+        seen_before,
+        &diagnose,
+    )
+}
+
+/// Iteratively repair one file using MNCS-backed loop policy and an injected
+/// diagnostic producer. Production supplies a scanner/version producer here
+/// so re-diagnosis after each applied round does not silently return to the
+/// Rust scanner oracle.
+pub fn repair_to_fixpoint_with_diagnose(
+    file: &SourceFile,
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+    stop_rule: &StopRule,
+    seen_before: &SeenBefore,
+    diagnose: &Diagnose<'_>,
+) -> Result<(String, Convergence), String> {
+    let plan_builder = |relative: &str,
+                        text: &str,
+                        diagnostics: &[Diagnostic],
+                        providers: &[Box<dyn FixProvider>],
+                        eligibility: Eligibility,
+                        blocked_review: &mut Vec<String>,
+                        blocked_manual: &mut Vec<String>,
+                        skipped_conflicts: &mut Vec<String>| {
+        plan_file_with_policies(
+            relative,
+            text,
+            diagnostics,
+            providers,
+            eligibility,
+            blocked_review,
+            blocked_manual,
+            skipped_conflicts,
+            &mncs_validate_edits,
+            &mncs_apply_edits,
+        )
+    };
+    let apply = |plan: &FilePlan, text: &str| union_apply_with_mncs(plan, text);
+    repair_to_fixpoint_core(
+        file,
+        providers,
+        eligibility,
+        stop_rule,
+        seen_before,
+        diagnose,
+        &plan_builder,
+        &apply,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn repair_to_fixpoint_core(
+    file: &SourceFile,
+    providers: &[Box<dyn FixProvider>],
+    eligibility: Eligibility,
+    stop_rule: &StopRule,
+    seen_before: &SeenBefore,
+    diagnose: &Diagnose<'_>,
+    plan_builder: &PlanBuilder,
+    apply: &PlanApply,
+) -> Result<(String, Convergence), String> {
     let mut text = file.text.clone().unwrap_or_default();
     let mut applied: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut fired: Vec<u64> = Vec::new();
+    let mut provider_codes: BTreeMap<u64, String> = BTreeMap::new();
     let mut blocked_review: Vec<String> = Vec::new();
     let mut blocked_manual: Vec<String> = Vec::new();
     let mut skipped_conflicts: Vec<String> = Vec::new();
     let mut iterations = 0u32;
 
-    // Hygiene providers scan text directly; the backend re-diagnoses so
-    // language findings stay fresh for the report.
+    // Hygiene providers scan text directly; the injected diagnostic producer
+    // re-diagnoses so language findings stay fresh for the report.
     let mut current = file.clone();
     loop {
-        if iterations >= MAX_ITERATIONS {
-            return (
+        if let Some(reason) = stop_rule(false, false, iterations, MAX_ITERATIONS)? {
+            if reason != StopReason::BudgetExhausted {
+                return Err(format!("unexpected pre-plan stop reason: {reason}"));
+            }
+            return Ok((
                 text,
                 Convergence {
                     relative: file.relative.clone(),
@@ -548,15 +793,15 @@ pub fn repair_to_fixpoint(
                     skipped_conflicts: skipped_conflicts.clone(),
                     stopped: StopReason::BudgetExhausted,
                 },
-            );
+            ));
         }
         current.text = Some(text.clone());
         current.bytes = text.as_bytes().to_vec();
-        let diagnostics = backend.diagnose(&current);
+        let diagnostics = diagnose(&current)?;
         let mut round_review = Vec::new();
         let mut round_manual = Vec::new();
         let mut round_conflicts = Vec::new();
-        let plan = plan_file(
+        let plan = plan_builder(
             &file.relative,
             &text,
             &diagnostics,
@@ -565,12 +810,17 @@ pub fn repair_to_fixpoint(
             &mut round_review,
             &mut round_manual,
             &mut round_conflicts,
-        );
+        )?;
         blocked_review.extend(round_review);
         blocked_manual.extend(round_manual);
         skipped_conflicts.extend(round_conflicts);
         let Some(plan) = plan else {
-            return (
+            let reason = stop_rule(true, false, iterations, MAX_ITERATIONS)?
+                .ok_or_else(|| "fix policy continued after an empty plan".to_owned())?;
+            if reason != StopReason::Fixpoint {
+                return Err(format!("unexpected empty-plan stop reason: {reason}"));
+            }
+            return Ok((
                 text,
                 Convergence {
                     relative: file.relative.clone(),
@@ -581,62 +831,102 @@ pub fn repair_to_fixpoint(
                     skipped_conflicts: skipped_conflicts.clone(),
                     stopped: StopReason::Fixpoint,
                 },
-            );
+            ));
         };
-        iterations += 1;
         // Oscillation guard: the same provider firing twice means its fix
         // is not idempotent (or two providers fight). Apply once, then stop.
         let ids: Vec<String> = plan.fixes.iter().map(|f| f.provider.clone()).collect();
-        if ids.iter().any(|id| seen.contains(id)) {
-            return (
+        let mut fired_before = false;
+        let mut round_codes = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let code = provider_code(id);
+            if let Some(previous) = provider_codes.get(&code) {
+                if previous != id {
+                    return Err(format!(
+                        "provider identity collision between {previous:?} and {id:?}"
+                    ));
+                }
+            } else {
+                provider_codes.insert(code, id.clone());
+            }
+            if seen_before(&fired, code)? {
+                fired_before = true;
+            }
+            round_codes.push(code);
+        }
+        if let Some(reason) = stop_rule(false, fired_before, iterations, MAX_ITERATIONS)? {
+            if reason != StopReason::Oscillation {
+                return Err(format!("unexpected planned stop reason: {reason}"));
+            }
+            return Ok((
                 text,
                 Convergence {
                     relative: file.relative.clone(),
-                    iterations,
+                    iterations: iterations + 1,
                     applied,
                     blocked_review,
                     blocked_manual,
                     skipped_conflicts: skipped_conflicts.clone(),
                     stopped: StopReason::Oscillation,
                 },
-            );
+            ));
         }
-        for id in &ids {
-            seen.insert(id.clone());
+        iterations += 1;
+        for (id, code) in ids.iter().zip(round_codes) {
+            fired.push(code);
             applied.push(id.clone());
         }
-        match union_apply(&plan, &text) {
-            Some(next) => text = next,
-            None => {
-                return (
-                    text,
-                    Convergence {
-                        relative: file.relative.clone(),
-                        iterations,
-                        applied,
-                        blocked_review,
-                        blocked_manual,
-                        skipped_conflicts: skipped_conflicts.clone(),
-                        stopped: StopReason::EditConflict,
-                    },
-                )
-            }
-        }
+        text = apply(&plan, &text)
+            .map_err(|error| format!("edit application failed (fail-closed): {error}"))?;
     }
+}
+
+fn provider_code(id: &str) -> u64 {
+    // FNV-1a is deterministic across processes and platforms. A collision
+    // is rejected above instead of allowing two providers to alias in the
+    // bounded MNCS convergence state.
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Apply a plan's union of edits to `base`.
 pub fn union_apply(plan: &FilePlan, base: &str) -> Option<String> {
+    union_apply_reference(plan, base).ok()
+}
+
+fn union_apply_reference(plan: &FilePlan, base: &str) -> Result<String, String> {
     let mut union = EditSet::new(&plan.relative, plan.base_fingerprint.clone());
     for fix in &plan.fixes {
         if fix.edits.base_fingerprint != plan.base_fingerprint {
-            return None;
+            return Err("fix base fingerprint differs from file plan".to_owned());
         }
         for edit in &fix.edits.edits {
             union.push(edit.clone());
         }
     }
-    union.apply(base).ok()
+    union.apply(base).map_err(|error| error.to_string())
+}
+
+/// Apply a file plan after MNCS has validated its edit policy. Fingerprint
+/// checking and text replacement remain host mechanisms; a policy/runtime
+/// error is returned so production cannot silently downgrade to a Rust path.
+pub fn union_apply_with_mncs(plan: &FilePlan, base: &str) -> Result<String, String> {
+    let mut union = EditSet::new(&plan.relative, plan.base_fingerprint.clone());
+    for fix in &plan.fixes {
+        if fix.edits.base_fingerprint != plan.base_fingerprint {
+            return Err("fix base fingerprint differs from file plan".to_owned());
+        }
+        for edit in &fix.edits.edits {
+            union.push(edit.clone());
+        }
+    }
+    union
+        .apply_with_mncs(base)
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::discovery::fingerprint;
+use crate::mncs_runtime::{DoctorMncsRuntime, TransactionTargetVerdict};
 
 #[derive(Debug, Error)]
 pub enum TransactionError {
@@ -34,6 +35,10 @@ pub enum TransactionError {
     },
     #[error("refusing to write {0}: target is a symlink")]
     SymlinkTarget(String),
+    #[error("refusing to write {0}: target is not a regular file")]
+    NonFileTarget(String),
+    #[error("MNCS transaction policy failed: {0}")]
+    Policy(String),
     #[error("I/O error at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -111,6 +116,8 @@ impl Transaction {
     /// must not be a symlink, and must match its recorded fingerprint;
     /// every create target must be absent.
     pub fn validate(&self, root: &Path) -> Result<(), TransactionError> {
+        let policy = DoctorMncsRuntime::production()
+            .map_err(|error| TransactionError::Policy(error.to_string()))?;
         for op in self.ordered() {
             let path = root.join(&op.relative);
             let meta = match fs::symlink_metadata(&path) {
@@ -124,38 +131,59 @@ impl Transaction {
                 }
                 Err(e) => return Err(io_err(&path, e)),
             };
-            let Some(meta) = meta else {
-                continue;
-            };
-            if meta.file_type().is_symlink() {
-                return Err(TransactionError::SymlinkTarget(op.relative.clone()));
-            }
-            match &op.old_fingerprint {
-                Some(expected) => {
-                    if !meta.is_file() {
-                        return Err(TransactionError::SymlinkTarget(op.relative.clone()));
-                    }
+            let expected_present = op.old_fingerprint.is_some();
+            let actual_present = meta.is_some();
+            let (is_symlink, is_file) = meta
+                .as_ref()
+                .map(|meta| (meta.file_type().is_symlink(), meta.is_file()))
+                .unwrap_or((false, false));
+            let mut fingerprint_matches = false;
+            let mut identical = false;
+            let mut found = "<absent>".to_owned();
+            if let (Some(expected), Some(meta)) = (&op.old_fingerprint, meta.as_ref()) {
+                if meta.is_file() {
                     let current = fs::read(&path).map_err(|e| io_err(&path, e))?;
-                    let found = fingerprint(&current);
-                    if &found != expected {
-                        return Err(TransactionError::StaleBase {
-                            relative: op.relative.clone(),
-                            expected: expected.clone(),
-                            found,
-                        });
-                    }
-                    if current == op.new_bytes {
-                        continue; // identical: commit will skip
-                    }
+                    found = fingerprint(&current);
+                    fingerprint_matches = &found == expected;
+                    identical = current == op.new_bytes;
                 }
-                None => {
-                    if meta.is_file() || meta.is_dir() {
-                        return Err(TransactionError::StaleBase {
-                            relative: op.relative.clone(),
-                            expected: "<absent>".to_owned(),
-                            found: "<present>".to_owned(),
-                        });
-                    }
+            }
+            let verdict = policy
+                .transaction_target_verdict(
+                    expected_present,
+                    actual_present,
+                    is_symlink,
+                    is_file,
+                    fingerprint_matches,
+                    identical,
+                )
+                .map_err(|error| TransactionError::Policy(error.to_string()))?;
+            match verdict {
+                TransactionTargetVerdict::Allow => {}
+                TransactionTargetVerdict::Identical => continue,
+                TransactionTargetVerdict::Symlink => {
+                    return Err(TransactionError::SymlinkTarget(op.relative.clone()))
+                }
+                TransactionTargetVerdict::Stale => {
+                    return Err(TransactionError::StaleBase {
+                        relative: op.relative.clone(),
+                        expected: op
+                            .old_fingerprint
+                            .clone()
+                            .unwrap_or_else(|| "<absent>".to_owned()),
+                        found: if actual_present {
+                            if expected_present {
+                                found
+                            } else {
+                                "<present>".to_owned()
+                            }
+                        } else {
+                            "<absent>".to_owned()
+                        },
+                    })
+                }
+                TransactionTargetVerdict::NonFile => {
+                    return Err(TransactionError::NonFileTarget(op.relative.clone()))
                 }
             }
         }

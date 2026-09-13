@@ -1,5 +1,12 @@
 # Safety model
 
+Every production command initializes the pinned `DoctorMncsRuntime` before
+acquiring repository state. Artifact admission, session opening, value
+transport, unexpected status, and return-shape mismatches are tool failures;
+Doctor exits 4 and never falls back silently to its Rust reference policy.
+Reports record the MNCS profile, backend, language revision, source hashes,
+artifact identities, and entrypoints used.
+
 ## Applicability levels
 
 | Level | Meaning | Auto-applied? |

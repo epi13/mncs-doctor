@@ -45,6 +45,28 @@ fn dry_run_plan_equals_applied_result() {
         String::from_utf8_lossy(&out.stderr)
     );
     let applied = stdout_json(&out);
+    assert_eq!(applied["policy"]["engine"], "mncs");
+    let entrypoints = applied["policy"]["entrypoints"].as_array().unwrap();
+    for expected in [
+        "doctor.discovery.v1::directory_decision",
+        "doctor.discovery.v1::file_class",
+        "doctor.scanner.v1::feed",
+        "doctor.scanner.v1::finish",
+        "doctor.version.v1::classify",
+        "doctor.fix.v1::stop_rule",
+        "doctor.edits.v1::pair_conflict",
+        "doctor.verify.v1::delta_ok",
+        "doctor.verify.v1::compose",
+        "doctor.health.v1::check_status_with_skip",
+        "doctor.health.v1::overall",
+        "doctor.report.v1::exit_for",
+        "doctor.transaction.v1::validate_target",
+    ] {
+        assert!(
+            entrypoints.iter().any(|entrypoint| entrypoint == expected),
+            "live fix path omitted {expected}: {entrypoints:?}"
+        );
+    }
     for (rel, fp) in &expected_fp {
         let actual = sha_of(&read_bytes(&root, rel));
         assert_eq!(

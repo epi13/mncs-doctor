@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-scanner-backend-v1",
+  "cases": [
+    {
+      "id": "bom-and-lf",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.scanner.v1", "function": "feed"},
+        "arguments": [
+          {
+            "sequence": {
+              "values": [
+                {"byte": {"value": 239}},
+                {"byte": {"value": 187}},
+                {"byte": {"value": 191}},
+                {"byte": {"value": 10}}
+              ]
+            }
+          },
+          {
+            "sequence": {
+              "values": [
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+                {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}}
+              ]
+            }
+          }
+        ],
+        "step_budget": 4096
+      },
+      "expected": [
+        {
+          "sequence": {
+            "values": [
+              {"integer": {"value": 3, "type": {"bits": 64, "signed": false}}},
+              {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+              {"integer": {"value": 1, "type": {"bits": 64, "signed": false}}},
+              {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+              {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}},
+              {"integer": {"value": 0, "type": {"bits": 64, "signed": false}}}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

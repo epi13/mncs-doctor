@@ -28,7 +28,9 @@ conflicts, deterministic ordering, SHA-256 stale-base refusal) and a
 `Diagnostic` envelope shaped as a *proposal* for the shared contract
 (code, severity, span, message, explanation, applicability, version
 metadata, migration transition). Built-in providers cover SAFE hygiene
-only (whitespace, final newline, CRLF, BOM).
+only (whitespace, final newline, CRLF, BOM). Production fix planning,
+conflict validation, and application now call the MNCS edit policy; the
+Rust edit implementation remains an independent oracle and host mechanism.
 
 ## Why the workaround is insufficient
 

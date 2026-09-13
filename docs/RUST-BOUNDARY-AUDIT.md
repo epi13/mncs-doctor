@@ -8,13 +8,16 @@ execution/toolchain incomplete (pressure at compiler/runtime/backend) ·
 **D** intentionally host-side (narrow, reasoned) · **E** temporary
 bootstrap with a concrete next conversion target.
 
-Bridge (proven 2026-09-13): `mncs-embed` (pinned rev, dev-dependency)
-compiles `mncs/doctor/*.mncs` in-process (`from_source`,
-`mncs-research-bytecode`) and calls scalar/array entrypoints via
-`call_json`. Records/enums live inside MNCS; codes cross the boundary
+Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
+`DoctorMncsRuntime` opens the checked-in `mncs/doctor/family.backend.json`
+(`mncs-research-bytecode`) once per process, retains one session for all ten
+imported policy modules, and calls scalar/array entrypoints via `call_json`.
+Records/enums live inside MNCS; codes cross the boundary
 (token_set pattern, stdlib precedent). Fail-closed transport is pinned:
 length/signedness mismatches refuse as `invalid_request`
-(`MNCS_VALUE_CONTRACT`), never silently (see `tests/mncs_parity.rs`).
+(`MNCS_VALUE_CONTRACT`), never silently. Reports include source/artifact
+identities and the entrypoints actually used (see `tests/mncs_parity.rs` and
+`tests/doctor.rs`).
 
 ## Module verdicts
 
@@ -23,8 +26,8 @@ length/signedness mismatches refuse as `invalid_request`
 with 1:1 parity (`parity_version_*`). Registry *data* (which profiles
 exist, which is current) stays host-loaded by design: it is upstream
 knowledge (DOC-P-007), and MNCS takes `cur_major/cur_minor` as arguments
-so no current-version assumption is baked in. Rust retained as the
-shipped runtime path (E-toward-D, see below).
+so no current-version assumption is baked in. Rust retains only the registry
+data and host-facing version parsing; production classification is MNCS.
 
 ### `health.rs` — A (policy)
 `combine`/`overall`/`check_status`/`rank` live in
@@ -50,18 +53,19 @@ byte-string ingress is the gap). Span application stays host-side (D).
 ### `fix.rs` — A (policy) + E/D (execution)
 `eligible`/`merge_verdict`/`stop_rule`/`seen_before` live in
 `mncs/doctor/fix.mncs` with parity over the full eligibility matrix and
-stopping-rule precedences (`parity_fix_*`). Provider execution (text
-scanning) and loop driving stay host-side: providers need unbounded text
-(E, next target after a text-ingress probe); the loop needs session
-reuse across rounds (E, batch API exists — `mncs_session_call_batch`).
+stopping-rule precedences (`parity_fix_*`). Production planning, edit
+conflict validation, and loop decisions use MNCS; providers still acquire
+text and construct candidate edits in Rust. Chunk-fed BOM/newline scanning
+is also MNCS-backed, while full delimiter/hygiene diagnostic construction
+remains host-side. The missing safe Rust batch API is DOC-P-020.
 
-### `diagnostics.rs` — D (model) + E (scanner)
+### `diagnostics.rs` — D (model) + E (semantic scanner)
 The `Diagnostic` envelope is the shared-contract proposal (D: it *is*
-the boundary). The scanner stays Rust (E): full-file multi-pattern
-hygiene scanning needs unbounded text ingress; MNCS byte views are
-≤64B chunks and file ingress is chunked host reads. Next target: probe
-chunk-fed scanning (u64-code windows, token_set pattern) to decide
-B-vs-E with evidence instead of assertion.
+the boundary). A real stateful chunk-fed scanner now crosses 64-byte views
+and produces BOM/newline counts in production. Full-file delimiter scanning,
+diagnostic text, and semantic language diagnostics remain Rust until the
+upstream structured diagnostics contract and richer ingress land
+(DOC-P-001/020).
 
 ### `report.rs` — A (policy) + D (rendering)
 `exit_for` lives in `mncs/doctor/report.mncs` with parity over 8
@@ -76,10 +80,11 @@ a real `verify_after` cross-check (`parity_verify_compose`).
 Re-diagnosis execution stays host-side (D); process spawning stays host
 side (B: no spawn primitive — DOC-P-011).
 
-### `transaction.rs` — E (policy) + C/D/B (mechanism)
-Policy (ordering, staleness refusal, outcome classification) is
- MNCS-expressible in principle but **not yet attempted** (E, next target:
-plan/rollback-plan entrypoints over op-code windows). Mechanism splits:
+### `transaction.rs` — A (policy) + C/D/B (mechanism)
+Target presence, identical-target, stale-base, symlink, and regular-file
+classification are decided by `doctor.transaction.v1` during every live
+validation. The Rust reference remains for differential tests. Mechanism
+splits:
 - Covered by 0.16 on the bytecode backend: create, positioned write,
   append, mkdir, same-dir atomic rename (stage-then-rename, P2-005),
   sync barrier, listing, chunked reads (C: works, but compiled backends
@@ -87,17 +92,17 @@ plan/rollback-plan entrypoints over op-code windows). Mechanism splits:
 - Absent: permission-bit access, symlink-identity/target reads,
   temp-file primitives, file metadata (size/mtime), recursive
   enumeration (B: DOC-P-012…016).
-No mutation moves to MNCS until the safety contract (stale-base,
-symlink refusal, rollback, permission preservation) is reproducible
-there. Fail closed.
+Unsafe mutation is still Rust. The policy call is fail-closed and does not
+authorize a write by itself; stale-base, symlink refusal, rollback, and
+permission preservation remain host invariants.
 
-### `discovery.rs` — E (policy) + B (mechanism)
-Policy (exclusion decisions, extension classification over u64-code
-windows, deterministic ordering) is MNCS-expressible by the same
-token_set pattern (E, concrete approach documented, not yet built).
-Mechanism (directory enumeration beyond one level, metadata, symlink
-inspection) is B (DOC-P-012…014). `fs_list` covers one level with kinds
-(file/dir/other); multi-level navigation handles are not exposed.
+### `discovery.rs` — A (policy) + B (mechanism)
+Production `doctor.discovery.v1` decides exclusion/traversal verdicts and
+file classes from host-acquired compact facts; deterministic ordering stays
+in the host walker. Mechanism (directory enumeration beyond one level,
+metadata, symlink inspection) is B (DOC-P-008…014). `fs_list` covers one
+level with kinds (file/dir/other); multi-level navigation handles are not
+exposed.
 
 ### `toolchain.rs` — D
 Host-tool probing (PATH search, subprocess, `--help` sniffing) is
@@ -105,41 +110,43 @@ inherently host-side. The study-JSON mapping is already the narrowest
 possible semantic bridge (tolerant parse, DOC201 fallback, Manual
 default). No conversion target.
 
-### `main.rs` — D (launcher) + E (orchestration)
-A thin launcher (argv/env acquisition, capability setup, exit status) is
-permanently D. The current handler bodies still hold orchestration that
-belongs in MNCS-driven loops (planning rounds, convergence driving).
-Next target: drive one command's loop from MNCS via the batch call API
-once `mncs-embed` is promoted from dev- to main dependency.
+### `main.rs` — D (launcher/effects) + A (orchestration boundary)
+The launcher acquires argv, workspace paths, filesystem bytes/metadata,
+process results, renders human/JSON output, and returns the OS exit code.
+All four command handlers initialize the runtime and route meaningful
+discovery, version, health, edit, fix, migration, verification, transaction,
+scanner, and report decisions through it. Remaining orchestration is host
+control flow around those policy calls, not a hidden Rust policy fallback.
 
-## Runtime-integration unblockers (why Rust still ships the runtime)
+## Production-runtime result
 
-1. Promote `mncs-embed` dev- → main dependency (measured cost: ~40 s
-   first build at the pinned rev, cached after; git-rev pinning policy
-   needed to match ecosystem vendoring norms).
-2. Session lifecycle design (compile once per command vs per process;
-   artifact digest pinning in reports for audit).
-3. One command loop driven end-to-end as proof (candidate: `doctor`
-   aggregation, read-only, no mutation risk).
-Until then, parity tests make the MNCS core a proven drop-in and the
-Rust a reference oracle — duplication with a removal condition, not
-without a reason.
+The runtime integration is now shipped. `mncs-embed` is a normal dependency;
+`OnceLock` verifies/opens the checked-in ten-module family artifact once per
+process and reuses its session. Every call requires one returned value, checks
+the exact scalar/sequence shape, rejects unsupported/failing policy calls, and
+records the shared artifact identity/digest. Initialization and call failures
+return tool failure (exit 4); there is no silent Rust fallback.
+
+The source-to-family freeze path was adopted: `mncs/doctor_family.mncs` imports
+all ten Doctor modules, `mncs compile` + `MNCS_LIBRARY_PATH` produces the
+checked-in family artifact, and `mncs experiment execute` returns all ten
+wrapper expectations. `src/mncs_runtime.rs` also validates the raw artifact
+digest before `Artifact::from_json` validates the canonical identity.
 
 ## Backend finding
 
-All MNCS core modules execute on `mncs-research-bytecode` (pinned rev).
-Compiled backends (C11/WASM/LLVM/Cranelift) refuse *effects*; our
-modules are pure, but pure-policy portability is **untested, not
-claimed**: there is no source-level multi-backend value-I/O harness
-(`conformance` is predicate-based). DOC-P-017 records this (tooling,
-low). No 0.16 effect primitive is used by the core, so the C-class
-backend gap does not touch current execution.
+All ten MNCS core modules execute on `mncs-research-bytecode` (pinned rev).
+The upstream source-level value runner executed every module on research
+bytecode, portable WASM, C11, LLVM, and Cranelift; all values matched. Six
+modules retain compiler `UNKNOWN` evidence because unresolved obligations
+remain (DOC-P-021), so production does not silently promote compiled
+backends. No 0.16 effect primitive is used by the core; the separate
+filesystem probe is intentionally bytecode-only.
 
-## Metrics at audit time
+## Metrics at campaign close
 
-- Rust: 5,863 LOC baseline (12 modules), retained as shipped runtime.
-- MNCS implementation: 7 modules (~380 LOC, `mncs/doctor/`).
-- Parity: 13 differential tests, all green; 1 semantic divergence found
-  and resolved in MNCS (empty-fold identity now matches the reference).
-- Transport: scalars + fixed sequences proven; records require exact
-  canonical identities (fail-closed otherwise — pinned as behavior).
+See `docs/CAMPAIGN-2026-09-PRODUCTION.md` for the measured before/after
+table. Net Rust LOC increases because the first production runtime boundary,
+host-fact seams, and independent oracle wrappers were added; the live
+responsibility moved is policy, not merely line count. The Rust duplicates
+remain only where their independent differential value is explicit.

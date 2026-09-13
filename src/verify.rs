@@ -111,9 +111,22 @@ pub fn verify_after(
     for file in files {
         after.insert(file.relative.clone(), backend.diagnose(file));
     }
+    verify_after_with_diagnostics(files.len(), before, &after, idempotent, external)
+}
+
+/// Verify using diagnostics that were already produced by a selected policy
+/// backend. This keeps production MNCS runs from re-diagnosing through the
+/// Rust scanner merely because the verification envelope is host-owned.
+pub fn verify_after_with_diagnostics(
+    files_rechecked: usize,
+    before: &BTreeMap<String, Vec<crate::diagnostics::Diagnostic>>,
+    after: &BTreeMap<String, Vec<crate::diagnostics::Diagnostic>>,
+    idempotent: Option<bool>,
+    external: Vec<ExternalCheck>,
+) -> VerificationOutcome {
     let errors_before = count_errors(before);
-    let errors_after = count_errors(&after);
-    let warnings_after = count_warnings(&after);
+    let errors_after = count_errors(after);
+    let warnings_after = count_warnings(after);
     let mut notes = Vec::new();
     if errors_after > errors_before {
         notes.push(format!(
@@ -132,7 +145,7 @@ pub fn verify_after(
         && idempotent != Some(false)
         && external.iter().all(|c| c.success);
     VerificationOutcome {
-        files_rechecked: files.len(),
+        files_rechecked,
         errors_before,
         errors_after,
         warnings_after,

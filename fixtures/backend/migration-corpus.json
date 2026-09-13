@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-migration-backend-v1",
+  "cases": [
+    {
+      "id": "forward-span",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.migration.v1", "function": "span_verdict"},
+        "arguments": [
+          {"integer": {"value": 8, "type": {"bits": 64, "signed": true}}},
+          {"integer": {"value": 16, "type": {"bits": 64, "signed": true}}}
+        ],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 0, "type": {"bits": 64, "signed": true}}}]
+    }
+  ]
+}

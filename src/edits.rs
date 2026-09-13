@@ -10,6 +10,7 @@ use thiserror::Error;
 
 use crate::discovery::fingerprint;
 use crate::fix::Applicability;
+use crate::mncs_runtime::DoctorMncsRuntime;
 
 /// A single span replacement. `start..end` are byte offsets into the base
 /// content; `start == end` is an insertion, empty `replacement` a deletion.
@@ -83,6 +84,8 @@ pub enum EditError {
     },
     #[error("stale base: expected fingerprint {expected}, found {found}")]
     StaleBase { expected: String, found: String },
+    #[error("MNCS edit policy failed: {0}")]
+    Policy(String),
 }
 
 impl EditSet {
@@ -103,9 +106,7 @@ impl EditSet {
     /// (`a.end == b.start`) do not conflict. Deterministic: edits are
     /// checked in sorted order.
     pub fn validate(&self, base_len: usize) -> Result<(), EditError> {
-        for edit in &self.edits {
-            edit.validate(base_len)?;
-        }
+        self.validate_bounds(base_len)?;
         let mut sorted: Vec<&TextEdit> = self.edits.iter().collect();
         sorted.sort_by_key(|e| (e.start, e.end));
         for pair in sorted.windows(2) {
@@ -115,6 +116,38 @@ impl EditSet {
             let ordered = a.end < b.start || (a.end == b.start && a.start < b.start);
             let same_point_insert = a.start == a.end && a.start == b.start && b.start == b.end;
             if !ordered || same_point_insert {
+                return Err(EditError::Overlap {
+                    a_start: a.start,
+                    a_end: a.end,
+                    b_start: b.start,
+                    b_end: b.end,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_bounds(&self, base_len: usize) -> Result<(), EditError> {
+        for edit in &self.edits {
+            edit.validate(base_len)?;
+        }
+        Ok(())
+    }
+
+    /// Validate using the production MNCS edit policy. The Rust `validate`
+    /// method above remains an independent oracle for differential tests.
+    pub fn validate_with_mncs(&self, base_len: usize) -> Result<(), EditError> {
+        self.validate_bounds(base_len)?;
+        let policy = DoctorMncsRuntime::production()
+            .map_err(|error| EditError::Policy(error.to_string()))?;
+        let mut sorted: Vec<&TextEdit> = self.edits.iter().collect();
+        sorted.sort_by_key(|e| (e.start, e.end));
+        for pair in sorted.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let conflict = policy
+                .edits_pair_conflict(a.start as u64, a.end as u64, b.start as u64, b.end as u64)
+                .map_err(|error| EditError::Policy(error.to_string()))?;
+            if conflict {
                 return Err(EditError::Overlap {
                     a_start: a.start,
                     a_end: a.end,
@@ -137,6 +170,25 @@ impl EditSet {
             });
         }
         self.validate(base.len())?;
+        let mut sorted: Vec<&TextEdit> = self.edits.iter().collect();
+        sorted.sort_by_key(|e| (e.start, e.end));
+        let mut out = base.to_owned();
+        for edit in sorted.into_iter().rev() {
+            out.replace_range(edit.start..edit.end, &edit.replacement);
+        }
+        Ok(out)
+    }
+
+    /// Apply after production MNCS conflict validation. Fingerprint and text
+    /// replacement remain host mechanisms.
+    pub fn apply_with_mncs(&self, base: &str) -> Result<String, EditError> {
+        if fingerprint(base.as_bytes()) != self.base_fingerprint {
+            return Err(EditError::StaleBase {
+                expected: self.base_fingerprint.clone(),
+                found: fingerprint(base.as_bytes()),
+            });
+        }
+        self.validate_with_mncs(base.len())?;
         let mut sorted: Vec<&TextEdit> = self.edits.iter().collect();
         sorted.sort_by_key(|e| (e.start, e.end));
         let mut out = base.to_owned();

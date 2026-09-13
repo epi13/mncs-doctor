@@ -13,7 +13,7 @@ Frequency: common (every `RustCliBackend` invocation)
 `RustCliBackend` runs `mncs source-study <file>` per file and needs
 machine-readable diagnostics.
 
-## Discovery (2026-09-13)
+## Discovery (2026-09-12)
 
 `source-study` already emits a JSON artifact on stdout with a
 `diagnostics` array (`{code, stage, severity, message,

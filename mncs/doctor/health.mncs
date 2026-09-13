@@ -38,6 +38,32 @@ fn check_status(error_count: u64, warning_count: u64) -> (result: u64) {
     return 0;
 }
 
+// Check status with explicit advisory and skipped inputs. Findings still
+// dominate a skipped check; selected informational findings can be promoted
+// by a host-supplied policy fact (currently sealed-profile drift). The
+// classification itself remains in MNCS.
+fn check_status_with_skip(
+    error_count: u64,
+    warning_count: u64,
+    info_count: u64,
+    promote_info: bool,
+    skipped: bool
+) -> (result: u64) {
+    if error_count > 0 {
+        return 2;
+    }
+    if warning_count > 0 {
+        return 1;
+    }
+    if promote_info && info_count > 0 {
+        return 1;
+    }
+    if skipped {
+        return 3;
+    }
+    return 0;
+}
+
 // Overall status over a fixed window of check statuses plus a live count.
 // The tail beyond count is never observed, so callers pack any number of
 // checks into the window. The fold starts at pass, matching the reference:

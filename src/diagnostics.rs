@@ -14,8 +14,10 @@
 //!    types would implement this same trait).
 //! 3. [`ScannerBackend`] — a deliberately shallow, byte-level repository
 //!    hygiene scan (header presence, declared-version classification, module
-//!    declaration presence, delimiter balance, encoding/newline facts). It
-//!    mirrors the *documented* header rule of upstream
+//!    declaration presence, delimiter balance, and detailed diagnostic
+//!    construction). Production BOM/newline facts are first obtained through
+//!    the stateful `doctor.scanner.v1` ingress. It mirrors the *documented*
+//!    header rule of upstream
 //!    `infer_source_profile` (first non-blank/non-comment `mncs X.Y;`) and
 //!    performs no semantic interpretation. Anything deeper belongs upstream
 //!    (see `pressure/DOC-P-001.md`).
@@ -246,15 +248,27 @@ fn line_count(text: &str) -> u32 {
 /// Shallow hygiene backend. See module docs for the non-goals.
 pub struct ScannerBackend;
 
-impl LanguageBackend for ScannerBackend {
-    fn name(&self) -> &str {
+impl ScannerBackend {
+    pub fn name(&self) -> &str {
         "scanner"
     }
 
-    fn diagnose(&self, file: &SourceFile) -> Vec<Diagnostic> {
+    /// Run the hygiene scan with an injected version-policy classifier.
+    ///
+    /// The scanner still owns byte-level facts and diagnostic construction,
+    /// but callers can route the version decision through the production
+    /// MNCS policy runtime instead of silently using the Rust oracle.
+    pub fn diagnose_with_version_classifier<F>(
+        &self,
+        file: &SourceFile,
+        classifier: F,
+    ) -> Result<Vec<Diagnostic>, String>
+    where
+        F: Fn(LanguageVersion) -> Result<VersionClass, String>,
+    {
         let mut out = Vec::new();
         let Some(text) = file.text.as_deref() else {
-            return vec![Diagnostic {
+            return Ok(vec![Diagnostic {
                 code: "DOC108".to_owned(),
                 severity: Severity::Error,
                 source: DiagnosticSource::Hygiene,
@@ -269,7 +283,7 @@ impl LanguageBackend for ScannerBackend {
                 language_version: None,
                 migration_transition: None,
                 backend: self.name().to_owned(),
-            }];
+            }]);
         };
         if file.has_bom {
             out.push(Diagnostic {
@@ -331,7 +345,7 @@ impl LanguageBackend for ScannerBackend {
                 migration_transition: None,
                 backend: self.name().to_owned(),
             }),
-            (Some(_), Some(version)) => match classify(Some(version)) {
+            (Some(_), Some(version)) => match classifier(version)? {
                 VersionClass::Current => {}
                 VersionClass::Sealed => out.push(Diagnostic {
                     code: "DOC103".to_owned(),
@@ -435,7 +449,18 @@ impl LanguageBackend for ScannerBackend {
                 backend: self.name().to_owned(),
             });
         }
-        out
+        Ok(out)
+    }
+}
+
+impl LanguageBackend for ScannerBackend {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn diagnose(&self, file: &SourceFile) -> Vec<Diagnostic> {
+        self.diagnose_with_version_classifier(file, |version| Ok(classify(Some(version))))
+            .expect("the Rust reference version classifier is infallible")
     }
 }
 

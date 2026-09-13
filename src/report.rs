@@ -14,6 +14,7 @@ use crate::discovery::InventorySummary;
 use crate::fix::Convergence;
 use crate::health::{overall_status, CheckResult, Status};
 use crate::migration::MigrationRecord;
+use crate::mncs_runtime::PolicyProvenance;
 use crate::toolchain::ToolchainStatus;
 use crate::transaction::DiffSummary;
 use crate::verify::VerificationOutcome;
@@ -79,6 +80,9 @@ pub struct Report {
     pub verification: Option<VerificationOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub toolchain: Option<ToolchainStatus>,
+    /// Which policy engine and exact embedded artifacts produced decisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicyProvenance>,
     #[serde(default)]
     pub notes: Vec<String>,
     pub exit_code: i32,
@@ -100,6 +104,7 @@ impl Report {
             migrations: Vec::new(),
             verification: None,
             toolchain: None,
+            policy: None,
             notes: Vec::new(),
             exit_code: 0,
             exit_meaning: String::new(),

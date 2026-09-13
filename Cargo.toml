@@ -22,12 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
+# Production policy runtime. The revision is intentionally pinned so a
+# Doctor report can identify the exact language implementation that ran.
+mncs-embed = { git = "https://github.com/epi13/mncs-language", rev = "a0255f8405484481b203117a659b0c1ca0fa7a5e" }
 
 [profile.release]
 opt-level = 2
-
-[dev-dependencies]
-# Host bridge for MNCS-core parity tests: compile policy sources
-# in-process and call entrypoints with canonical ABI values.
-# Pinned to a verified mncs-language rev; see docs/RUST-BOUNDARY-AUDIT.md.
-mncs-embed = { git = "https://github.com/epi13/mncs-language", rev = "85051d2a44db77133e831c7cca30eba67123a60b" }

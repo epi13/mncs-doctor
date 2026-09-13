@@ -1,0 +1,50 @@
+mncs 0.16;
+module doctor.scanner.v1;
+
+// doctor.scanner — bounded byte-ingress policy for source hygiene.
+//
+// The host reads arbitrary bytes and feeds them in up-to-64-byte windows.
+// The carried six-cell state is:
+//   0 BOM prefix progress, 1 BOM found,
+//   2 bare LF count, 3 CRLF count, 4 bare CR count, 5 pending CR.
+// Counts are evidence for newline classification; the host may saturate or
+// widen them when it needs a larger file-level accounting domain.
+
+fn feed(bytes: [byte; up_to 64], state: [u64; 6]) -> (result: [u64; 6]) {
+    iterate i over bytes carrying next_state: [u64; 6] = state {
+        let b: byte = bytes[i];
+        let prior_cr: bool = next_state[5] == 1;
+        let is_cr: bool = b == 13;
+        let is_lf: bool = b == 10;
+        let bare_lf: u64 = (is_lf && !prior_cr) as u64;
+        let crlf: u64 = (is_lf && prior_cr) as u64;
+        let bare_cr: u64 = (prior_cr && !is_lf) as u64;
+        let next_bom: u64 = select(
+            next_state[0] == 0 && b == 239,
+            1,
+            select(
+                next_state[0] == 1 && b == 187,
+                2,
+                select(
+                    next_state[0] == 2 && b == 191,
+                    3,
+                    select(next_state[0] < 3, 4, next_state[0])
+                )
+            )
+        );
+        let with_bom: [u64; 6] = replace(next_state, 0, next_bom);
+        let with_bom: [u64; 6] = replace(with_bom, 1, select(next_bom == 3, 1, with_bom[1]));
+        let with_lf: [u64; 6] = replace(with_bom, 2, with_bom[2] + bare_lf);
+        let with_crlf: [u64; 6] = replace(with_lf, 3, with_lf[3] + crlf);
+        let with_bare_cr: [u64; 6] = replace(with_crlf, 4, with_crlf[4] + bare_cr);
+        next next_state = replace(with_bare_cr, 5, is_cr as u64);
+    }
+    return next_state;
+}
+
+// Flush a trailing CR at end-of-input. A CR followed by LF is counted by
+// `feed`; only an unpaired final CR remains pending here.
+fn finish(state: [u64; 6]) -> (result: [u64; 6]) {
+    let with_cr: [u64; 6] = replace(state, 4, state[4] + (state[5] == 1) as u64);
+    return replace(with_cr, 5, 0);
+}

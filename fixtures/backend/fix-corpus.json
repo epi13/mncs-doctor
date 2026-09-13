@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1",
+  "name": "doctor-fix-backend-v1",
+  "cases": [
+    {
+      "id": "no-conflict",
+      "request": {
+        "schema_version": "0.1",
+        "target": {"module": "doctor.fix.v1", "function": "merge_verdict"},
+        "arguments": [{"integer": {"value": 0, "type": {"bits": 64, "signed": false}}}],
+        "step_budget": 512
+      },
+      "expected": [{"integer": {"value": 0, "type": {"bits": 64, "signed": false}}}]
+    }
+  ]
+}

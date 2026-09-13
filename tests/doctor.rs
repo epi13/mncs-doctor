@@ -18,6 +18,31 @@ fn healthy_repo_reports_two_files() {
     assert_eq!(report["exit_code"], 0);
     assert_eq!(report["command"], "doctor");
     assert!(report["schema_version"].is_string());
+    assert_eq!(report["policy"]["engine"], "mncs");
+    assert_eq!(report["policy"]["backend"], "mncs-research-bytecode");
+    let entrypoints = report["policy"]["entrypoints"].as_array().unwrap();
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| { entrypoint == "doctor.health.v1::check_status_with_skip" }));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.report.v1::exit_for"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.discovery.v1::directory_decision"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.discovery.v1::file_class"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.version.v1::classify"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::feed"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::finish"));
+    assert_eq!(report["policy"]["modules"].as_object().unwrap().len(), 10);
     // No error diagnostics anywhere.
     for (_path, diags) in report["file_diagnostics"].as_object().unwrap() {
         for diag in diags.as_array().unwrap() {
@@ -136,4 +161,33 @@ fn human_output_is_stable_and_json_matches() {
     assert!(a.contains("files checked"));
     assert!(a.contains("Checks:"));
     let _ = read_bytes(&root, "mncs-forge.toml");
+}
+
+#[test]
+fn verify_command_uses_mncs_verification_and_report_policy() {
+    let root = stage("repos/healthy");
+    let out = run(&root, &["verify", "--root", ".", "--json"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = stdout_json(&out);
+    assert_eq!(report["policy"]["engine"], "mncs");
+    assert_eq!(report["verification"]["passed"], true);
+    let entrypoints = report["policy"]["entrypoints"].as_array().unwrap();
+    for expected in [
+        "doctor.discovery.v1::directory_decision",
+        "doctor.discovery.v1::file_class",
+        "doctor.scanner.v1::feed",
+        "doctor.scanner.v1::finish",
+        "doctor.verify.v1::delta_ok",
+        "doctor.verify.v1::compose",
+        "doctor.report.v1::exit_for",
+    ] {
+        assert!(
+            entrypoints.iter().any(|entrypoint| entrypoint == expected),
+            "live verify path omitted {expected}: {entrypoints:?}"
+        );
+    }
 }

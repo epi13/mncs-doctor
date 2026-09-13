@@ -13,7 +13,7 @@ Frequency: per workspace (`mncs-forge.toml`, manifests)
 Manifest health checks (`version` field presence) and future metadata
 upgrades need to read `mncs-forge.toml` and `.mncs.json` sidecars.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 No TOML primitive exists in the registry or stdlib; manifest checks
 stay host-side (`check_manifest_health`).

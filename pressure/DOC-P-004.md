@@ -1,6 +1,6 @@
 # DOC-P-004 — SUPERSEDED: split into scoped findings
 
-Status: superseded (2026-09-13)
+Status: superseded (2026-09-12)
 
 This omnibus entry grouped unrelated host-operation concerns and is
 partly stale: Profile 0.16 demonstrably provides bounded file creation,
