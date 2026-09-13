@@ -66,6 +66,9 @@ language (API surface) + tooling (packaging).
 
 ## Evidence
 
-- `src/diagnostics.rs` (`LanguageBackend`, `ScannerBackend`)
+- `src/diagnostics.rs` (`LanguageBackend`, `ScannerBackend`); the bounded
+  BOM/newline ingress now runs through `doctor.scanner.v1`, while detailed
+  text diagnostics remain host-side until a structured upstream API exists.
 - `src/toolchain.rs` (`RustCliBackend`, fail-closed output mapping)
-- `cargo test` (56 unit + 18 integration tests pin the current boundary)
+- `tests/doctor.rs` and `tests/mncs_parity.rs` (live production provenance
+  plus transport/parity coverage)

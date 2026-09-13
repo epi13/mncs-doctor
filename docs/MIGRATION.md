@@ -19,6 +19,11 @@ Same version → empty no-op plan. Downgrades → `NoPath` (no
 down-migration knowledge exists). Versions outside the registry graph →
 `NoPath` with the reason.
 
+The path is evaluated by the production `doctor.migration.v1` policy module
+after the host registry supplies transition facts. The host still owns the
+transition data and byte-level transform mechanism; an MNCS `blocked` verdict
+is fail-closed and must agree with the registry plan before application.
+
 ## Current coverage (honest)
 
 Upstream publishes no source-level transition rules, so the production

@@ -1,6 +1,6 @@
 # DOC-P-019 — Typed record/enum host-call ergonomics
 
-Status: open
+Status: workaround
 
 Category: tooling (embedding DX)
 
@@ -13,22 +13,26 @@ Frequency: per entrypoint using composite values
 Calling MNCS entrypoints that take record/enum arguments from the Rust
 host with canonical ABI JSON.
 
-## Current behavior (verified 2026-09-13 by direct attempt)
+## Current behavior (verified 2026-09-12 by direct attempt)
 
-Composite values cross only with exact canonical identities
+Composite values cross with exact canonical identities
 (`record:mncs:0.2:record-type:<module>::<Name>::<fields…>`); anything
 else fails closed as `invalid_request` with an `MNCS_VALUE_CONTRACT`
 message. The failure text names the expected identity, which made the
-rule discoverable — good fail-closed behavior, rough ergonomics. There
-is no host-side helper to construct or pre-validate typed composite
-values (no `ExecutionValue::record(module, name, fields)` constructor
-resolving identities, no dry-run check).
+rule discoverable — good fail-closed behavior, rough ergonomics. A direct
+compiler-produced typed-record artifact also round-tripped through the
+embed boundary, proving the representation is usable when the caller has
+the canonical schema. There is still no host-side helper to construct or
+pre-validate typed composite values (no
+`ExecutionValue::record(module, name, fields)` constructor resolving
+identities, no dry-run check).
 
 ## Workaround (adopted)
 
-Scalar-only boundary: records/enums live inside MNCS, codes cross
-(token_set pattern, stdlib precedent). Composites were proven to cross
-fail-closed and then deliberately avoided at the boundary.
+Scalar-only boundary for current Doctor calls: records/enums live inside
+MNCS, codes cross (token_set pattern, stdlib precedent). Composite input
+and output transport is covered by a fail-closed parity probe and is
+available for a future schema where scalar codes become less readable.
 
 ## Removal condition
 
@@ -39,6 +43,6 @@ op windows).
 
 ## Evidence
 
-`tests/mncs_parity.rs::transport_mismatches_refuse_fail_closed`
-(pins the fail-closed behavior); bridge-probe transcript showing the
-expected-identity message guiding correction.
+`tests/mncs_parity.rs::transport_mismatches_refuse_fail_closed` and the
+typed-record round-trip test pin both the refusal and successful canonical
+transport; `src/mncs_runtime.rs` deliberately uses scalar contracts today.

@@ -10,10 +10,12 @@ suite compares against.
 
 ## Layout
 
-`mncs/doctor/<area>.mncs` — one self-contained module per area (no
-`use` imports: `Artifact::from_source` executes frozen self-contained
-sources; see DOC-P-018). Shared scalar contract below; tiny helpers are
-duplicated per file deliberately until a multi-module freeze step lands.
+`mncs/doctor/<area>.mncs` — one policy module per area. The
+`mncs/doctor_family.mncs` freeze root imports all ten modules; its checked-in
+`mncs/doctor/family.backend.json` is generated with the upstream compiler and
+opened by the production runtime. See DOC-P-018 and
+`docs/BACKEND-MATRIX-2026-09.md`. Shared scalar conventions remain explicit
+until the language provides a richer stable typed transport.
 
 ## Value contract (token_set pattern)
 
@@ -40,9 +42,12 @@ assumption is baked into these sources.
 
 ## Executing
 
-Compiled and called through `mncs-embed` (pinned rev, see
-`Cargo.toml` dev-dependencies and `tests/mncs_parity.rs` for the
-calling convention). Direct CLI typecheck:
+Opened and called through the normal `mncs-embed` dependency (pinned rev;
+see `Cargo.toml`, `src/mncs_runtime.rs`, and `tests/mncs_parity.rs`).
+`DoctorMncsRuntime` verifies and opens the frozen family once per process,
+then production `doctor`, `fix`, `migrate`, and `verify` reuse that session.
+Regenerate the family with `scripts/freeze-doctor-family.sh`. Direct CLI
+typecheck:
 
 ```sh
 mncs source-study mncs/doctor/version.mncs
@@ -63,3 +68,7 @@ parity test executes through them green.
 - `fix.mncs` — eligibility gate, merge verdict, stop rule, seen-before.
 - `report.mncs` — exit-code policy.
 - `verify.mncs` — error-delta and three-channel composition verdicts.
+- `transaction.mncs` — target presence, symlink, stale-base, and identical
+  target validation policy.
+- `discovery.mncs` — directory traversal and file classification policy.
+- `scanner.mncs` — stateful 64-byte BOM/newline scanner ingress.

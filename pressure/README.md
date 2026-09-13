@@ -10,10 +10,12 @@ Status vocabulary: `open` (confirmed) · `workaround` (stopgap shipped) ·
 `superseded` (split or landed elsewhere) · `fixed-upstream` (resolved;
 retained as archive) · `rejected-as-pressure` (not a language concern).
 
-Reconciled 2026-09-13 against `mncs-language`/`mncs-compiler`/
+Reconciled 2026-09-12 against `mncs-language`/`mncs-compiler`/
 `mncs-language-service`/`mncs-forge-mcp`/RAVEL current main, Profile
-0.16 scope doc, registry, and live execution. DOC-P-004 was split (see
-its file); DOC-P-006's index line was stale and is corrected below.
+0.16 scope doc, registry, and live execution. This campaign additionally
+verified the production embed path, chunk-fed ingress, Profile 0.16 effects,
+the source-level backend matrix, and the compiler freeze path. DOC-P-004 was
+split (see its file); DOC-P-006's index line was stale and is corrected below.
 
 ## Index
 
@@ -35,9 +37,11 @@ its file); DOC-P-006's index line was stale and is corrected below.
 | [DOC-P-014](DOC-P-014.md) | No permission-bit access | medium | open |
 | [DOC-P-015](DOC-P-015.md) | No CLI argv / stdin / stdout interface | medium | open |
 | [DOC-P-016](DOC-P-016.md) | No TOML / project-metadata parsing | low | open |
-| [DOC-P-017](DOC-P-017.md) | No source-level multi-backend value harness | low | open |
-| [DOC-P-018](DOC-P-018.md) | `from_source` refuses `use` (no embed freeze) | low | open |
-| [DOC-P-019](DOC-P-019.md) | Typed record/enum host-call ergonomics | low | open |
+| [DOC-P-017](DOC-P-017.md) | No source-level multi-backend value harness | low | fixed-upstream |
+| [DOC-P-018](DOC-P-018.md) | `from_source` refuses `use` (no embed freeze) | low | fixed-upstream |
+| [DOC-P-019](DOC-P-019.md) | Typed record/enum host-call ergonomics | low | workaround |
+| [DOC-P-020](DOC-P-020.md) | No Rust session batch-call API | medium | open |
+| [DOC-P-021](DOC-P-021.md) | Pure backend values pass with unresolved obligations | medium | open |
 
 Covered by Profile 0.16, therefore **not** pressure (verified, not
 assumed): file creation, positioned writes, appends, mkdir, same-dir

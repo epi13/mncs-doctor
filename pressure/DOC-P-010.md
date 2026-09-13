@@ -13,7 +13,7 @@ Frequency: pervasive (every machine-readable report)
 `report.rs` emits versioned JSON reports with messages, paths,
 explanations, and provenance strings.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 Stdlib JSON (`json.mncs`, `json_emit.mncs`) handles ints-only canonical
 forms; strings are byte views without a joining/escaping/encoding

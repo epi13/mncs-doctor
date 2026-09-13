@@ -14,7 +14,7 @@ Discovery skips symlinked directories by default (cycle guard) and the
 transaction layer refuses symlink targets at validate *and* write time
 (TOCTOU guard). Both need to distinguish symlinks and inspect them.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 `fs_entry_kind_at` reports symlinks only as `other` (kind 2); no
 readlink/target primitive exists, and 0.16 hardening treats symlinks as

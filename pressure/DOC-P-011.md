@@ -14,7 +14,7 @@ Post-repair verification shells out to project commands (`cargo test`)
 and toolchain probes execute `mncs`/`cargo`/`ravel` with captured
 output and status codes.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 The profile registry contains no spawn/process/env/exit feature;
 0.16 non-goals exclude a conventional runtime model. There is no

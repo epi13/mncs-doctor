@@ -11,43 +11,52 @@ semantics, canonicalization, or transition knowledge.
 repository
   -> discovery   (root, walk, exclusions, deterministic inventory)
   -> inventory   (bytes, fingerprints, newline/BOM/mode facts)
-  -> diagnosis   (LanguageBackend: scanner today, language APIs tomorrow)
-  -> health      (7 registered checks -> structured findings)
-  -> planning    (fix plans | migration paths; dry-run renders diffs)
+  -> diagnosis   (host text diagnostics + MNCS scanner/version policy)
+  -> health      (7 registered checks -> MNCS status/aggregation policy)
+  -> planning    (MNCS edit/migration policy; dry-run renders diffs)
   -> transaction (fingerprint-validated, temp+rename, rollback)
-  -> verification(rescan, idempotence, optional external commands)
-  -> report      (human summary | versioned JSON, exit code)
+  -> verification(MNCS composition, rescan, idempotence, external commands)
+  -> report      (MNCS exit policy; host human/JSON rendering)
 ```
+
+The live command path enters `DoctorMncsRuntime` before discovery. It verifies
+and opens the checked-in ten-module family artifact once per process, retains
+one session for all imported policy modules, validates every scalar return,
+records entrypoints, and fails closed on initialization or call-contract
+errors. `mncs-embed` is a normal runtime dependency pinned to the language
+revision recorded in JSON reports.
 
 ## Modules and dependency direction
 
 ```text
-main.rs (CLI handlers: thin; no repair logic)
+main.rs (CLI launcher and host-effect orchestration)
   |
-  +-- discovery  (no deps within crate)
+  +-- mncs_runtime (embedded sessions, ABI/provenance/fail-closed boundary)
+  +-- discovery  (host acquisition + MNCS policy callback)
   +-- version    (no deps within crate)
   +-- diagnostics (discovery, version, fix::Applicability)
-  +-- edits      (discovery [fingerprint], fix::Applicability)
-  +-- fix        (diagnostics, discovery, edits)
-  +-- migration  (diagnostics [scan_header], discovery, fix)
-  +-- transaction(discovery [fingerprint])
+  +-- edits      (discovery [fingerprint], fix::Applicability, runtime policy)
+  +-- fix        (diagnostics, discovery, edits, runtime policy)
+  +-- migration  (diagnostics [scan_header], discovery, fix, runtime policy)
+  +-- transaction(discovery [fingerprint], runtime policy)
   +-- health     (diagnostics, discovery, toolchain, version)
   +-- toolchain  (diagnostics [backend trait], discovery)
-  +-- verify     (diagnostics, discovery)
-  +-- report     (all of the above, render only)
+  +-- verify     (diagnostics, discovery, runtime policy)
+  +-- report     (all of the above, host rendering)
 ```
 
 Rules:
 
 - `discovery` and `version` depend on nothing in-crate; everything else
   points at them, never the reverse.
-- CLI handlers orchestrate: parse args, call library functions, render.
-  No fix/migration/transaction logic lives in `main.rs`.
+- CLI handlers acquire argv, host facts, and effects, call runtime-backed
+  library functions, render, and return the process code. Policy decisions
+  do not silently fall back to the Rust oracle.
 - Core logic is library-first (`mncs_doctor`): Forge/Ravel or future
   harnesses can consume planning and reporting without the CLI.
-- Language knowledge enters only through `LanguageBackend`,
-  `MigrationRegistry` data, and the mirrored profile table — all three
-  documented as upstream-owned with pressure entries (DOC-P-001…007).
+- Language knowledge enters through `LanguageBackend`, `MigrationRegistry`
+  data, the mirrored profile table, and the pinned MNCS policy boundary.
+  Upstream-owned gaps remain pressure entries (DOC-P-001…021).
 
 ## Key invariants
 
@@ -56,11 +65,11 @@ Rules:
   (toolchain paths/versions are reported, not hidden).
 - Fail-closed mutation: fingerprint validation before *and* during commit,
   symlink refusal, unknown-edge refusal, review-gating. See `SAFETY.md`.
-- Convergence: fix application iterates to a fixpoint with oscillation
-  detection (applied-provider tracking) and a 16-iteration budget.
+- Convergence: fix application iterates to a fixpoint with MNCS-backed
+  oscillation detection (applied-provider tracking) and a 16-iteration budget.
 - Provenance: every migration step records transition, kind, before/after
   fingerprints, and knowledge source; every report carries tool, schema,
-  and content versions.
+  content versions, and MNCS source/artifact identities.
 
 ## Integration seams (stable by design)
 
@@ -70,6 +79,6 @@ Rules:
 - Ravel: migration records (before/after fingerprints + per-step
   provenance) are shaped to serve as future equivalence-check inputs.
   No Ravel internals are linked.
-- Language service: the `Diagnostic` envelope is a proposal for the
-  shared contract so LSP code actions and `fix` can share providers
-  (today only the shape is shared; see DOC-P-002).
+- Language service: the service has structured diagnostics, missing-import
+  code actions, and identity-bound `FileEdit`/rename results, but no shared
+  fix/edit contract with Doctor yet (DOC-P-001/002).

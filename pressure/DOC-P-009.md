@@ -14,7 +14,7 @@ Inventory records byte length, permission bits, and symlink identity;
 the transaction executor preserves permission bits and refuses symlink
 targets. Change detection and preservation both need metadata.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 No `stat`-family intrinsic exists in the 0.16 scope doc or the profile
 registry. Length is derivable by chunked reads (wasteful but possible);

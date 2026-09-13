@@ -14,7 +14,7 @@ The transaction executor records Unix mode bits and restores them on
 the replacement file (and on rollback), so repair never loosens or
 tightens file permissions as a side effect.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 No mode/ownership primitive exists; 0.16 non-goals explicitly exclude a
 quota/ownership model beyond host policy.

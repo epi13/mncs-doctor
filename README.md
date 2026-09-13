@@ -26,16 +26,19 @@ JSON reports, and fail-closed mutation semantics.
 
 Working: discovery, 7 health checks, hygiene diagnostics with spans, safe
 fix engine with convergence loop, transactional writes with rollback,
-migration planning/registry/provenance, human + JSON reports, 88 tests.
+migration planning/registry/provenance, human + JSON reports, and live MNCS
+policy execution for all four commands. The complete suite is reported in
+`docs/CAMPAIGN-2026-09-PRODUCTION.md`.
 Blocked on upstream data: semantic diagnostics, per-code fix providers,
 real transition rules. Every gap is a pressure entry, not a mock.
 
 ## MNCS core
 
 Doctor policy increasingly lives in MNCS, not just fixtures:
-`mncs/doctor/` holds seven executed modules (version, health, migration,
-edit, fix, report, verify policy) running on the research bytecode
-backend via `mncs-embed`. Scalar codes cross the host boundary;
+`mncs/doctor/` holds ten executed modules (version, health, migration, edit,
+fix, report, verify, transaction, discovery, scanner policy) running on the
+research bytecode backend via the production `mncs-embed` runtime. Scalar
+codes cross the host boundary;
 records/enums live inside MNCS; strings render host-side. `tests/
 mncs_parity.rs` proves the MNCS core agrees with the Rust reference on
 every probed input, and pins fail-closed transport (length/signedness/
@@ -114,7 +117,7 @@ symlinks, and rolls back partial failures. Details: `docs/SAFETY.md`.
 
 ```sh
 cargo build
-cargo test          # 56 unit + 18 CLI integration tests
+cargo test          # complete unit, command, parity, and capability suite
 cargo fmt --check
 cargo clippy -- -D warnings
 ```

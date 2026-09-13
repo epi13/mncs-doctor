@@ -24,6 +24,9 @@ reports every edge as `unknown` with provenance
 - `default_registry()` records all 15 adjacent edges as `Unknown`.
 - Planning works (shortest forward path, no-op handling, downgrade
   refusal); apply is fail-closed across unknown edges.
+- The structural path verdict is now made by `doctor.migration.v1` in the
+  production runtime and is checked against the host registry plan before
+  any transform is considered.
 - The only doctor-owned mutation is the mechanical header bump (REVIEW),
   plus a JSON `--registry` extension point and synthetic 9.x fixtures
   proving the engine (`fixtures/migration/`, 5 integration tests).

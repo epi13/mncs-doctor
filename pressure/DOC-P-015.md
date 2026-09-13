@@ -14,7 +14,7 @@ Frequency: structural (one decision: can the launcher be MNCS?)
 core invocation, and exit-status return. That requires MNCS programs to
 receive arguments and emit bytes/status.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 Inputs cross only as `ExecutionRequest.arguments` + grants (≤64 bytes
 per grant blob); there is no argv/stdin surface and no stdout/exit-code
@@ -24,8 +24,10 @@ expressible; the host shell is load-bearing, not incidental.
 
 ## Workaround
 
-Thin Rust launcher (D) invoking library logic; MNCS core reached in
-tests via `call_json`, at runtime not yet (see audit unblockers).
+Thin Rust launcher (D) invoking library logic; all four production
+commands now call MNCS policy through the retained runtime. The launcher
+still owns argv, stdout/JSON, and process exit because those surfaces are
+not language effects.
 
 ## Removal condition
 

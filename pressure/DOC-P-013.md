@@ -14,7 +14,7 @@ Every file write goes to a temp sibling + atomic rename so a crash
 never leaves a half-written file; temp names must not collide and must
 clean up on failure paths.
 
-## Current behavior (verified 2026-09-13)
+## Current behavior (verified 2026-09-12)
 
 No temp-file intrinsic exists; 0.16 offers `fs_create_file` (exclusive —
 refuses when present, never overwrites), which covers collision refusal
