@@ -26,9 +26,22 @@ JSON reports, and fail-closed mutation semantics.
 
 Working: discovery, 7 health checks, hygiene diagnostics with spans, safe
 fix engine with convergence loop, transactional writes with rollback,
-migration planning/registry/provenance, human + JSON reports, 74 tests.
+migration planning/registry/provenance, human + JSON reports, 88 tests.
 Blocked on upstream data: semantic diagnostics, per-code fix providers,
 real transition rules. Every gap is a pressure entry, not a mock.
+
+## MNCS core
+
+Doctor policy increasingly lives in MNCS, not just fixtures:
+`mncs/doctor/` holds seven executed modules (version, health, migration,
+edit, fix, report, verify policy) running on the research bytecode
+backend via `mncs-embed`. Scalar codes cross the host boundary;
+records/enums live inside MNCS; strings render host-side. `tests/
+mncs_parity.rs` proves the MNCS core agrees with the Rust reference on
+every probed input, and pins fail-closed transport (length/signedness/
+identity mismatches refuse as `invalid_request`). See `mncs/README.md`
+and `docs/RUST-BOUNDARY-AUDIT.md` for the boundary: what moved, what
+stays host-side, and the exact removal condition per subsystem.
 
 ## Commands
 
