@@ -111,6 +111,34 @@ fn empty_repo_is_healthy_with_zero_files() {
 }
 
 #[test]
+fn changed_path_narrows_doctor_surface() {
+    let root = stage("repos/malformed");
+    let out = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/unbalanced.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&out);
+    assert_eq!(report["inventory"]["files_checked"], 1);
+    assert!(report["file_diagnostics"]
+        .get("src/unbalanced.mncs")
+        .is_some());
+    assert!(report["file_diagnostics"]
+        .get("src/badheader.mncs")
+        .is_none());
+    let notes = report["notes"].as_array().unwrap();
+    assert!(notes
+        .iter()
+        .any(|note| note.as_str().unwrap().contains("changed surface")));
+}
+
+#[test]
 fn mixed_repo_requires_review_for_manual_items() {
     // headless.mncs needs a human-chosen header (MANUAL): exit 2.
     let root = stage("repos/mixed");

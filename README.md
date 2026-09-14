@@ -49,16 +49,30 @@ stays host-side, and the exact removal condition per subsystem.
 ## Commands
 
 ```text
-mncs-doctor doctor [--check] [--explain] [--json]
-mncs-doctor fix [--dry-run] [--safe-only] [--proven] [--verify-cmd "<cmd>"]
+mncs-doctor doctor [--check] [--explain] [--json] [--changed-path <file> ...]
+mncs-doctor fix [--dry-run] [--safe-only] [--proven] [--changed-path <file> ...]
 mncs-doctor migrate --to <version|latest> [--plan] [--dry-run] [--apply]
-                   [--allow-review] [--registry <file>] [--verify-cmd "<cmd>"]
-mncs-doctor verify [--verify-cmd=<cmd>]
+                   [--allow-review] [--registry <file>] [--changed-path <file> ...]
+                   [--verify-cmd "<cmd>"]
+mncs-doctor verify [--changed-path <file> ...] [--verify-cmd=<cmd>]
 ```
 
 Global: `--root <dir>`, `--json`, `--explain`, `--quiet`, `--verbose`,
 `--with-language-backend` (opt-in Rust CLI semantic probe),
-`--no-color`. Exit codes in `docs/EXIT-CODES.md`.
+`--changed-path <file>` (repeatable narrow source surface), `--no-color`.
+Exit codes in `docs/EXIT-CODES.md`.
+
+## Selective development scope
+
+Repository discovery remains the authoritative source of file identities, but
+ordinary development commands can narrow expensive diagnostics, safe repair,
+migration, and verification with one or more `--changed-path` values. The
+default remains repository scope; the narrow path refuses unavailable,
+out-of-root, or non-MNCS files and records the selected/available counts in the
+structured report. Use repository `doctor`, `migrate --plan`, or an explicit
+release/canonical audit at synchronization boundaries. Doctor does not infer a
+semantic neighborhood or replace Ravel: it consumes the caller's bounded file
+surface and reports deterministic migration/health evidence for that surface.
 
 Example:
 

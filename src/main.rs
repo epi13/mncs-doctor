@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use std::process::ExitCode as ProcExit;
 
 use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
-use mncs_doctor::discovery::{discover_with_policy, find_root, DiscoveryOptions, SourceFile};
+use mncs_doctor::discovery::{
+    discover_with_policy, find_root, DiscoveryOptions, Inventory, SourceFile,
+};
 use mncs_doctor::fix::{
     default_providers, plan_workspace_with_mncs_policy, repair_to_fixpoint_with_diagnose,
     union_apply_with_mncs, Eligibility,
@@ -69,6 +71,7 @@ struct GlobalFlags {
     quiet: bool,
     verbose: bool,
     with_language_backend: bool,
+    changed_paths: Vec<PathBuf>,
 }
 
 fn parse_globals(
@@ -89,12 +92,95 @@ fn parse_globals(
             "--quiet" | "-q" => flags.quiet = true,
             "--verbose" | "-v" => flags.verbose = true,
             "--with-language-backend" => flags.with_language_backend = true,
+            "--changed-path" => {
+                i += 1;
+                flags.changed_paths.push(PathBuf::from(
+                    args.get(i).ok_or("--changed-path requires a value")?,
+                ));
+            }
             "--no-color" => {}
             _ => out.push(args[i].clone()),
         }
         i += 1;
     }
     Ok(flags)
+}
+
+/// Select the smallest Doctor surface named by the caller. Discovery remains
+/// the source of truth for identities and bytes; this helper only narrows the
+/// deterministic diagnostic/migration/fix work and refuses unknown paths.
+fn scoped_sources(
+    root: &std::path::Path,
+    inventory: &Inventory,
+    changed_paths: &[PathBuf],
+) -> Result<Vec<SourceFile>, String> {
+    if changed_paths.is_empty() {
+        return Ok(inventory.sources.clone());
+    }
+    let mut selected = Vec::new();
+    for requested in changed_paths {
+        let candidate = if requested.is_absolute() {
+            requested.clone()
+        } else {
+            root.join(requested)
+        };
+        let canonical = candidate.canonicalize().map_err(|error| {
+            format!(
+                "changed path {} is unavailable: {error}",
+                requested.display()
+            )
+        })?;
+        let relative = canonical
+            .strip_prefix(root)
+            .map_err(|_| {
+                format!(
+                    "changed path {} is outside workspace root {}",
+                    requested.display(),
+                    root.display()
+                )
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = inventory
+            .sources
+            .iter()
+            .find(|source| source.path == canonical || source.relative == relative)
+            .ok_or_else(|| {
+                format!(
+                    "changed path {} is not an inventoried MNCS source",
+                    requested.display()
+                )
+            })?;
+        if !selected
+            .iter()
+            .any(|item: &SourceFile| item.relative == source.relative)
+        {
+            selected.push(source.clone());
+        }
+    }
+    selected.sort_by(|a, b| a.relative.cmp(&b.relative));
+    Ok(selected)
+}
+
+fn make_scoped_inventory(inventory: &Inventory, sources: &[SourceFile]) -> Inventory {
+    let mut scoped = inventory.clone();
+    scoped.sources = sources.to_vec();
+    scoped
+}
+
+fn add_scope_note(
+    notes: &mut Vec<String>,
+    changed_paths: &[PathBuf],
+    selected: usize,
+    available: usize,
+) {
+    if changed_paths.is_empty() {
+        notes.push(format!("scope: repository ({available} source file(s))"));
+    } else {
+        notes.push(format!(
+            "scope: changed surface ({selected} of {available} source file(s)); explicit --changed-path selection"
+        ));
+    }
 }
 
 fn workspace_root(flag: &Option<PathBuf>) -> Result<PathBuf, String> {
@@ -219,11 +305,12 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
     let options = DiscoveryOptions::default();
     let inventory = discover_with_mncs_policy(&root, &options, policy)
         .map_err(|error| format!("discovery failed: {error}"))?;
-    let diags =
-        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
+    let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
+    let scoped_inventory = make_scoped_inventory(&inventory, &sources);
+    let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
     let toolchain = probe_toolchain();
     let ctx = HealthContext {
-        inventory: &inventory,
+        inventory: &scoped_inventory,
         diagnostics: &diags,
         toolchain: &toolchain,
     };
@@ -244,7 +331,7 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
         .exit_for(&checks, review_blocked, None)
         .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
     let mut report = Report::new("doctor", root.to_string_lossy());
-    report.inventory = Some(inventory.summary());
+    report.inventory = Some(scoped_inventory.summary());
     report.checks = checks;
     report.file_diagnostics = diags;
     report.toolchain = Some(toolchain);
@@ -258,6 +345,12 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
     if flags.explain {
         report.notes.push("explain".to_owned());
     }
+    add_scope_note(
+        &mut report.notes,
+        &flags.changed_paths,
+        sources.len(),
+        inventory.sources.len(),
+    );
     if flags.verbose {
         report.notes.push(format!(
             "scanned with {} backend(s)",
@@ -303,19 +396,25 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let root = workspace_root(&flags.root)?;
     let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
         .map_err(|error| format!("discovery failed: {error}"))?;
-    let diags =
-        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
+    let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
+    let scoped_inventory = make_scoped_inventory(&inventory, &sources);
+    let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
     let providers = default_providers();
-    let workspace =
-        plan_workspace_with_mncs_policy(&inventory.sources, &diags, &providers, eligibility)
-            .map_err(|error| format!("MNCS fix planning failed (fail-closed): {error}"))?;
+    let workspace = plan_workspace_with_mncs_policy(&sources, &diags, &providers, eligibility)
+        .map_err(|error| format!("MNCS fix planning failed (fail-closed): {error}"))?;
     let plans = workspace.plans;
     let blocked_review = workspace.blocked_review;
     let blocked_manual = workspace.blocked_manual;
 
     let mut report = Report::new("fix", root.to_string_lossy());
-    report.inventory = Some(inventory.summary());
+    report.inventory = Some(scoped_inventory.summary());
     report.notes.extend(workspace.conflict_notes);
+    add_scope_note(
+        &mut report.notes,
+        &flags.changed_paths,
+        sources.len(),
+        inventory.sources.len(),
+    );
     report.file_diagnostics = diags.clone();
     report.toolchain = Some(probe_toolchain());
     for (file, plan) in &plans {
@@ -341,7 +440,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         }
         let toolchain = probe_toolchain();
         let ctx = HealthContext {
-            inventory: &inventory,
+            inventory: &scoped_inventory,
             diagnostics: &report.file_diagnostics,
             toolchain: &toolchain,
         };
@@ -404,13 +503,15 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     // Re-read and verify: full convergence check + re-diagnose.
     let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
         .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh_sources = scoped_sources(&root, &fresh, &flags.changed_paths)?;
+    let fresh_inventory = make_scoped_inventory(&fresh, &fresh_sources);
     let fresh_diags =
-        diagnose_all_with_mncs_policy(&fresh.sources, flags.with_language_backend, policy)?;
+        diagnose_all_with_mncs_policy(&fresh_sources, flags.with_language_backend, policy)?;
     // Convergence evidence: re-running the full repair loop over the
     // committed tree must reach an immediate fixpoint with nothing applied.
     let mut idempotent = true;
     let converged_providers = default_providers();
-    for file in &fresh.sources {
+    for file in &fresh_sources {
         if file.text.is_some() {
             let (_, conv) = repair_to_fixpoint_with_diagnose(
                 file,
@@ -442,7 +543,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
     let mut verification = verify_after_with_diagnostics(
-        fresh.sources.len(),
+        fresh_sources.len(),
         &diags,
         &fresh_diags,
         Some(idempotent),
@@ -460,7 +561,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     report.verification = Some(verification);
     let toolchain = probe_toolchain();
     let ctx = HealthContext {
-        inventory: &fresh,
+        inventory: &fresh_inventory,
         diagnostics: &fresh_diags,
         toolchain: &toolchain,
     };
@@ -542,17 +643,24 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     let root = workspace_root(&flags.root)?;
     let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
         .map_err(|error| format!("discovery failed: {error}"))?;
-    let diags =
-        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
+    let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
+    let scoped_inventory = make_scoped_inventory(&inventory, &sources);
+    let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
 
     // Per-file: declared version -> plan to target.
     let mut report = Report::new("migrate", root.to_string_lossy());
-    report.inventory = Some(inventory.summary());
+    report.inventory = Some(scoped_inventory.summary());
     report.file_diagnostics = diags.clone();
     report.toolchain = Some(probe_toolchain());
+    add_scope_note(
+        &mut report.notes,
+        &flags.changed_paths,
+        sources.len(),
+        inventory.sources.len(),
+    );
     let mut file_plans: Vec<(SourceFile, mncs_doctor::migration::MigrationPlan)> = Vec::new();
     let mut unmigratable: Vec<String> = Vec::new();
-    for file in &inventory.sources {
+    for file in &sources {
         let declared = file
             .text
             .as_deref()
@@ -717,19 +825,21 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     }
     let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
         .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh_sources = scoped_sources(&root, &fresh, &flags.changed_paths)?;
+    let fresh_inventory = make_scoped_inventory(&fresh, &fresh_sources);
     let fresh_diags =
-        diagnose_all_with_mncs_policy(&fresh.sources, flags.with_language_backend, policy)?;
+        diagnose_all_with_mncs_policy(&fresh_sources, flags.with_language_backend, policy)?;
     report.file_diagnostics = fresh_diags.clone();
     let fresh_toolchain = probe_toolchain();
     report.checks = run_all_checks(&HealthContext {
-        inventory: &fresh,
+        inventory: &fresh_inventory,
         diagnostics: &fresh_diags,
         toolchain: &fresh_toolchain,
     });
     report.toolchain = Some(fresh_toolchain);
     // Idempotence: re-planning migrated files must yield no-op plans.
     let mut idempotent = true;
-    for file in &fresh.sources {
+    for file in &fresh_sources {
         let declared = file
             .text
             .as_deref()
@@ -747,7 +857,7 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
     let mut verification = verify_after_with_diagnostics(
-        fresh.sources.len(),
+        fresh_sources.len(),
         &diags,
         &fresh_diags,
         Some(idempotent),
@@ -807,15 +917,16 @@ fn cmd_verify(args: &[String]) -> Result<ExitCode, String> {
     let root = workspace_root(&flags.root)?;
     let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
         .map_err(|error| format!("discovery failed: {error}"))?;
-    let diags =
-        diagnose_all_with_mncs_policy(&inventory.sources, flags.with_language_backend, policy)?;
+    let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
+    let scoped_inventory = make_scoped_inventory(&inventory, &sources);
+    let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
     let external: Vec<ExternalCheck> = verify_cmd
         .map(|cmd| vec![run_external(&cmd, &root)])
         .unwrap_or_default();
     // Standalone verify judges the current tree against itself: the verdict
     // is about *new* breakage, so the pre-map is the present diagnosis.
     let mut verification =
-        verify_after_with_diagnostics(inventory.sources.len(), &diags, &diags, None, external);
+        verify_after_with_diagnostics(sources.len(), &diags, &diags, None, external);
     let external_pass = verification.external.iter().all(|check| check.success);
     verification.passed = policy
         .verify_compose(
@@ -833,13 +944,19 @@ fn cmd_verify(args: &[String]) -> Result<ExitCode, String> {
         .filter(|d| matches!(d.severity, mncs_doctor::diagnostics::Severity::Error))
         .count();
     let mut report = Report::new("verify", root.to_string_lossy());
-    report.inventory = Some(inventory.summary());
+    report.inventory = Some(scoped_inventory.summary());
     report.file_diagnostics = diags;
     report.toolchain = Some(probe_toolchain());
     report.verification = Some(verification);
     if flags.explain {
         report.notes.push("explain".to_owned());
     }
+    add_scope_note(
+        &mut report.notes,
+        &flags.changed_paths,
+        sources.len(),
+        inventory.sources.len(),
+    );
     let code = policy
         .exit_for(&[], false, report.verification.as_ref())
         .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
@@ -889,6 +1006,8 @@ GLOBAL OPTIONS:
     --explain                 Verbose finding explanations and diff hunks
     --quiet, -q               Suppress human output (use with --json)
     --verbose, -v             Extra provenance notes
+    --changed-path <file>     Narrow diagnostics/repair/migration to this MNCS source
+                              (repeat for a changed surface; default is repository scope)
     --with-language-backend   Also diagnose via the Rust language CLI
                               (MNCS_CLI or PATH `mncs` with source-study)
     --no-color                Accepted for scripting (output is uncolored)
