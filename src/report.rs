@@ -124,6 +124,11 @@ pub fn render_human(report: &Report, explain: bool) -> String {
     if let Some(inv) = &report.inventory {
         let _ = writeln!(out, "Source:");
         let _ = writeln!(out, "  {} files checked", inv.files_checked);
+        let _ = writeln!(
+            out,
+            "  {} reused, {} rescanned",
+            inv.files_reused, inv.files_rescanned
+        );
     }
     let mut errors = 0usize;
     let mut warnings = 0usize;
@@ -300,6 +305,10 @@ mod tests {
             manifests: 0,
             skipped_dirs: 0,
             total_bytes: 10,
+            files_reused: 0,
+            files_rescanned: 2,
+            cache_identity: None,
+            invalidation_reason: None,
         });
         let a = render_human(&report, false);
         let b = render_human(&report, false);

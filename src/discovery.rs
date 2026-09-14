@@ -271,6 +271,18 @@ pub struct Inventory {
     pub skipped: Vec<SkippedDir>,
     /// Per-extension file counts (includes non-source files seen).
     pub extension_counts: BTreeMap<String, u64>,
+    /// Runtime-only accounting for incremental inventory reuse.
+    #[serde(skip)]
+    pub metrics: InventoryMetrics,
+}
+
+/// Evidence accounting for one inventory acquisition.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InventoryMetrics {
+    pub files_reused: usize,
+    pub files_rescanned: usize,
+    pub cache_identity: Option<String>,
+    pub invalidation_reason: Option<String>,
 }
 
 impl Inventory {
@@ -281,6 +293,10 @@ impl Inventory {
             manifests: self.manifests.len(),
             skipped_dirs: self.skipped.len(),
             total_bytes: self.sources.iter().map(|s| s.len).sum(),
+            files_reused: self.metrics.files_reused,
+            files_rescanned: self.metrics.files_rescanned,
+            cache_identity: self.metrics.cache_identity.clone(),
+            invalidation_reason: self.metrics.invalidation_reason.clone(),
         }
     }
 }
@@ -292,6 +308,12 @@ pub struct InventorySummary {
     pub manifests: usize,
     pub skipped_dirs: usize,
     pub total_bytes: u64,
+    pub files_reused: usize,
+    pub files_rescanned: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
 }
 
 /// Locate the workspace root by walking up from `start` looking for marker
@@ -356,12 +378,17 @@ pub fn discover_with_policy(
     sources.sort_by(|a: &SourceFile, b: &SourceFile| a.relative.cmp(&b.relative));
     manifests.sort_by(|a: &ManifestHit, b: &ManifestHit| a.relative.cmp(&b.relative));
     skipped.sort_by(|a: &SkippedDir, b: &SkippedDir| a.relative.cmp(&b.relative));
+    let files_rescanned = sources.len();
     Ok(Inventory {
         root: root.to_path_buf(),
         sources,
         manifests,
         skipped,
         extension_counts,
+        metrics: InventoryMetrics {
+            files_rescanned,
+            ..InventoryMetrics::default()
+        },
     })
 }
 
@@ -674,25 +701,34 @@ fn record_file(
             });
         }
         FileClass::Source => {
-            let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
-            let mode = file_mode(path);
-            let text = String::from_utf8(bytes.clone()).ok();
-            sources.push(SourceFile {
-                relative: rel_string(root, path),
-                path: path.to_path_buf(),
-                sha256: fingerprint(&bytes),
-                len: bytes.len() as u64,
-                newline: detect_newline(&bytes),
-                has_bom: bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
-                mode,
-                is_symlink,
-                bytes,
-                text,
-            });
+            sources.push(read_source_file(root, path, is_symlink)?);
         }
         FileClass::Ignore => {}
     }
     Ok(())
+}
+
+/// Read one already-identified source without traversing its repository.
+pub fn read_source_file(
+    root: &Path,
+    path: &Path,
+    is_symlink: bool,
+) -> Result<SourceFile, DiscoveryError> {
+    let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
+    let mode = file_mode(path);
+    let text = String::from_utf8(bytes.clone()).ok();
+    Ok(SourceFile {
+        relative: rel_string(root, path),
+        path: path.to_path_buf(),
+        sha256: fingerprint(&bytes),
+        len: bytes.len() as u64,
+        newline: detect_newline(&bytes),
+        has_bom: bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
+        mode,
+        is_symlink,
+        bytes,
+        text,
+    })
 }
 
 fn file_mode(path: &Path) -> Option<u32> {

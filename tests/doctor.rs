@@ -1,5 +1,7 @@
 //! `doctor` command: health inspection across repo shapes.
 
+use std::fs;
+
 mod common;
 
 use common::{read_bytes, run, stage, stdout_json};
@@ -136,6 +138,64 @@ fn changed_path_narrows_doctor_surface() {
     assert!(notes
         .iter()
         .any(|note| note.as_str().unwrap().contains("changed surface")));
+}
+
+#[test]
+fn changed_path_reuses_digest_bound_inventory_after_initialization() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    let initial_report = stdout_json(&initial);
+    assert_eq!(initial_report["inventory"]["files_rescanned"], 2);
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_checked"], 1);
+    assert_eq!(report["inventory"]["files_rescanned"], 1);
+    assert_eq!(report["inventory"]["files_reused"], 1);
+    assert_eq!(report["inventory"]["invalidation_reason"], "changed_path");
+    assert!(report["inventory"]["cache_identity"].is_string());
+}
+
+#[test]
+fn unreported_source_mutation_invalidates_incremental_inventory() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(initial.status.success());
+    fs::write(
+        root.join("src/lib.mncs"),
+        "mncs 0.17;\nmodule healthy.lib;\n\nfn answer() -> (result: i64) {\n    return 420;\n}\n",
+    )
+    .unwrap();
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_checked"], 1);
+    assert_eq!(report["inventory"]["files_rescanned"], 2);
+    assert_eq!(report["inventory"]["files_reused"], 0);
+    assert!(report["inventory"]["invalidation_reason"]
+        .as_str()
+        .unwrap()
+        .contains("unreported source metadata changed: src/lib.mncs"));
 }
 
 #[test]
