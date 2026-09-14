@@ -339,7 +339,7 @@ impl ScannerBackend {
                     .to_owned(),
                 applicability: Applicability::Manual,
                 suggested_action: "Correct the header to a known profile (e.g. \
-                    `mncs 0.16;`)."
+                    `mncs 0.17;`)."
                     .to_owned(),
                 language_version: None,
                 migration_transition: None,
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn healthy_current_file_is_quiet() {
-        let diags = ScannerBackend.diagnose(&file_with("mncs 0.16;\nmodule a;\nfn f() {}\n"));
+        let diags = ScannerBackend.diagnose(&file_with("mncs 0.17;\nmodule a;\nfn f() {}\n"));
         assert!(diags.is_empty(), "{diags:?}");
     }
 

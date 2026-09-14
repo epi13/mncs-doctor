@@ -329,6 +329,39 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
             suggested_action: String::new(),
         });
     }
+    if ctx.toolchain.test_provider.is_none() {
+        findings.push(Finding {
+            severity: Severity::Info,
+            message: "mncs-test provider not found".to_owned(),
+            path: None,
+            explanation: "The canonical first-class test provider is optional for Doctor's local hygiene checks; canonical test verification is unavailable until it is installed or MNCS_TEST_BIN is set.".to_owned(),
+            suggested_action: "Install mncs-test or set MNCS_TEST_BIN when requesting test verification.".to_owned(),
+        });
+    }
+    if ctx.toolchain.debug_provider.is_none() {
+        findings.push(Finding {
+            severity: Severity::Info,
+            message: "mncs-debug provider not found".to_owned(),
+            path: None,
+            explanation: "Failure witnesses and structured traces are optional diagnostics; their absence must not change a test verdict.".to_owned(),
+            suggested_action: "Install mncs-debug or set MNCS_DEBUG_BIN for failure diagnostics.".to_owned(),
+        });
+    }
+    if let Some(protocol) = &ctx.toolchain.debug_protocol {
+        if !protocol.compatible {
+            findings.push(Finding {
+                severity: Severity::Warning,
+                message: "mncs-debug protocol compatibility is unavailable".to_owned(),
+                path: Some(protocol.expected.clone()),
+                explanation: format!(
+                    "Expected {}, observed {}. Doctor will not infer debugger semantics from an incompatible provider.",
+                    protocol.expected,
+                    protocol.observed.as_deref().unwrap_or("no structured capabilities response")
+                ),
+                suggested_action: "Use the registered mncs-debug provider revision and verify its capabilities response.".to_owned(),
+            });
+        }
+    }
     let status = if findings.iter().any(|f| f.severity == Severity::Error) {
         Status::Fail
     } else if findings.iter().any(|f| f.severity == Severity::Warning) {
@@ -427,6 +460,25 @@ mod tests {
         // warning at worst here, never fail.
         assert!(results.iter().all(|r| r.status != Status::Fail));
         let _ = DiscoveryOptions::default();
+    }
+
+    #[test]
+    fn missing_optional_family_providers_is_informational() {
+        let (inv, diags, tc) = empty_ctx();
+        let ctx = HealthContext {
+            inventory: &inv,
+            diagnostics: &diags,
+            toolchain: &tc,
+        };
+        let check = run_all_checks(&ctx)
+            .into_iter()
+            .find(|result| result.id == "toolchain-health")
+            .expect("toolchain check");
+        assert_eq!(check.status, Status::Warning);
+        assert!(check
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("mncs-debug")));
     }
 
     #[test]

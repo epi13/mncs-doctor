@@ -44,6 +44,33 @@ pub struct ToolchainStatus {
     pub forge: Option<ToolInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ravel: Option<ToolInfo>,
+    /// Canonical first-class test provider (`mncs-test`) when explicitly
+    /// installed or exposed through `MNCS_TEST_BIN`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_provider: Option<ToolInfo>,
+    /// Canonical structured debugger (`mncs-debug`) when explicitly installed
+    /// or exposed through `MNCS_DEBUG_BIN`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_provider: Option<ToolInfo>,
+    /// Optional local checkout of the Actions transport, exposed through
+    /// `MNCS_ACTIONS_ROOT`. Actions itself normally runs in GitHub, so an
+    /// absent value is not a semantic failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions_provider: Option<ToolInfo>,
+    /// Membrane-level compatibility result for the debugger protocol family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_protocol: Option<ProtocolCompatibility>,
+    /// Current profile used by Doctor's host-side profile mirror.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolCompatibility {
+    pub expected: String,
+    pub observed: Option<String>,
+    pub compatible: bool,
+    pub status: String,
 }
 
 /// Probe the local toolchain. Each probe is a single fast local process;
@@ -51,12 +78,89 @@ pub struct ToolchainStatus {
 pub fn probe_toolchain() -> ToolchainStatus {
     let rust_cli = find_rust_cli().and_then(|exe| probe_rust_cli(&exe));
     let family_cli = probe_family_cli();
+    let test_provider = probe_component("MNCS_TEST_BIN", "mncs-test");
+    let debug_path = component_path("MNCS_DEBUG_BIN", "mncs-debug");
+    let debug_provider = debug_path
+        .as_ref()
+        .and_then(|path| probe_path(path, "mncs-debug"));
+    let debug_protocol = debug_path.as_ref().map(|path| probe_debug_protocol(path));
+    let actions_provider = std::env::var_os("MNCS_ACTIONS_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .map(|path| ToolInfo {
+            name: "mncs-actions".to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            version: "workspace".to_owned(),
+        });
     ToolchainStatus {
         rust_cli,
         family_cli,
         cargo: probe_simple("cargo", &["--version"]),
         forge: probe_simple("mncs-forge", &["--version"]),
         ravel: probe_simple("ravel", &["--version"]),
+        test_provider,
+        debug_provider,
+        actions_provider,
+        debug_protocol,
+        current_profile: Some(crate::version::current_version().short()),
+    }
+}
+
+fn component_path(env_name: &str, command: &str) -> Option<PathBuf> {
+    std::env::var_os(env_name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| which(command))
+}
+
+fn probe_component(env_name: &str, command: &str) -> Option<ToolInfo> {
+    component_path(env_name, command).and_then(|path| probe_path(&path, command))
+}
+
+fn probe_path(path: &PathBuf, name: &str) -> Option<ToolInfo> {
+    let output = Command::new(path).arg("--help").output().ok()?;
+    let combined = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    let version = combined
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("unknown")
+        .trim()
+        .chars()
+        .take(120)
+        .collect();
+    Some(ToolInfo {
+        name: name.to_owned(),
+        path: path.to_string_lossy().into_owned(),
+        version,
+    })
+}
+
+fn probe_debug_protocol(path: &PathBuf) -> ProtocolCompatibility {
+    let expected = "mncs.debug-capabilities/1".to_owned();
+    let output = Command::new(path)
+        .args(["capabilities", "--format", "json"])
+        .output();
+    let observed = output
+        .ok()
+        .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok())
+        .and_then(|value| {
+            value
+                .get("schema_version")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        });
+    let compatible = observed.as_deref() == Some(expected.as_str());
+    ProtocolCompatibility {
+        expected,
+        observed,
+        compatible,
+        status: if compatible {
+            "compatible"
+        } else {
+            "unavailable"
+        }
+        .to_owned(),
     }
 }
 

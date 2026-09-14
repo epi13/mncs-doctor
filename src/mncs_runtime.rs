@@ -405,7 +405,7 @@ impl DoctorMncsRuntime {
                 i64_arg(version.major as i64),
                 i64_arg(version.minor as i64),
                 i64_arg(0),
-                i64_arg(16)
+                i64_arg(17)
             ),
         )?;
         match code {
@@ -978,7 +978,7 @@ mod tests {
         assert_eq!(runtime.check_status(1, 0).unwrap(), Status::Fail);
         assert_eq!(
             runtime
-                .classify_version(LanguageVersion::new(0, 16))
+                .classify_version(LanguageVersion::new(0, 17))
                 .unwrap(),
             VersionClass::Current
         );

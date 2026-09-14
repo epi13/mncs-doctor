@@ -1,7 +1,7 @@
 //! Version-aware migration: registry, path planning, provenance.
 //!
 //! Philosophy: migrations compose bounded adjacent transitions
-//! (`0.15 -> 0.16`) rather than monolithic ancient-to-latest rewrites. Each
+//! (`0.16 -> 0.17`) rather than monolithic ancient-to-latest rewrites. Each
 //! edge carries a [`TransitionKind`] and provenance; unknown edges are
 //! reported, never silently rewritten.
 //!
@@ -136,11 +136,11 @@ impl MigrationRegistry {
 }
 
 /// Production registry: every adjacent sealed/current edge `0.1 -> ... ->
-/// 0.16` recorded as [`TransitionKind::Unknown`] with explicit provenance.
+/// 0.17` recorded as [`TransitionKind::Unknown`] with explicit provenance.
 /// See module docs for why this is the honest seed.
 pub fn default_registry() -> MigrationRegistry {
     let mut registry = MigrationRegistry::new();
-    for minor in 1u32..16 {
+    for minor in 1u32..17 {
         let from = LanguageVersion::new(0, minor);
         let to = LanguageVersion::new(0, minor + 1);
         registry.insert(MigrationTransition {
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn production_registry_covers_adjacent_edges_as_unknown() {
         let registry = default_registry();
-        assert_eq!(registry.len(), 15);
+        assert_eq!(registry.len(), 16);
         let t = registry.get(v(15), v(16)).expect("edge");
         assert_eq!(t.kind, TransitionKind::Unknown);
         assert!(!t.provenance.is_empty());

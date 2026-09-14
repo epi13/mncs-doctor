@@ -196,7 +196,7 @@ fn rust_classify_code(major: u32, minor: u32) -> i64 {
 
 #[test]
 fn parity_version_classify() {
-    // Current profile (0,16) supplied by the host registry, as designed.
+    // Current profile (0,17) supplied by the host registry, as designed.
     let versions = [
         (0, 1),
         (0, 8),
@@ -213,7 +213,7 @@ fn parity_version_classify() {
             i64_arg(major),
             i64_arg(minor),
             i64_arg(0),
-            i64_arg(16)
+            i64_arg(17)
         );
         let got = as_i64(&call(
             version_session(),

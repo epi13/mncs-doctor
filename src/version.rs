@@ -15,7 +15,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A source language version such as `0.16`.
+/// A source language version such as `0.17`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LanguageVersion {
     /// Major component (today always 0; `1.0` is reserved/unsupported upstream).
@@ -89,10 +89,10 @@ pub struct ProfileRecord {
 /// one record carries [`ProfileStatus::Current`]; nothing else in the
 /// codebase hardcodes a current version.
 pub fn registry() -> Vec<ProfileRecord> {
-    let mut records: Vec<ProfileRecord> = (1u32..=16)
+    let mut records: Vec<ProfileRecord> = (1u32..=17)
         .map(|minor| ProfileRecord {
             version: LanguageVersion::new(0, minor),
-            status: if minor == 16 {
+            status: if minor == 17 {
                 ProfileStatus::Current
             } else {
                 ProfileStatus::Sealed
@@ -108,7 +108,7 @@ pub fn registry() -> Vec<ProfileRecord> {
 
 /// The current toolchain profile per the mirrored registry.
 pub fn current_version() -> LanguageVersion {
-    LanguageVersion::new(0, 16)
+    LanguageVersion::new(0, 17)
 }
 
 /// Look up a version in the mirrored registry.
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn parses_short_versions() {
-        assert_eq!("0.16".parse(), Ok(LanguageVersion::new(0, 16)));
+        assert_eq!("0.17".parse(), Ok(LanguageVersion::new(0, 17)));
         assert_eq!("  0.8 ".parse(), Ok(LanguageVersion::new(0, 8)));
         assert!("1.0".parse::<LanguageVersion>().is_ok());
         assert!("0".parse::<LanguageVersion>().is_err());
@@ -182,13 +182,14 @@ mod tests {
     #[test]
     fn ordering_follows_numeric_version() {
         assert!(LanguageVersion::new(0, 8) < LanguageVersion::new(0, 16));
-        assert!(LanguageVersion::new(0, 16) < LanguageVersion::new(1, 0));
+        assert!(LanguageVersion::new(0, 16) < LanguageVersion::new(0, 17));
+        assert!(LanguageVersion::new(0, 17) < LanguageVersion::new(1, 0));
     }
 
     #[test]
     fn registry_has_single_current() {
         let records = registry();
-        assert_eq!(records.len(), 17);
+        assert_eq!(records.len(), 18);
         let current: Vec<_> = records
             .iter()
             .filter(|r| r.status == ProfileStatus::Current)

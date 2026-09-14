@@ -78,6 +78,18 @@ Checks:
   ...
 ```
 
+## Family toolchain discovery
+
+Doctor reports the current mirrored MNCS profile (`0.17`) and probes the
+optional owner-native family components when they are installed or explicitly
+bound: `mncs-test` through `MNCS_TEST_BIN`, `mncs-debug` through
+`MNCS_DEBUG_BIN`, and the Actions checkout through `MNCS_ACTIONS_ROOT`.
+For `mncs-debug` it also checks the structured
+`mncs.debug-capabilities/1` response. Missing optional providers remain
+informational and never change a test verdict; an incompatible debugger
+protocol is a health warning. Doctor diagnoses installation and compatibility
+only—it does not implement test or debug semantics and does not invoke Forge.
+
 ## Boundary
 
 `mncs-language` owns: syntax, parsing, semantics, diagnostics, structured
@@ -94,8 +106,9 @@ removal conditions.
 
 - **Language service**: the `Diagnostic` envelope is a proposal for the
   shared contract so LSP code actions and `fix` share providers.
-- **Forge**: project build/test via `--verify-cmd`; deeper orchestration
-  awaits a stable API (nothing linked).
+- **Forge**: project build/test via `--verify-cmd`; Forge's structured
+  `mncs failure-loop` remains a separate development orchestrator. Doctor
+  reports provider availability and compatibility but does not own that loop.
 - **Ravel**: migration records carry fingerprints + provenance shaped for
   future equivalence evidence (nothing linked).
 

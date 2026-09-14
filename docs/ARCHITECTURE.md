@@ -74,8 +74,11 @@ Rules:
 ## Integration seams (stable by design)
 
 - Forge: Doctor shells out to project build/test commands via
-  `--verify-cmd`; deeper workspace orchestration awaits a stable Forge
-  API. No Forge internals are linked.
+  `--verify-cmd`; deeper workspace orchestration remains owned by Forge and
+  is not linked into Doctor. Doctor now discovers the optional `mncs-test`, `mncs-debug`, and
+  Actions components and reports debugger protocol compatibility, but does
+  not execute or interpret their semantic contracts. No Forge internals are
+  linked.
 - Ravel: migration records (before/after fingerprints + per-step
   provenance) are shaped to serve as future equivalence-check inputs.
   No Ravel internals are linked.
