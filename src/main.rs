@@ -10,12 +10,16 @@
 //! - `verify` — re-diagnose and optionally run project verification commands.
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode as ProcExit;
+use std::time::UNIX_EPOCH;
+
+use serde::{Deserialize, Serialize};
 
 use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
-    discover_with_policy, find_root, DiscoveryOptions, Inventory, SourceFile,
+    discover_with_policy, find_root, read_source_file, DiscoveryOptions, Inventory, SourceFile,
 };
 use mncs_doctor::fix::{
     default_providers, plan_workspace_with_mncs_policy, repair_to_fixpoint_with_diagnose,
@@ -72,6 +76,26 @@ struct GlobalFlags {
     verbose: bool,
     with_language_backend: bool,
     changed_paths: Vec<PathBuf>,
+}
+
+const INVENTORY_CACHE_SCHEMA: &str = "mncs.doctor.inventory-cache/1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SourceMetadata {
+    len: u64,
+    modified_seconds: Option<u64>,
+    modified_nanos: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InventoryCache {
+    schema_version: String,
+    root: PathBuf,
+    options_identity: String,
+    policy_identity: String,
+    inventory_identity: String,
+    source_metadata: BTreeMap<String, SourceMetadata>,
+    inventory: Inventory,
 }
 
 fn parse_globals(
@@ -210,6 +234,240 @@ fn discover_with_mncs_policy(
     .map_err(|error| error.to_string())
 }
 
+fn cache_path(root: &std::path::Path) -> PathBuf {
+    root.join(".mncs/doctor/inventory.json")
+}
+
+fn policy_identity(policy: &DoctorMncsRuntime) -> Result<String, String> {
+    let mut provenance = policy
+        .provenance()
+        .map_err(|error| format!("MNCS provenance unavailable: {error}"))?;
+    // Entrypoints are run-session observations, not discovery-policy
+    // semantics.  Excluding them keeps a cache reusable across processes
+    // while the report still records the complete dynamic provenance.
+    provenance.entrypoints.clear();
+    let bytes = serde_json::to_vec(&provenance)
+        .map_err(|error| format!("cannot encode policy provenance: {error}"))?;
+    Ok(mncs_doctor::discovery::fingerprint(&bytes))
+}
+
+fn options_identity(options: &DiscoveryOptions) -> Result<String, String> {
+    let bytes = serde_json::to_vec(options)
+        .map_err(|error| format!("cannot encode discovery options: {error}"))?;
+    Ok(mncs_doctor::discovery::fingerprint(&bytes))
+}
+
+fn inventory_identity(inventory: &Inventory) -> Result<String, String> {
+    let bytes = serde_json::to_vec(inventory)
+        .map_err(|error| format!("cannot encode inventory identity: {error}"))?;
+    Ok(mncs_doctor::discovery::fingerprint(&bytes))
+}
+
+fn source_metadata(path: &std::path::Path) -> Result<SourceMetadata, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("cannot stat source {}: {error}", path.display()))?;
+    let modified = metadata.modified().ok().and_then(|value| {
+        value
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
+    });
+    Ok(SourceMetadata {
+        len: metadata.len(),
+        modified_seconds: modified.map(|value| value.0),
+        modified_nanos: modified.map(|value| value.1),
+    })
+}
+
+fn inventory_source_metadata(
+    inventory: &Inventory,
+) -> Result<BTreeMap<String, SourceMetadata>, String> {
+    inventory
+        .sources
+        .iter()
+        .map(|source| Ok((source.relative.clone(), source_metadata(&source.path)?)))
+        .collect()
+}
+
+fn write_inventory_cache(
+    root: &std::path::Path,
+    inventory: &Inventory,
+    options: &DiscoveryOptions,
+    policy: &DoctorMncsRuntime,
+) -> Result<String, String> {
+    let identity = inventory_identity(inventory)?;
+    let cache = InventoryCache {
+        schema_version: INVENTORY_CACHE_SCHEMA.to_owned(),
+        root: root.to_path_buf(),
+        options_identity: options_identity(options)?,
+        policy_identity: policy_identity(policy)?,
+        inventory_identity: identity.clone(),
+        source_metadata: inventory_source_metadata(inventory)?,
+        inventory: inventory.clone(),
+    };
+    let path = cache_path(root);
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("inventory cache has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create inventory cache directory: {error}"))?;
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(&cache)
+        .map_err(|error| format!("cannot encode inventory cache: {error}"))?;
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("cannot write inventory cache: {error}"))?;
+    fs::rename(&temporary, &path)
+        .map_err(|error| format!("cannot install inventory cache: {error}"))?;
+    Ok(identity)
+}
+
+fn load_inventory_cache(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    policy: &DoctorMncsRuntime,
+    changed_paths: &[PathBuf],
+) -> Result<InventoryCache, String> {
+    let path = cache_path(root);
+    let bytes = fs::read(&path).map_err(|error| format!("cannot read inventory cache: {error}"))?;
+    let cache: InventoryCache = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot decode inventory cache: {error}"))?;
+    if cache.schema_version != INVENTORY_CACHE_SCHEMA {
+        return Err("inventory cache schema is unsupported".to_owned());
+    }
+    if cache.root != root {
+        return Err("inventory cache root does not match the workspace".to_owned());
+    }
+    if cache.options_identity != options_identity(options)? {
+        return Err("discovery options changed".to_owned());
+    }
+    if cache.policy_identity != policy_identity(policy)? {
+        return Err("MNCS discovery policy changed".to_owned());
+    }
+    if cache.inventory_identity != inventory_identity(&cache.inventory)? {
+        return Err("inventory cache identity is invalid".to_owned());
+    }
+    let requested: std::collections::BTreeSet<String> = changed_paths
+        .iter()
+        .filter_map(|path| {
+            let canonical = if path.is_absolute() {
+                path.clone()
+            } else {
+                root.join(path)
+            };
+            canonical.canonicalize().ok().and_then(|value| {
+                value
+                    .strip_prefix(root)
+                    .ok()
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            })
+        })
+        .collect();
+    for source in &cache.inventory.sources {
+        let expected = cache
+            .source_metadata
+            .get(&source.relative)
+            .ok_or_else(|| format!("source metadata is missing for {}", source.relative))?;
+        let current = source_metadata(&source.path)?;
+        if &current != expected && !requested.contains(&source.relative) {
+            return Err(format!(
+                "unreported source metadata changed: {}",
+                source.relative
+            ));
+        }
+    }
+    Ok(cache)
+}
+
+/// Use the persisted digest-bound inventory for a changed-path request. A
+/// missing or invalid cache deliberately falls back to one full discovery and
+/// records the invalidation reason in the report; it is never trusted blindly.
+fn discover_incremental_with_mncs_policy(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    policy: &DoctorMncsRuntime,
+    changed_paths: &[PathBuf],
+) -> Result<Inventory, String> {
+    if changed_paths.is_empty() {
+        let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+        let identity = write_inventory_cache(root, &inventory, options, policy)?;
+        inventory.metrics.cache_identity = Some(identity);
+        inventory.metrics.invalidation_reason = Some("repository_scan_requested".to_owned());
+        return Ok(inventory);
+    }
+
+    let mut cache = match load_inventory_cache(root, options, policy, changed_paths) {
+        Ok(cache) => cache,
+        Err(reason) => {
+            let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+            let identity = write_inventory_cache(root, &inventory, options, policy)?;
+            inventory.metrics.cache_identity = Some(identity);
+            inventory.metrics.invalidation_reason = Some(format!("cache_invalid:{reason}"));
+            return Ok(inventory);
+        }
+    };
+
+    let mut rescanned = 0usize;
+    let mut seen = std::collections::BTreeSet::new();
+    let refresh_result: Result<(), String> = (|| {
+        for requested in changed_paths {
+            let candidate = if requested.is_absolute() {
+                requested.clone()
+            } else {
+                root.join(requested)
+            };
+            let canonical = candidate.canonicalize().map_err(|error| {
+                format!(
+                    "changed path {} is unavailable: {error}",
+                    requested.display()
+                )
+            })?;
+            let relative = canonical
+                .strip_prefix(root)
+                .map_err(|_| {
+                    format!(
+                        "changed path {} is outside workspace root",
+                        requested.display()
+                    )
+                })?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let index = cache
+                .inventory
+                .sources
+                .iter()
+                .position(|source| source.path == canonical || source.relative == relative)
+                .ok_or_else(|| format!("cache does not contain changed source {relative}"))?;
+            let is_symlink = cache.inventory.sources[index].is_symlink;
+            let refreshed = read_source_file(root, &canonical, is_symlink)
+                .map_err(|error| format!("cannot rescan changed source {relative}: {error}"))?;
+            cache.inventory.sources[index] = refreshed;
+            if seen.insert(relative) {
+                rescanned += 1;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(reason) = refresh_result {
+        let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+        let identity = write_inventory_cache(root, &inventory, options, policy)?;
+        inventory.metrics.cache_identity = Some(identity);
+        inventory.metrics.invalidation_reason = Some(format!("topology_changed:{reason}"));
+        return Ok(inventory);
+    }
+    cache
+        .inventory
+        .sources
+        .sort_by(|a, b| a.relative.cmp(&b.relative));
+    let reused = cache.inventory.sources.len().saturating_sub(rescanned);
+    cache.inventory.metrics.files_reused = reused;
+    cache.inventory.metrics.files_rescanned = rescanned;
+    cache.inventory.metrics.cache_identity = Some(cache.inventory_identity.clone());
+    cache.inventory.metrics.invalidation_reason = Some("changed_path".to_owned());
+    let identity = write_inventory_cache(root, &cache.inventory, options, policy)?;
+    cache.inventory.metrics.cache_identity = Some(identity);
+    Ok(cache.inventory)
+}
+
 fn diagnose_all_with_mncs_policy(
     sources: &[SourceFile],
     with_backend: bool,
@@ -303,8 +561,9 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
     let options = DiscoveryOptions::default();
-    let inventory = discover_with_mncs_policy(&root, &options, policy)
-        .map_err(|error| format!("discovery failed: {error}"))?;
+    let inventory =
+        discover_incremental_with_mncs_policy(&root, &options, policy, &flags.changed_paths)
+            .map_err(|error| format!("discovery failed: {error}"))?;
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
@@ -394,8 +653,13 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let policy = DoctorMncsRuntime::production()
         .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
-        .map_err(|error| format!("discovery failed: {error}"))?;
+    let inventory = discover_incremental_with_mncs_policy(
+        &root,
+        &DiscoveryOptions::default(),
+        policy,
+        &flags.changed_paths,
+    )
+    .map_err(|error| format!("discovery failed: {error}"))?;
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
@@ -501,8 +765,13 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     }
 
     // Re-read and verify: full convergence check + re-diagnose.
-    let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
-        .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh = discover_incremental_with_mncs_policy(
+        &root,
+        &DiscoveryOptions::default(),
+        policy,
+        &flags.changed_paths,
+    )
+    .map_err(|error| format!("re-discovery failed: {error}"))?;
     let fresh_sources = scoped_sources(&root, &fresh, &flags.changed_paths)?;
     let fresh_inventory = make_scoped_inventory(&fresh, &fresh_sources);
     let fresh_diags =
@@ -641,8 +910,13 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let root = workspace_root(&flags.root)?;
-    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
-        .map_err(|error| format!("discovery failed: {error}"))?;
+    let inventory = discover_incremental_with_mncs_policy(
+        &root,
+        &DiscoveryOptions::default(),
+        policy,
+        &flags.changed_paths,
+    )
+    .map_err(|error| format!("discovery failed: {error}"))?;
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
@@ -823,8 +1097,13 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     if flags.explain {
         report.notes.push("explain".to_owned());
     }
-    let fresh = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
-        .map_err(|error| format!("re-discovery failed: {error}"))?;
+    let fresh = discover_incremental_with_mncs_policy(
+        &root,
+        &DiscoveryOptions::default(),
+        policy,
+        &flags.changed_paths,
+    )
+    .map_err(|error| format!("re-discovery failed: {error}"))?;
     let fresh_sources = scoped_sources(&root, &fresh, &flags.changed_paths)?;
     let fresh_inventory = make_scoped_inventory(&fresh, &fresh_sources);
     let fresh_diags =
@@ -915,8 +1194,13 @@ fn cmd_verify(args: &[String]) -> Result<ExitCode, String> {
     let policy = DoctorMncsRuntime::production()
         .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover_with_mncs_policy(&root, &DiscoveryOptions::default(), policy)
-        .map_err(|error| format!("discovery failed: {error}"))?;
+    let inventory = discover_incremental_with_mncs_policy(
+        &root,
+        &DiscoveryOptions::default(),
+        policy,
+        &flags.changed_paths,
+    )
+    .map_err(|error| format!("discovery failed: {error}"))?;
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
