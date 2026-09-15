@@ -17,9 +17,13 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
-    discover_with_policy, find_root, read_source_file, DiscoveryOptions, Inventory, SourceFile,
+    discover_topology_with_policy, discover_with_policy, find_root, read_source_file,
+    DiscoveryOptions, Inventory, SourceFile, TopologySnapshot,
 };
 use mncs_doctor::fix::{
     default_providers, plan_workspace_with_mncs_policy, repair_to_fixpoint_with_diagnose,
@@ -78,13 +82,21 @@ struct GlobalFlags {
     changed_paths: Vec<PathBuf>,
 }
 
-const INVENTORY_CACHE_SCHEMA: &str = "mncs.doctor.inventory-cache/1";
+const INVENTORY_CACHE_SCHEMA: &str = "mncs.doctor.inventory-cache/2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SourceMetadata {
     len: u64,
     modified_seconds: Option<u64>,
     modified_nanos: Option<u32>,
+    #[serde(default)]
+    device: Option<u64>,
+    #[serde(default)]
+    inode: Option<u64>,
+    #[serde(default)]
+    change_seconds: Option<i64>,
+    #[serde(default)]
+    change_nanos: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +106,7 @@ struct InventoryCache {
     options_identity: String,
     policy_identity: String,
     inventory_identity: String,
+    topology_identity: String,
     source_metadata: BTreeMap<String, SourceMetadata>,
     inventory: Inventory,
 }
@@ -234,6 +247,28 @@ fn discover_with_mncs_policy(
     .map_err(|error| error.to_string())
 }
 
+fn discover_topology_with_mncs_policy(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    policy: &DoctorMncsRuntime,
+) -> Result<TopologySnapshot, String> {
+    discover_topology_with_policy(
+        root,
+        options,
+        &|facts| {
+            policy
+                .discovery_directory_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_file_class(facts)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn cache_path(root: &std::path::Path) -> PathBuf {
     root.join(".mncs/doctor/inventory.json")
 }
@@ -276,6 +311,22 @@ fn source_metadata(path: &std::path::Path) -> Result<SourceMetadata, String> {
         len: metadata.len(),
         modified_seconds: modified.map(|value| value.0),
         modified_nanos: modified.map(|value| value.1),
+        #[cfg(unix)]
+        device: Some(metadata.dev()),
+        #[cfg(not(unix))]
+        device: None,
+        #[cfg(unix)]
+        inode: Some(metadata.ino()),
+        #[cfg(not(unix))]
+        inode: None,
+        #[cfg(unix)]
+        change_seconds: Some(metadata.ctime()),
+        #[cfg(not(unix))]
+        change_seconds: None,
+        #[cfg(unix)]
+        change_nanos: Some(metadata.ctime_nsec()),
+        #[cfg(not(unix))]
+        change_nanos: None,
     })
 }
 
@@ -296,12 +347,14 @@ fn write_inventory_cache(
     policy: &DoctorMncsRuntime,
 ) -> Result<String, String> {
     let identity = inventory_identity(inventory)?;
+    let topology_identity = inventory.topology.identity();
     let cache = InventoryCache {
         schema_version: INVENTORY_CACHE_SCHEMA.to_owned(),
         root: root.to_path_buf(),
         options_identity: options_identity(options)?,
         policy_identity: policy_identity(policy)?,
         inventory_identity: identity.clone(),
+        topology_identity,
         source_metadata: inventory_source_metadata(inventory)?,
         inventory: inventory.clone(),
     };
@@ -326,7 +379,7 @@ fn load_inventory_cache(
     options: &DiscoveryOptions,
     policy: &DoctorMncsRuntime,
     changed_paths: &[PathBuf],
-) -> Result<InventoryCache, String> {
+) -> Result<(InventoryCache, TopologySnapshot, Vec<String>, bool), String> {
     let path = cache_path(root);
     let bytes = fs::read(&path).map_err(|error| format!("cannot read inventory cache: {error}"))?;
     let cache: InventoryCache = serde_json::from_slice(&bytes)
@@ -346,15 +399,20 @@ fn load_inventory_cache(
     if cache.inventory_identity != inventory_identity(&cache.inventory)? {
         return Err("inventory cache identity is invalid".to_owned());
     }
+    if cache.topology_identity != cache.inventory.topology.identity() {
+        return Err("topology identity is invalid".to_owned());
+    }
+    let current_topology = discover_topology_with_mncs_policy(root, options, policy)?;
+    let topology_changed = cache.topology_identity != current_topology.identity();
     let requested: std::collections::BTreeSet<String> = changed_paths
         .iter()
         .filter_map(|path| {
-            let canonical = if path.is_absolute() {
+            let candidate = if path.is_absolute() {
                 path.clone()
             } else {
                 root.join(path)
             };
-            canonical.canonicalize().ok().and_then(|value| {
+            candidate.canonicalize().ok().and_then(|value| {
                 value
                     .strip_prefix(root)
                     .ok()
@@ -362,20 +420,27 @@ fn load_inventory_cache(
             })
         })
         .collect();
+    let mut stale = Vec::new();
     for source in &cache.inventory.sources {
         let expected = cache
             .source_metadata
             .get(&source.relative)
             .ok_or_else(|| format!("source metadata is missing for {}", source.relative))?;
-        let current = source_metadata(&source.path)?;
-        if &current != expected && !requested.contains(&source.relative) {
-            return Err(format!(
-                "unreported source metadata changed: {}",
-                source.relative
-            ));
+        if current_topology
+            .sources
+            .iter()
+            .any(|candidate| candidate.relative == source.relative)
+        {
+            if let Ok(current) = source_metadata(&source.path) {
+                if &current != expected && !requested.contains(&source.relative) {
+                    stale.push(source.relative.clone());
+                }
+            } else if !topology_changed {
+                stale.push(source.relative.clone());
+            }
         }
     }
-    Ok(cache)
+    Ok((cache, current_topology, stale, topology_changed))
 }
 
 /// Use the persisted digest-bound inventory for a changed-path request. A
@@ -391,81 +456,107 @@ fn discover_incremental_with_mncs_policy(
         let mut inventory = discover_with_mncs_policy(root, options, policy)?;
         let identity = write_inventory_cache(root, &inventory, options, policy)?;
         inventory.metrics.cache_identity = Some(identity);
+        inventory.metrics.topology_identity = Some(inventory.topology.identity());
         inventory.metrics.invalidation_reason = Some("repository_scan_requested".to_owned());
         return Ok(inventory);
     }
 
-    let mut cache = match load_inventory_cache(root, options, policy, changed_paths) {
-        Ok(cache) => cache,
-        Err(reason) => {
-            let mut inventory = discover_with_mncs_policy(root, options, policy)?;
-            let identity = write_inventory_cache(root, &inventory, options, policy)?;
-            inventory.metrics.cache_identity = Some(identity);
-            inventory.metrics.invalidation_reason = Some(format!("cache_invalid:{reason}"));
-            return Ok(inventory);
-        }
-    };
-
-    let mut rescanned = 0usize;
-    let mut seen = std::collections::BTreeSet::new();
-    let refresh_result: Result<(), String> = (|| {
-        for requested in changed_paths {
-            let candidate = if requested.is_absolute() {
-                requested.clone()
-            } else {
-                root.join(requested)
-            };
-            let canonical = candidate.canonicalize().map_err(|error| {
-                format!(
-                    "changed path {} is unavailable: {error}",
-                    requested.display()
-                )
-            })?;
-            let relative = canonical
-                .strip_prefix(root)
-                .map_err(|_| {
-                    format!(
-                        "changed path {} is outside workspace root",
-                        requested.display()
-                    )
-                })?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let index = cache
-                .inventory
-                .sources
-                .iter()
-                .position(|source| source.path == canonical || source.relative == relative)
-                .ok_or_else(|| format!("cache does not contain changed source {relative}"))?;
-            let is_symlink = cache.inventory.sources[index].is_symlink;
-            let refreshed = read_source_file(root, &canonical, is_symlink)
-                .map_err(|error| format!("cannot rescan changed source {relative}: {error}"))?;
-            cache.inventory.sources[index] = refreshed;
-            if seen.insert(relative) {
-                rescanned += 1;
+    let (cache, topology, stale, topology_changed) =
+        match load_inventory_cache(root, options, policy, changed_paths) {
+            Ok(cache) => cache,
+            Err(reason) => {
+                let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+                let identity = write_inventory_cache(root, &inventory, options, policy)?;
+                inventory.metrics.cache_identity = Some(identity);
+                inventory.metrics.invalidation_reason = Some(format!("cache_invalid:{reason}"));
+                return Ok(inventory);
             }
-        }
-        Ok(())
-    })();
-    if let Err(reason) = refresh_result {
-        let mut inventory = discover_with_mncs_policy(root, options, policy)?;
-        let identity = write_inventory_cache(root, &inventory, options, policy)?;
-        inventory.metrics.cache_identity = Some(identity);
-        inventory.metrics.invalidation_reason = Some(format!("topology_changed:{reason}"));
-        return Ok(inventory);
-    }
-    cache
+        };
+
+    let requested: std::collections::BTreeSet<String> = changed_paths
+        .iter()
+        .filter_map(|path| {
+            let candidate = if path.is_absolute() {
+                path.clone()
+            } else {
+                root.join(path)
+            };
+            candidate.canonicalize().ok().and_then(|value| {
+                value
+                    .strip_prefix(root)
+                    .ok()
+                    .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            })
+        })
+        .collect();
+    let stale: std::collections::BTreeSet<String> = stale.into_iter().collect();
+    let cached_by_relative: BTreeMap<String, SourceFile> = cache
         .inventory
         .sources
-        .sort_by(|a, b| a.relative.cmp(&b.relative));
-    let reused = cache.inventory.sources.len().saturating_sub(rescanned);
-    cache.inventory.metrics.files_reused = reused;
-    cache.inventory.metrics.files_rescanned = rescanned;
-    cache.inventory.metrics.cache_identity = Some(cache.inventory_identity.clone());
-    cache.inventory.metrics.invalidation_reason = Some("changed_path".to_owned());
-    let identity = write_inventory_cache(root, &cache.inventory, options, policy)?;
-    cache.inventory.metrics.cache_identity = Some(identity);
-    Ok(cache.inventory)
+        .into_iter()
+        .map(|source| (source.relative.clone(), source))
+        .collect();
+    let mut sources = Vec::new();
+    let mut rescanned = 0usize;
+    let mut reused = 0usize;
+    for candidate in &topology.sources {
+        let should_rescan = requested.contains(&candidate.relative)
+            || stale.contains(&candidate.relative)
+            || !cached_by_relative.contains_key(&candidate.relative);
+        if should_rescan {
+            let path = root.join(&candidate.relative);
+            let refreshed = match read_source_file(root, &path, candidate.is_symlink) {
+                Ok(source) => source,
+                Err(error) => {
+                    let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+                    let identity = write_inventory_cache(root, &inventory, options, policy)?;
+                    inventory.metrics.cache_identity = Some(identity);
+                    inventory.metrics.invalidation_reason = Some(format!(
+                        "topology_changed:cannot rescan {}: {error}",
+                        candidate.relative
+                    ));
+                    return Ok(inventory);
+                }
+            };
+            sources.push(refreshed);
+            rescanned += 1;
+        } else if let Some(mut source) = cached_by_relative.get(&candidate.relative).cloned() {
+            source.path = root.join(&candidate.relative);
+            source.is_symlink = candidate.is_symlink;
+            sources.push(source);
+            reused += 1;
+        }
+    }
+    sources.sort_by(|a, b| a.relative.cmp(&b.relative));
+    let topology_identity = topology.identity();
+    let mut inventory = Inventory {
+        root: root.to_path_buf(),
+        sources,
+        manifests: topology.manifests.clone(),
+        skipped: topology.skipped.clone(),
+        extension_counts: topology.extension_counts.clone(),
+        topology,
+        metrics: Default::default(),
+    };
+    inventory.metrics.files_reused = reused;
+    inventory.metrics.files_rescanned = rescanned;
+    inventory.metrics.directories_revalidated = inventory.topology.directories.len();
+    inventory.metrics.topology_reused = !topology_changed;
+    inventory.metrics.topology_invalidated = topology_changed;
+    inventory.metrics.topology_identity = Some(topology_identity);
+    inventory.metrics.invalidation_reason = if topology_changed {
+        Some("topology_invalidated".to_owned())
+    } else if !stale.is_empty() {
+        Some(format!(
+            "unreported_source_metadata_changed:{}",
+            stale.iter().cloned().collect::<Vec<_>>().join(",")
+        ))
+    } else {
+        Some("changed_path".to_owned())
+    };
+    let identity = write_inventory_cache(root, &inventory, options, policy)?;
+    inventory.metrics.cache_identity = Some(identity);
+    Ok(inventory)
 }
 
 fn diagnose_all_with_mncs_policy(

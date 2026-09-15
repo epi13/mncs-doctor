@@ -440,6 +440,7 @@ mod tests {
                 manifests: Vec::new(),
                 skipped: Vec::new(),
                 extension_counts: Default::default(),
+                topology: Default::default(),
                 metrics: Default::default(),
             },
             BTreeMap::new(),
