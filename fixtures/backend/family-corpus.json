@@ -2,15 +2,15 @@
   "schema_version": "0.1",
   "name": "doctor-family-v1",
   "cases": [
-    {"id":"discovery","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"discovery_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":1,"type":{"bits":64,"signed":false}}}]},
+    {"id":"discovery","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"discovery_code"},"arguments":[],"step_budget":4096},"expected":[{"finite":{"discriminant":1,"type_identity":"mncs:0.2:finite-type:doctor.discovery.v1::FileClass","variant_identity":"mncs:0.2:finite-variant:doctor.discovery.v1::FileClass::Source"}}]},
     {"id":"edits","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"edits_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":1,"type":{"bits":64,"signed":false}}}]},
     {"id":"fix","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"fix_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":0,"type":{"bits":64,"signed":false}}}]},
     {"id":"health","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"health_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":2,"type":{"bits":64,"signed":false}}}]},
     {"id":"migration","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"migration_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":0,"type":{"bits":64,"signed":true}}}]},
     {"id":"report","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"report_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":1,"type":{"bits":64,"signed":false}}}]},
     {"id":"scanner","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"scanner_code"},"arguments":[],"step_budget":4096},"expected":[{"sequence":{"values":[{"integer":{"value":4,"type":{"bits":64,"signed":false}}},{"integer":{"value":0,"type":{"bits":64,"signed":false}}},{"integer":{"value":1,"type":{"bits":64,"signed":false}}},{"integer":{"value":0,"type":{"bits":64,"signed":false}}},{"integer":{"value":0,"type":{"bits":64,"signed":false}}},{"integer":{"value":0,"type":{"bits":64,"signed":false}}}]}}]},
-    {"id":"transaction","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"transaction_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":0,"type":{"bits":64,"signed":false}}}]},
+    {"id":"transaction","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"transaction_code"},"arguments":[],"step_budget":4096},"expected":[{"finite":{"discriminant":0,"type_identity":"mncs:0.2:finite-type:doctor.transaction.v1::TransactionTargetVerdict","variant_identity":"mncs:0.2:finite-variant:doctor.transaction.v1::TransactionTargetVerdict::Allow"}}]},
     {"id":"verify","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"verify_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":1,"type":{"bits":64,"signed":false}}}]},
-    {"id":"version","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"version_code"},"arguments":[],"step_budget":4096},"expected":[{"integer":{"value":0,"type":{"bits":64,"signed":true}}}]}
+    {"id":"version","request":{"schema_version":"0.1","target":{"module":"doctor.family.v1","function":"version_code"},"arguments":[],"step_budget":4096},"expected":[{"finite":{"discriminant":0,"type_identity":"mncs:0.2:finite-type:doctor.version.v1::VersionClass","variant_identity":"mncs:0.2:finite-variant:doctor.version.v1::VersionClass::Current"}}]}
   ]
 }

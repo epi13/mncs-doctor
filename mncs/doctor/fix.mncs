@@ -10,8 +10,8 @@ module doctor.fix.v1;
 // stopping rule. The host loop calls these entrypoints once per round
 // with scalar state, so iteration itself needs no MNCS heap.
 //
-// Applicability codes: 0=safe, 1=proven, 2=review, 3=manual.
-// Stop codes: 0=continue, 1=fixpoint, 2=budget-exhausted, 3=oscillation.
+// Applicability remains an external provider fact. The stop result is a
+// native finite value, so repair orchestration does not synchronize codes.
 
 // Eligibility gate: safe always (when enabled), proven only with opt-in,
 // review/manual never automatic.
@@ -35,21 +35,30 @@ fn merge_verdict(conflicts: u64) -> (result: u64) {
     return 0;
 }
 
+enum StopDecision { Continue, Fixpoint, BudgetExhausted, Oscillation }
+
+record StopRuleInput {
+    planned_empty: bool,
+    fired_before: bool,
+    iterations: u64,
+    budget: u64,
+}
+
 // Fixed-point stopping rule. `planned_empty` means this round produced no
 // applicable fixes; `fired_before` means a provider in this round already
 // fired on an earlier round (non-idempotent or oscillating pair);
 // `iterations` counts applied rounds against `budget`.
-fn stop_rule(planned_empty: bool, fired_before: bool, iterations: u64, budget: u64) -> (result: u64) {
-    if planned_empty {
-        return 1;
+fn stop_rule(input: StopRuleInput) -> (result: StopDecision) {
+    if input.planned_empty {
+        return StopDecision.Fixpoint;
     }
-    if fired_before {
-        return 3;
+    if input.fired_before {
+        return StopDecision.Oscillation;
     }
-    if iterations >= budget {
-        return 2;
+    if input.iterations >= input.budget {
+        return StopDecision.BudgetExhausted;
     }
-    return 0;
+    return StopDecision.Continue;
 }
 
 // Provider-seen check over a packed window of previously fired provider

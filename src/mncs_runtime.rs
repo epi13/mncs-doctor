@@ -26,8 +26,11 @@ use crate::report::ExitCode;
 use crate::verify::VerificationOutcome;
 use crate::version::{LanguageVersion, VersionClass};
 
+#[path = "generated/doctor_version.rs"]
+mod doctor_version;
+
 /// Exact language revision used by the embedded policy runtime.
-pub const MNCS_LANGUAGE_REV: &str = "a0255f8405484481b203117a659b0c1ca0fa7a5e";
+pub const MNCS_LANGUAGE_REV: &str = "25525f0636f45b2f91a3391a37975b7a7334508e";
 /// Policy source profile used by every embedded Doctor module.
 pub const POLICY_PROFILE: &str = "0.16";
 /// Backend whose value-level execution is currently proven for Doctor.
@@ -37,7 +40,7 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "8aad787b1f4d373d5e2c5a64591eed766ebfdab104d9e47ff4681e439f4012e4";
+    "1f28a80f042eb1c9e0d3aba4aad98ec90c41e070f801d57956b4319912d74ac3";
 
 struct ModuleSpec {
     key: &'static str,
@@ -397,26 +400,23 @@ impl DoctorMncsRuntime {
     /// Run version classification through the production policy session.
     /// Registry data remains host-owned and is passed as the current profile.
     pub fn classify_version(&self, version: LanguageVersion) -> Result<VersionClass, RuntimeError> {
-        let code = self.call_i64(
-            "version",
-            "classify",
-            &format!(
-                "[{}, {}, {}, {}]",
-                i64_arg(version.major as i64),
-                i64_arg(version.minor as i64),
-                i64_arg(0),
-                i64_arg(17)
-            ),
-        )?;
-        match code {
-            0 => Ok(VersionClass::Current),
-            1 => Ok(VersionClass::Sealed),
-            2 => Ok(VersionClass::Unsupported),
-            3 => Ok(VersionClass::Unknown),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("version returned unknown classification code {other}"),
-            )),
+        let class = doctor_version::classify(
+            &self.session,
+            doctor_version::VersionInput {
+                major: version.major as i64,
+                minor: version.minor as i64,
+                current_major: 0,
+                current_minor: 17,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.version.v1", "classify")?;
+        match class {
+            doctor_version::VersionClass::Current => Ok(VersionClass::Current),
+            doctor_version::VersionClass::Sealed => Ok(VersionClass::Sealed),
+            doctor_version::VersionClass::Unsupported => Ok(VersionClass::Unsupported),
+            doctor_version::VersionClass::Unknown => Ok(VersionClass::Unknown),
         }
     }
 
@@ -432,29 +432,32 @@ impl DoctorMncsRuntime {
         fingerprint_matches: bool,
         identical: bool,
     ) -> Result<TransactionTargetVerdict, RuntimeError> {
-        let code = self.call_u64(
-            "transaction",
-            "validate_target",
-            &format!(
-                "[{}, {}, {}, {}, {}, {}]",
-                bool_arg(expected_present),
-                bool_arg(actual_present),
-                bool_arg(is_symlink),
-                bool_arg(is_file),
-                bool_arg(fingerprint_matches),
-                bool_arg(identical)
-            ),
-        )?;
-        match code {
-            0 => Ok(TransactionTargetVerdict::Allow),
-            1 => Ok(TransactionTargetVerdict::Identical),
-            2 => Ok(TransactionTargetVerdict::Symlink),
-            3 => Ok(TransactionTargetVerdict::Stale),
-            4 => Ok(TransactionTargetVerdict::NonFile),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("transaction returned unknown target verdict {other}"),
-            )),
+        let verdict = doctor_version::validate_target(
+            &self.session,
+            doctor_version::TransactionTargetInput {
+                expected_present,
+                actual_present,
+                is_symlink,
+                is_file,
+                fingerprint_matches,
+                identical,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.transaction.v1", "validate_target")?;
+        match verdict {
+            doctor_version::TransactionTargetVerdict::Allow => Ok(TransactionTargetVerdict::Allow),
+            doctor_version::TransactionTargetVerdict::Identical => {
+                Ok(TransactionTargetVerdict::Identical)
+            }
+            doctor_version::TransactionTargetVerdict::Symlink => {
+                Ok(TransactionTargetVerdict::Symlink)
+            }
+            doctor_version::TransactionTargetVerdict::Stale => Ok(TransactionTargetVerdict::Stale),
+            doctor_version::TransactionTargetVerdict::NonFile => {
+                Ok(TransactionTargetVerdict::NonFile)
+            }
         }
     }
 
@@ -463,55 +466,49 @@ impl DoctorMncsRuntime {
         &self,
         facts: DirectoryFacts,
     ) -> Result<DirectoryDecision, RuntimeError> {
-        let code = self.call_u64(
-            "discovery",
-            "directory_decision",
-            &format!(
-                "[{}, {}, {}, {}, {}, {}, {}]",
-                u64_arg(facts.name_code),
-                bool_arg(facts.extra_excluded),
-                bool_arg(facts.is_symlink),
-                bool_arg(facts.follow_symlink),
-                bool_arg(facts.cycle),
-                u64_arg(facts.depth),
-                u64_arg(facts.max_depth)
-            ),
-        )?;
-        match code {
-            0 => Ok(DirectoryDecision::Descend),
-            1 => Ok(DirectoryDecision::SkipDepth),
-            2 => Ok(DirectoryDecision::SkipExcluded),
-            3 => Ok(DirectoryDecision::SkipCycle),
-            4 => Ok(DirectoryDecision::SkipSymlink),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("discovery returned unknown directory verdict {other}"),
-            )),
+        let decision = doctor_version::directory_decision(
+            &self.session,
+            doctor_version::DirectoryDecisionInput {
+                name_code: facts.name_code,
+                extra_excluded: facts.extra_excluded,
+                is_symlink: facts.is_symlink,
+                follow_symlink: facts.follow_symlink,
+                cycle: facts.cycle,
+                depth: facts.depth,
+                max_depth: facts.max_depth,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.discovery.v1", "directory_decision")?;
+        match decision {
+            doctor_version::DirectoryDecision::Descend => Ok(DirectoryDecision::Descend),
+            doctor_version::DirectoryDecision::SkipDepth => Ok(DirectoryDecision::SkipDepth),
+            doctor_version::DirectoryDecision::SkipExcluded => Ok(DirectoryDecision::SkipExcluded),
+            doctor_version::DirectoryDecision::SkipCycle => Ok(DirectoryDecision::SkipCycle),
+            doctor_version::DirectoryDecision::SkipSymlink => Ok(DirectoryDecision::SkipSymlink),
         }
     }
 
     /// Classify a host-observed file name/extension pair.
     pub fn discovery_file_class(&self, facts: FileFacts) -> Result<FileClass, RuntimeError> {
-        let code = self.call_u64(
-            "discovery",
-            "file_class",
-            &format!(
-                "[{}, {}]",
-                u64_arg(facts.name_code),
-                u64_arg(facts.extension_code)
-            ),
-        )?;
-        match code {
-            0 => Ok(FileClass::Ignore),
-            1 => Ok(FileClass::Source),
-            2 => Ok(FileClass::ForgeManifest),
-            3 => Ok(FileClass::WorkspaceManifest),
-            4 => Ok(FileClass::ManifestJson),
-            5 => Ok(FileClass::Cargo),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("discovery returned unknown file class {other}"),
-            )),
+        let class = doctor_version::file_class(
+            &self.session,
+            doctor_version::FileClassInput {
+                name_code: facts.name_code,
+                extension_code: facts.extension_code,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.discovery.v1", "file_class")?;
+        match class {
+            doctor_version::FileClass::Ignore => Ok(FileClass::Ignore),
+            doctor_version::FileClass::Source => Ok(FileClass::Source),
+            doctor_version::FileClass::ForgeManifest => Ok(FileClass::ForgeManifest),
+            doctor_version::FileClass::WorkspaceManifest => Ok(FileClass::WorkspaceManifest),
+            doctor_version::FileClass::ManifestJson => Ok(FileClass::ManifestJson),
+            doctor_version::FileClass::Cargo => Ok(FileClass::Cargo),
         }
     }
 
@@ -582,26 +579,23 @@ impl DoctorMncsRuntime {
         iterations: u32,
         budget: u32,
     ) -> Result<Option<StopReason>, RuntimeError> {
-        let code = self.call_u64(
-            "fix",
-            "stop_rule",
-            &format!(
-                "[{}, {}, {}, {}]",
-                bool_arg(planned_empty),
-                bool_arg(fired_before),
-                u64_arg(iterations as u64),
-                u64_arg(budget as u64)
-            ),
-        )?;
-        match code {
-            0 => Ok(None),
-            1 => Ok(Some(StopReason::Fixpoint)),
-            2 => Ok(Some(StopReason::BudgetExhausted)),
-            3 => Ok(Some(StopReason::Oscillation)),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("fix returned unknown stop code {other}"),
-            )),
+        let decision = doctor_version::stop_rule(
+            &self.session,
+            doctor_version::StopRuleInput {
+                planned_empty,
+                fired_before,
+                iterations: u64::from(iterations),
+                budget: u64::from(budget),
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.fix.v1", "stop_rule")?;
+        match decision {
+            doctor_version::StopDecision::Continue => Ok(None),
+            doctor_version::StopDecision::Fixpoint => Ok(Some(StopReason::Fixpoint)),
+            doctor_version::StopDecision::BudgetExhausted => Ok(Some(StopReason::BudgetExhausted)),
+            doctor_version::StopDecision::Oscillation => Ok(Some(StopReason::Oscillation)),
         }
     }
 
@@ -792,7 +786,12 @@ impl DoctorMncsRuntime {
                 format!("return serialization failed: {error}"),
             )
         })?;
-        let entrypoint = format!("{}::{}", spec.module, function);
+        self.record_entrypoint(spec.module, function)?;
+        Ok(value)
+    }
+
+    fn record_entrypoint(&self, module: &str, function: &str) -> Result<(), RuntimeError> {
+        let entrypoint = format!("{module}::{function}");
         let mut trace = self
             .entrypoints
             .lock()
@@ -800,7 +799,7 @@ impl DoctorMncsRuntime {
         if !trace.iter().any(|seen| seen == &entrypoint) {
             trace.push(entrypoint);
         }
-        Ok(value)
+        Ok(())
     }
 }
 

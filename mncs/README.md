@@ -14,8 +14,10 @@ suite compares against.
 `mncs/doctor_family.mncs` freeze root imports all ten modules; its checked-in
 `mncs/doctor/family.backend.json` is generated with the upstream compiler and
 opened by the production runtime. See DOC-P-018 and
-`docs/BACKEND-MATRIX-2026-09.md`. Shared scalar conventions remain explicit
-until the language provides a richer stable typed transport.
+`docs/BACKEND-MATRIX-2026-09.md`. Semantic decisions that have a native
+finite/record contract are consumed through the generated Rust binding
+`src/generated/doctor_version.rs`; the remaining scalar seams below are
+explicit transitional compatibility surfaces, not a second semantic ABI.
 
 ## Value contract (token_set pattern)
 
@@ -25,7 +27,7 @@ strings render host-side.
 | Domain | Encoding |
 |--------|----------|
 | versions | `(major: i64, minor: i64)` scalar pairs |
-| classify | 0=current 1=sealed 2=unsupported 3=unknown |
+| classify | generated `VersionClass` finite value |
 | compare | -1/0/1 (left relative to right) |
 | severity | 0=info 1=warning 2=error |
 | status | 0=pass 1=warning 2=fail 3=skipped |

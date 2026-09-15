@@ -8,51 +8,61 @@ module doctor.discovery.v1;
 // the transport because arbitrary strings and path values are not yet a
 // bounded MNCS boundary. This module decides what those facts mean.
 
-// Directory name codes:
-// 1..17 are the known tool/cache exclusions; 0 is an ordinary name.
-// Verdicts: 0=descend, 1=depth, 2=excluded, 3=cycle, 4=symlink policy.
-fn directory_decision(
+// Directory name codes 1..17 are the known tool/cache exclusions; 0 is an
+// ordinary name. The finite result makes the policy independent of numeric
+// discriminants at the host boundary.
+enum DirectoryDecision { Descend, SkipDepth, SkipExcluded, SkipCycle, SkipSymlink }
+
+record DirectoryDecisionInput {
     name_code: u64,
     extra_excluded: bool,
     is_symlink: bool,
     follow_symlink: bool,
     cycle: bool,
     depth: u64,
-    max_depth: u64
-) -> (result: u64) {
-    if depth > max_depth {
-        return 1;
+    max_depth: u64,
+}
+
+fn directory_decision(input: DirectoryDecisionInput) -> (result: DirectoryDecision) {
+    if input.depth > input.max_depth {
+        return DirectoryDecision.SkipDepth;
     }
-    if !is_symlink && (extra_excluded || (name_code >= 1 && name_code <= 17)) {
-        return 2;
+    if !input.is_symlink && (input.extra_excluded || (input.name_code >= 1 && input.name_code <= 17)) {
+        return DirectoryDecision.SkipExcluded;
     }
-    if is_symlink && cycle {
-        return 3;
+    if input.is_symlink && input.cycle {
+        return DirectoryDecision.SkipCycle;
     }
-    if is_symlink && !follow_symlink {
-        return 4;
+    if input.is_symlink && !input.follow_symlink {
+        return DirectoryDecision.SkipSymlink;
     }
-    return 0;
+    return DirectoryDecision.Descend;
 }
 
 // File name codes: 1=Forge TOML, 2=workspace TOML, 3=Cargo TOML,
-// 4=*.mncs.json. Extension code 1 is `.mncs`. Classes: 0=ignore,
-// 1=source, 2=Forge, 3=workspace, 4=JSON sidecar, 5=Cargo.
-fn file_class(name_code: u64, extension_code: u64) -> (result: u64) {
-    if name_code == 1 {
-        return 2;
+// 4=*.mncs.json. Extension code 1 is `.mncs`.
+enum FileClass { Ignore, Source, ForgeManifest, WorkspaceManifest, ManifestJson, Cargo }
+
+record FileClassInput {
+    name_code: u64,
+    extension_code: u64,
+}
+
+fn file_class(input: FileClassInput) -> (result: FileClass) {
+    if input.name_code == 1 {
+        return FileClass.ForgeManifest;
     }
-    if name_code == 2 {
-        return 3;
+    if input.name_code == 2 {
+        return FileClass.WorkspaceManifest;
     }
-    if name_code == 3 {
-        return 5;
+    if input.name_code == 3 {
+        return FileClass.Cargo;
     }
-    if name_code == 4 {
-        return 4;
+    if input.name_code == 4 {
+        return FileClass.ManifestJson;
     }
-    if extension_code == 1 {
-        return 1;
+    if input.extension_code == 1 {
+        return FileClass.Source;
     }
-    return 0;
+    return FileClass.Ignore;
 }

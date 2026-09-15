@@ -11,12 +11,21 @@ module doctor.version.v1;
 // current is sealed). Comparison is total and uses no arithmetic on the
 // compared values, so no overflow obligation can arise.
 //
-// Scalar contract (token_set pattern: codes cross the host boundary):
-//   versions cross as (major: i64, minor: i64) pairs.
-//   classify returns 0=current, 1=sealed, 2=unsupported, 3=unknown.
+// Typed contract: version coordinates remain natural numeric data, while the
+// classification result is a nominal finite value. Generated host bindings
+// carry the record and enum identities across the embedded session.
 //   compare returns -1/0/1 (left relative to right).
 //   plan_span returns the edge count from->to, -1 for downgrades,
 //     -2 when either endpoint is off the known 0.x line.
+
+enum VersionClass { Current, Sealed, Unsupported, Unknown }
+
+record VersionInput {
+    major: i64,
+    minor: i64,
+    current_major: i64,
+    current_minor: i64,
+}
 
 // Total order on (major, minor) pairs. No subtraction anywhere.
 fn compare(a_major: i64, a_minor: i64, b_major: i64, b_minor: i64) -> (result: i64) {
@@ -38,24 +47,29 @@ fn compare(a_major: i64, a_minor: i64, b_major: i64, b_minor: i64) -> (result: i
 // Classification against an explicitly supplied current profile.
 // cur_major/cur_minor arrive from the host registry; nothing here names
 // a current version.
-fn classify(major: i64, minor: i64, cur_major: i64, cur_minor: i64) -> (result: i64) {
-    if major == cur_major && minor == cur_minor {
-        return 0;
+fn classify(input: VersionInput) -> (result: VersionClass) {
+    if input.major == input.current_major && input.minor == input.current_minor {
+        return VersionClass.Current;
     }
     // Reserved/unsupported line: 1.0 is known but rejected upstream.
-    if major == 1 && minor == 0 {
-        return 2;
+    if input.major == 1 && input.minor == 0 {
+        return VersionClass.Unsupported;
     }
     // Sealed line: 0.x strictly below current, minor at least 1.
-    if major == 0 && cur_major == 0 && minor >= 1 && minor < cur_minor {
-        return 1;
+    if input.major == 0 && input.current_major == 0 && input.minor >= 1 && input.minor < input.current_minor {
+        return VersionClass.Sealed;
     }
-    return 3;
+    return VersionClass.Unknown;
 }
 
 // True exactly for versions the toolchain accepts (current or sealed).
-fn is_supported(code: i64) -> (result: bool) {
-    return code == 0 || code == 1;
+fn is_supported(class: VersionClass) -> (result: bool) {
+    return match class {
+        Current => true,
+        Sealed => true,
+        Unsupported => false,
+        Unknown => false,
+    };
 }
 
 // Migration span over the linear 0.x chain: edge count from->to.
