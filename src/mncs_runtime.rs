@@ -22,6 +22,7 @@ use crate::diagnostics::Severity;
 use crate::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts, NewlineStyle};
 use crate::fix::StopReason;
 use crate::health::{CheckResult, Status};
+use crate::migration::{MigrationVerdict, TransitionKind};
 use crate::report::ExitCode;
 use crate::verify::VerificationOutcome;
 use crate::version::{LanguageVersion, VersionClass};
@@ -40,7 +41,7 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "1f28a80f042eb1c9e0d3aba4aad98ec90c41e070f801d57956b4319912d74ac3";
+    "c2f29fca026ebc7c6baf782253c0a82d4141a7ea2c03e5887bb85e20d22a3d4f";
 
 struct ModuleSpec {
     key: &'static str,
@@ -274,12 +275,17 @@ impl DoctorMncsRuntime {
         error_count: u64,
         warning_count: u64,
     ) -> Result<Status, RuntimeError> {
-        let code = self.call_u64(
-            "health",
-            "check_status",
-            &format!("[{}, {}]", u64_arg(error_count), u64_arg(warning_count)),
-        )?;
-        status_from_code(code)
+        let status = doctor_version::check_status(
+            &self.session,
+            doctor_version::CheckStatusInput {
+                error_count,
+                warning_count,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.health.v1", "check_status")?;
+        Ok(host_status(status))
     }
 
     /// Apply MNCS health-status policy to host-collected findings and return
@@ -295,8 +301,8 @@ impl DoctorMncsRuntime {
                 ),
             ));
         }
-        let mut codes = Vec::with_capacity(checks.len());
-        for check in checks {
+        let mut statuses = Vec::with_capacity(checks.len());
+        for check in &mut *checks {
             let errors = check
                 .findings
                 .iter()
@@ -316,31 +322,35 @@ impl DoctorMncsRuntime {
             // actionable even though its file diagnostics are informational.
             // This is a policy input, not a Rust-computed verdict.
             let promote_info = check.id == "version-drift";
-            let code = self.call_u64(
-                "health",
-                "check_status_with_skip",
-                &format!(
-                    "[{}, {}, {}, {}, {}]",
-                    u64_arg(errors),
-                    u64_arg(warnings),
-                    u64_arg(infos),
-                    bool_arg(promote_info),
-                    bool_arg(check.status == Status::Skipped)
-                ),
-            )?;
-            check.status = status_from_code(code)?;
-            codes.push(code);
+            let status = doctor_version::check_status_with_skip(
+                &self.session,
+                doctor_version::CheckStatusWithSkipInput {
+                    error_count: errors,
+                    warning_count: warnings,
+                    info_count: infos,
+                    promote_info,
+                    skipped: check.status == Status::Skipped,
+                },
+                mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+            )
+            .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+            self.record_entrypoint("doctor.health.v1", "check_status_with_skip")?;
+            check.status = host_status(status);
+            statuses.push(status);
         }
-        let overall = self.call_u64(
-            "health",
-            "overall",
-            &format!(
-                "[{}, {}]",
-                sequence_arg(&codes, 8),
-                u64_arg(codes.len() as u64)
-            ),
-        )?;
-        status_from_code(overall)
+        let mut packed = statuses;
+        packed.resize(8, doctor_version::Status::Pass);
+        let overall = doctor_version::overall(
+            &self.session,
+            doctor_version::OverallInput {
+                statuses: packed,
+                count: checks.len() as u64,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.health.v1", "overall")?;
+        Ok(host_status(overall))
     }
 
     /// Apply the MNCS report exit policy to already classified checks.
@@ -359,42 +369,41 @@ impl DoctorMncsRuntime {
                 ),
             ));
         }
-        let codes: Vec<u64> = checks
+        let mut statuses: Vec<doctor_version::Status> = checks
             .iter()
-            .map(|check| status_code(check.status))
+            .map(|check| native_status(check.status))
             .collect();
-        let worst = self.call_u64(
-            "health",
-            "overall",
-            &format!(
-                "[{}, {}]",
-                sequence_arg(&codes, 8),
-                u64_arg(codes.len() as u64)
-            ),
-        )?;
+        statuses.resize(8, doctor_version::Status::Pass);
+        let worst = doctor_version::overall(
+            &self.session,
+            doctor_version::OverallInput {
+                statuses,
+                count: checks.len() as u64,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.health.v1", "overall")?;
         let verified = verification.is_some();
         let verify_passed = verification.is_none_or(|outcome| outcome.passed);
-        let code = self.call_u64(
-            "report",
-            "exit_for",
-            &format!(
-                "[{}, {}, {}, {}]",
-                u64_arg(worst),
-                bool_arg(review_blocked),
-                bool_arg(verified),
-                bool_arg(verify_passed)
-            ),
-        )?;
-        match code {
-            0 => Ok(ExitCode::Healthy),
-            1 => Ok(ExitCode::Findings),
-            2 => Ok(ExitCode::ReviewRequired),
-            3 => Ok(ExitCode::VerificationFailed),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("report returned unknown exit code {other}"),
-            )),
-        }
+        let decision = doctor_version::exit_for(
+            &self.session,
+            doctor_version::ExitInput {
+                worst,
+                review_blocked,
+                verified,
+                verify_passed,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.report.v1", "exit_for")?;
+        Ok(match decision {
+            doctor_version::ExitDecision::Healthy => ExitCode::Healthy,
+            doctor_version::ExitDecision::Findings => ExitCode::Findings,
+            doctor_version::ExitDecision::ReviewRequired => ExitCode::ReviewRequired,
+            doctor_version::ExitDecision::VerificationFailed => ExitCode::VerificationFailed,
+        })
     }
 
     /// Run version classification through the production policy session.
@@ -610,24 +619,20 @@ impl DoctorMncsRuntime {
                 ),
             ));
         }
-        let code = self.call_u64(
-            "fix",
-            "seen_before",
-            &format!(
-                "[{}, {}, {}]",
-                sequence_arg(fired, 8),
-                u64_arg(fired.len() as u64),
-                u64_arg(id)
-            ),
-        )?;
-        match code {
-            0 => Ok(false),
-            1 => Ok(true),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("fix returned unknown seen-provider code {other}"),
-            )),
-        }
+        let mut packed = fired.to_vec();
+        packed.resize(8, 0);
+        let verdict = doctor_version::seen_before(
+            &self.session,
+            doctor_version::SeenBeforeInput {
+                fired: packed,
+                count: fired.len() as u64,
+                id,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.fix.v1", "seen_before")?;
+        Ok(matches!(verdict, doctor_version::SeenVerdict::Seen))
     }
 
     /// Decide whether two edit spans conflict through the live edit policy.
@@ -638,25 +643,19 @@ impl DoctorMncsRuntime {
         b_start: u64,
         b_end: u64,
     ) -> Result<bool, RuntimeError> {
-        let code = self.call_u64(
-            "edits",
-            "pair_conflict",
-            &format!(
-                "[{}, {}, {}, {}]",
-                u64_arg(a_start),
-                u64_arg(a_end),
-                u64_arg(b_start),
-                u64_arg(b_end)
-            ),
-        )?;
-        match code {
-            0 => Ok(false),
-            1 => Ok(true),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("edits returned unknown conflict code {other}"),
-            )),
-        }
+        let verdict = doctor_version::pair_conflict(
+            &self.session,
+            doctor_version::PairConflictInput {
+                a_start,
+                a_end,
+                b_start,
+                b_end,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.edits.v1", "pair_conflict")?;
+        Ok(matches!(verdict, doctor_version::ConflictVerdict::Conflict))
     }
 
     /// Validate the structural verdict of a host-loaded migration plan.
@@ -667,8 +666,8 @@ impl DoctorMncsRuntime {
         &self,
         from: LanguageVersion,
         to: LanguageVersion,
-        kinds: &[i64],
-    ) -> Result<i64, RuntimeError> {
+        kinds: &[TransitionKind],
+    ) -> Result<MigrationVerdict, RuntimeError> {
         if kinds.len() > 16 {
             return Err(RuntimeError::new(
                 "mncs_value_contract",
@@ -678,17 +677,30 @@ impl DoctorMncsRuntime {
                 ),
             ));
         }
-        self.call_i64(
-            "migration",
-            "plan_verdict",
-            &format!(
-                "[{}, {}, {}, {}]",
-                i64_arg(version_coordinate(from)),
-                i64_arg(version_coordinate(to)),
-                sequence_i64_arg(kinds, 16),
-                u64_arg(kinds.len() as u64)
-            ),
+        let mut packed: Vec<doctor_version::TransitionKind> =
+            kinds.iter().copied().map(native_transition_kind).collect();
+        packed.resize(16, doctor_version::TransitionKind::Noop);
+        let verdict = doctor_version::plan_verdict(
+            &self.session,
+            doctor_version::PlanInput {
+                from_minor: version_coordinate(from),
+                to_minor: version_coordinate(to),
+                kinds: packed,
+                count: kinds.len() as u64,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
         )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.migration.v1", "plan_verdict")?;
+        Ok(match verdict {
+            doctor_version::MigrationVerdict::Planned => MigrationVerdict::Planned,
+            doctor_version::MigrationVerdict::Noop => MigrationVerdict::Noop,
+            doctor_version::MigrationVerdict::DowngradeRefused => {
+                MigrationVerdict::DowngradeRefused
+            }
+            doctor_version::MigrationVerdict::OfflineRefused => MigrationVerdict::OfflineRefused,
+            doctor_version::MigrationVerdict::Blocked => MigrationVerdict::Blocked,
+        })
     }
 
     /// Compose verification evidence through the live verification policy.
@@ -699,43 +711,28 @@ impl DoctorMncsRuntime {
         idempotent: bool,
         external_pass: bool,
     ) -> Result<bool, RuntimeError> {
-        let delta = self.call_u64(
-            "verify",
-            "delta_ok",
-            &format!(
-                "[{}, {}]",
-                u64_arg(errors_before as u64),
-                u64_arg(errors_after as u64)
-            ),
-        )?;
-        let verdict = self.call_u64(
-            "verify",
-            "compose",
-            &format!(
-                "[{}, {}, {}]",
-                u64_arg(delta),
-                u64_arg(u64::from(idempotent)),
-                u64_arg(u64::from(external_pass))
-            ),
-        )?;
-        match verdict {
-            0 => Ok(false),
-            1 => Ok(true),
-            other => Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!("verify returned unknown composition code {other}"),
-            )),
-        }
-    }
-
-    fn call_u64(&self, key: &str, function: &str, args: &str) -> Result<u64, RuntimeError> {
-        let value = self.call(key, function, args)?;
-        read_u64(&value)
-    }
-
-    fn call_i64(&self, key: &str, function: &str, args: &str) -> Result<i64, RuntimeError> {
-        let value = self.call(key, function, args)?;
-        read_i64(&value)
+        let delta = doctor_version::delta_ok(
+            &self.session,
+            doctor_version::DeltaInput {
+                errors_before: errors_before as u64,
+                errors_after: errors_after as u64,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.verify.v1", "delta_ok")?;
+        let verdict = doctor_version::compose(
+            &self.session,
+            doctor_version::ComposeInput {
+                delta,
+                idempotent,
+                external_pass,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.verify.v1", "compose")?;
+        Ok(matches!(verdict, doctor_version::VerificationVerdict::Pass))
     }
 
     fn call(
@@ -812,16 +809,8 @@ fn version_coordinate(version: LanguageVersion) -> i64 {
     i64::from(version.major) * 1_000 + i64::from(version.minor)
 }
 
-fn i64_arg(value: i64) -> String {
-    format!("{{\"integer\":{{\"value\":{value},\"type\":{{\"bits\":64,\"signed\":true}}}}}}")
-}
-
 fn u64_arg(value: u64) -> String {
     format!("{{\"integer\":{{\"value\":{value},\"type\":{{\"bits\":64,\"signed\":false}}}}}}")
-}
-
-fn bool_arg(value: bool) -> String {
-    format!("{{\"boolean\":{{\"value\":{value}}}}}")
 }
 
 fn sequence_arg(values: &[u64], width: usize) -> String {
@@ -835,12 +824,6 @@ fn byte_sequence_arg(values: &[u8]) -> String {
         .iter()
         .map(|value| format!("{{\"byte\":{{\"value\":{value}}}}}"))
         .collect::<Vec<_>>();
-    format!("{{\"sequence\":{{\"values\":[{}]}}}}", items.join(","))
-}
-
-fn sequence_i64_arg(values: &[i64], width: usize) -> String {
-    let mut items: Vec<String> = values.iter().copied().map(i64_arg).collect();
-    items.resize_with(width, || i64_arg(0));
     format!("{{\"sequence\":{{\"values\":[{}]}}}}", items.join(","))
 }
 
@@ -875,12 +858,6 @@ fn read_u64(value: &serde_json::Value) -> Result<u64, RuntimeError> {
         .ok_or_else(|| RuntimeError::new("mncs_value_contract", "u64 return value is not unsigned"))
 }
 
-fn read_i64(value: &serde_json::Value) -> Result<i64, RuntimeError> {
-    read_integer(value, true)?
-        .as_i64()
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "i64 return value is not signed"))
-}
-
 fn read_u64_array(
     value: &serde_json::Value,
     expected_len: usize,
@@ -913,25 +890,30 @@ fn read_u64_array(
     Ok(output)
 }
 
-fn status_code(status: Status) -> u64 {
+fn native_status(status: Status) -> doctor_version::Status {
     match status {
-        Status::Pass => 0,
-        Status::Warning => 1,
-        Status::Fail => 2,
-        Status::Skipped => 3,
+        Status::Pass => doctor_version::Status::Pass,
+        Status::Warning => doctor_version::Status::Warning,
+        Status::Fail => doctor_version::Status::Fail,
+        Status::Skipped => doctor_version::Status::Skipped,
     }
 }
 
-fn status_from_code(code: u64) -> Result<Status, RuntimeError> {
-    match code {
-        0 => Ok(Status::Pass),
-        1 => Ok(Status::Warning),
-        2 => Ok(Status::Fail),
-        3 => Ok(Status::Skipped),
-        other => Err(RuntimeError::new(
-            "mncs_value_contract",
-            format!("health returned unknown status code {other}"),
-        )),
+fn host_status(status: doctor_version::Status) -> Status {
+    match status {
+        doctor_version::Status::Pass => Status::Pass,
+        doctor_version::Status::Warning => Status::Warning,
+        doctor_version::Status::Fail => Status::Fail,
+        doctor_version::Status::Skipped => Status::Skipped,
+    }
+}
+
+fn native_transition_kind(kind: TransitionKind) -> doctor_version::TransitionKind {
+    match kind {
+        TransitionKind::Noop => doctor_version::TransitionKind::Noop,
+        TransitionKind::Metadata => doctor_version::TransitionKind::Metadata,
+        TransitionKind::Source => doctor_version::TransitionKind::Source,
+        TransitionKind::Unknown => doctor_version::TransitionKind::Unknown,
     }
 }
 

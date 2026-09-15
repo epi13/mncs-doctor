@@ -53,6 +53,19 @@ impl std::fmt::Display for TransitionKind {
     }
 }
 
+/// Native migration-plan policy outcome. This remains a semantic value at the
+/// Doctor orchestration boundary; process/report codes are assigned only by
+/// the report policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationVerdict {
+    Planned,
+    Noop,
+    DowngradeRefused,
+    OfflineRefused,
+    Blocked,
+}
+
 /// One mechanical source operation within a transition. This is the shape
 /// future upstream rule data will fill; today only fixture registries and
 /// the doctor-owned header bump use it.

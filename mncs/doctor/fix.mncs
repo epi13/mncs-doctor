@@ -10,29 +10,45 @@ module doctor.fix.v1;
 // stopping rule. The host loop calls these entrypoints once per round
 // with scalar state, so iteration itself needs no MNCS heap.
 //
-// Applicability remains an external provider fact. The stop result is a
-// native finite value, so repair orchestration does not synchronize codes.
+// Applicability remains an external provider fact. Semantic applicability,
+// merge, and seen-provider decisions use nominal values at the boundary.
+
+enum Applicability { Safe, SemanticallyProven, Review, Manual }
+enum MergeVerdict { Keep, Skip }
+enum SeenVerdict { Fresh, Seen }
+
+record EligibilityInput {
+    level: Applicability,
+    allow_safe: bool,
+    allow_proven: bool
+}
+
+record MergeInput { conflicts: u64 }
+
+record SeenBeforeInput {
+    fired: [u64; 8],
+    count: u64,
+    id: u64
+}
 
 // Eligibility gate: safe always (when enabled), proven only with opt-in,
 // review/manual never automatic.
-fn eligible(level: u64, allow_safe: bool, allow_proven: bool) -> (result: bool) {
-    if level == 0 {
-        return allow_safe;
-    }
-    if level == 1 {
-        return allow_proven;
-    }
-    return false;
+fn eligible(input: EligibilityInput) -> (result: bool) {
+    return match input.level {
+        Safe => input.allow_safe,
+        SemanticallyProven => input.allow_proven,
+        Review => false,
+        Manual => false,
+    };
 }
 
-// Merge verdict for one candidate fix against the kept set: 0=keep,
-// 1=skip (conflicts). A conflicting fix is recorded and skipped, never
-// fatal to the surviving plan.
-fn merge_verdict(conflicts: u64) -> (result: u64) {
-    if conflicts > 0 {
-        return 1;
+// Merge verdict for one candidate fix against the kept set. A conflicting
+// fix is recorded and skipped, never fatal to the surviving plan.
+fn merge_verdict(input: MergeInput) -> (result: MergeVerdict) {
+    if input.conflicts > 0 {
+        return MergeVerdict.Skip;
     }
-    return 0;
+    return MergeVerdict.Keep;
 }
 
 enum StopDecision { Continue, Fixpoint, BudgetExhausted, Oscillation }
@@ -62,11 +78,11 @@ fn stop_rule(input: StopRuleInput) -> (result: StopDecision) {
 }
 
 // Provider-seen check over a packed window of previously fired provider
-// codes plus a live count: 1=fired before (oscillation risk), 0=fresh.
-fn seen_before(fired: [u64; 8], count: u64, id: u64) -> (result: u64) {
-    iterate i over fired carrying hit: u64 = 0 {
-        let live: bool = i < count && i < fired.len;
-        next hit = select(live && fired[i] == id, 1, hit);
+// identities plus a live count.
+fn seen_before(input: SeenBeforeInput) -> (result: SeenVerdict) {
+    iterate i over input.fired carrying hit: bool = false {
+        let live: bool = i < input.count && i < input.fired.len;
+        next hit = hit || (live && input.fired[i] == input.id);
     }
-    return hit;
+    return select(hit, SeenVerdict.Seen, SeenVerdict.Fresh);
 }

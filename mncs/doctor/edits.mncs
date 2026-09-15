@@ -9,21 +9,51 @@ module doctor.edits.v1;
 // Spans cross as (start: u64, end: u64) pairs with start <= end and
 // end <= content length validated host-side before planning.
 //
-// Rules (mirror EditSet::validate):
-//   inverted spans are rejected upstream of planning (valid flag).
-//   adjacent edits (a.end == b.start) do NOT conflict.
-//   two insertions at the same point conflict (ambiguous order).
-//   otherwise any overlap conflicts.
+// Rules (mirror EditSet::validate): inverted spans are rejected upstream;
+// adjacent edits do not conflict; two insertions at one point conflict;
+// otherwise any overlap conflicts.
 
-// Pairwise conflict verdict: 1=conflict, 0=clean.
-fn pair_conflict(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> (result: u64) {
+enum ConflictVerdict { Clean, Conflict }
+enum EditShape { Insertion, Deletion, Replacement }
+
+record PairConflictInput {
+    a_start: u64,
+    a_end: u64,
+    b_start: u64,
+    b_end: u64
+}
+
+record ShapeInput {
+    start: u64,
+    end: u64,
+    replacement_len: u64
+}
+
+record ConflictsWithKeptInput {
+    start: u64,
+    end: u64,
+    kept_starts: [u64; 8],
+    kept_ends: [u64; 8],
+    kept_count: u64
+}
+
+fn is_conflict(verdict: ConflictVerdict) -> (result: bool) {
+    return match verdict {
+        Clean => false,
+        Conflict => true,
+    };
+}
+
+// Pairwise conflict verdict.
+fn pair_conflict(input: PairConflictInput) -> (result: ConflictVerdict) {
     // Normalized order: the pair is unordered, so test both directions
     // through one ordered check.
-    let a_first: bool = a_start < b_start || (a_start == b_start && a_end < b_end);
-    let first_start: u64 = select(a_first, a_start, b_start);
-    let first_end: u64 = select(a_first, a_end, b_end);
-    let second_start: u64 = select(a_first, b_start, a_start);
-    let second_end: u64 = select(a_first, b_end, a_end);
+    let a_first: bool = input.a_start < input.b_start
+        || (input.a_start == input.b_start && input.a_end < input.b_end);
+    let first_start: u64 = select(a_first, input.a_start, input.b_start);
+    let first_end: u64 = select(a_first, input.a_end, input.b_end);
+    let second_start: u64 = select(a_first, input.b_start, input.a_start);
+    let second_end: u64 = select(a_first, input.b_end, input.a_end);
     // Strictly ordered (first ends before second starts) is clean, with
     // one exception: two insertions at the same point.
     let ordered: bool = first_end < second_start
@@ -31,37 +61,39 @@ fn pair_conflict(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> (result:
     let same_point: bool = first_start == first_end && first_start == second_start
         && second_start == second_end;
     if same_point {
-        return 1;
+        return ConflictVerdict.Conflict;
     }
     if ordered {
-        return 0;
+        return ConflictVerdict.Clean;
     }
-    return 1;
+    return ConflictVerdict.Conflict;
 }
 
-// Classify one edit shape: 0=insertion, 1=deletion, 2=replacement.
-fn shape(start: u64, end: u64, replacement_len: u64) -> (result: u64) {
-    if start == end {
-        return 0;
+// Classify one edit shape.
+fn shape(input: ShapeInput) -> (result: EditShape) {
+    if input.start == input.end {
+        return EditShape.Insertion;
     }
-    if replacement_len == 0 {
-        return 1;
+    if input.replacement_len == 0 {
+        return EditShape.Deletion;
     }
-    return 2;
+    return EditShape.Replacement;
 }
 
 // Count conflicts of one candidate span against a window of kept spans.
 // Kept spans pack as parallel start/end windows plus a live count.
-fn conflicts_with_kept(
-    start: u64,
-    end: u64,
-    kept_starts: [u64; 8],
-    kept_ends: [u64; 8],
-    kept_count: u64,
-) -> (result: u64) {
-    iterate i over kept_starts carrying hits: u64 = 0 {
-        let live: bool = i < kept_count && i < kept_starts.len && i < kept_ends.len;
-        let hit: bool = live && pair_conflict(start, end, kept_starts[i], kept_ends[i]) == 1;
+fn conflicts_with_kept(input: ConflictsWithKeptInput) -> (result: u64) {
+    iterate i over input.kept_starts carrying hits: u64 = 0 {
+        let live: bool = i < input.kept_count
+            && i < input.kept_starts.len
+            && i < input.kept_ends.len;
+        let hit: bool = live
+            && is_conflict(pair_conflict(PairConflictInput {
+                a_start: input.start,
+                a_end: input.end,
+                b_start: input.kept_starts[i],
+                b_end: input.kept_ends[i]
+            }));
         next hits = hits + select(hit, 1, 0);
     }
     return hits;

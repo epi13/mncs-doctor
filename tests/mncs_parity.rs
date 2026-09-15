@@ -3,8 +3,8 @@
 //! Each test runs the same inputs through the Rust reference implementation
 //! and the MNCS policy module (compiled once per module via `mncs-embed`,
 //! pinned rev) and asserts identical verdicts. Semantic finite values cross
-//! the embedded boundary through generated bindings; scalar codes remain only
-//! in legacy parity surfaces that have not yet received native contracts.
+//! the embedded boundary by nominal identity; numeric transport remains only
+//! for natural measurements such as byte offsets and scanner counters.
 
 use std::sync::OnceLock;
 
@@ -55,11 +55,6 @@ module_session!(
 );
 module_session!(fix_session, "../mncs/doctor/fix.mncs", "doctor.fix.v1");
 module_session!(
-    report_session,
-    "../mncs/doctor/report.mncs",
-    "doctor.report.v1"
-);
-module_session!(
     verify_session,
     "../mncs/doctor/verify.mncs",
     "doctor.verify.v1"
@@ -82,6 +77,19 @@ fn u64_arg(value: u64) -> String {
 
 fn bool_arg(value: bool) -> String {
     format!("{{\"boolean\": {{\"value\": {value}}}}}")
+}
+
+fn finite_arg(type_name: &str, variant: &str) -> String {
+    format!("{{\"finite\": {{\"type\": \"{type_name}\", \"variant\": \"{variant}\"}}}}")
+}
+
+fn record_arg(type_name: &str, fields: &[(&str, String)]) -> String {
+    let fields = fields
+        .iter()
+        .map(|(name, value)| format!("\"{name}\": {value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{\"record\": {{\"type\": \"{type_name}\", \"fields\": {{{fields}}}}}}}")
 }
 
 fn seq_arg(items: &[String]) -> String {
@@ -119,6 +127,43 @@ fn call(
     serde_json::to_value(&out.returned[0]).expect("serialize returned")
 }
 
+fn family_session() -> &'static mncs_embed::Session {
+    static SESSION: OnceLock<mncs_embed::Session> = OnceLock::new();
+    SESSION.get_or_init(|| {
+        let artifact =
+            mncs_embed::Artifact::from_json(include_bytes!("../mncs/doctor/family.backend.json"))
+                .expect("load frozen Doctor family artifact");
+        mncs_embed::Session::open(artifact).expect("open frozen Doctor family artifact")
+    })
+}
+
+fn report_session() -> &'static mncs_embed::Session {
+    family_session()
+}
+
+fn typed_call(
+    session: &mncs_embed::Session,
+    module: &str,
+    function: &str,
+    args: &str,
+) -> serde_json::Value {
+    let args = format!("[{args}]");
+    let out = session
+        .call_typed_json(
+            module,
+            function,
+            &args,
+            &mncs_embed::CallOptions::budgeted(32768),
+        )
+        .expect("typed call");
+    assert_eq!(
+        out.status, "returned",
+        "{module}::{function} failed: {:?}",
+        out.failure_reason
+    );
+    serde_json::to_value(&out.returned[0]).expect("serialize returned")
+}
+
 fn as_i64(value: &serde_json::Value) -> i64 {
     value["integer"]["value"].as_i64().expect("integer return")
 }
@@ -129,6 +174,17 @@ fn as_u64(value: &serde_json::Value) -> u64 {
 
 fn as_bool(value: &serde_json::Value) -> bool {
     value["boolean"]["value"].as_bool().expect("boolean return")
+}
+
+fn as_variant(value: &serde_json::Value) -> String {
+    if let Some(variant) = value["finite"]["variant"].as_str() {
+        return variant.to_owned();
+    }
+    value["finite"]["variant_identity"]
+        .as_str()
+        .and_then(|identity| identity.rsplit("::").next())
+        .expect("finite return variant")
+        .to_owned()
 }
 
 fn as_seq(value: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -245,12 +301,12 @@ fn parity_migration_span() {
 
 // ---- health aggregation ----
 
-fn status_code(s: Status) -> u64 {
+fn status_variant(s: Status) -> &'static str {
     match s {
-        Status::Pass => 0,
-        Status::Warning => 1,
-        Status::Fail => 2,
-        Status::Skipped => 3,
+        Status::Pass => "Pass",
+        Status::Warning => "Warning",
+        Status::Fail => "Fail",
+        Status::Skipped => "Skipped",
     }
 }
 
@@ -259,14 +315,17 @@ fn parity_health_combine() {
     let all = [Status::Pass, Status::Warning, Status::Fail, Status::Skipped];
     for a in all {
         for b in all {
-            let args = format!("{}, {}", u64_arg(status_code(a)), u64_arg(status_code(b)));
-            let got = as_u64(&call(
+            let got = as_variant(&typed_call(
                 health_session(),
                 "doctor.health.v1",
                 "combine",
-                &args,
+                &format!(
+                    "{}, {}",
+                    finite_arg("Status", status_variant(a)),
+                    finite_arg("Status", status_variant(b))
+                ),
             ));
-            assert_eq!(got, status_code(worst_of(a, b)), "{a:?} <> {b:?}");
+            assert_eq!(got, status_variant(worst_of(a, b)), "{a:?} <> {b:?}");
         }
     }
 }
@@ -284,12 +343,21 @@ fn parity_health_overall() {
         &[Status::Pass, Status::Warning, Status::Fail, Status::Skipped],
     ];
     for statuses in cases {
-        let mut items: Vec<String> = statuses.iter().map(|s| u64_arg(status_code(*s))).collect();
+        let mut items: Vec<String> = statuses
+            .iter()
+            .map(|s| finite_arg("Status", status_variant(*s)))
+            .collect();
         while items.len() < 8 {
-            items.push(u64_arg(0));
+            items.push(finite_arg("Status", "Pass"));
         }
-        let args = format!("{}, {}", seq_arg(&items), u64_arg(statuses.len() as u64));
-        let got = as_u64(&call(
+        let args = record_arg(
+            "OverallInput",
+            &[
+                ("statuses", seq_arg(&items)),
+                ("count", u64_arg(statuses.len() as u64)),
+            ],
+        );
+        let got = as_variant(&typed_call(
             health_session(),
             "doctor.health.v1",
             "overall",
@@ -306,31 +374,33 @@ fn parity_health_overall() {
                 })
                 .collect::<Vec<_>>(),
         );
-        assert_eq!(got, status_code(expected), "{statuses:?}");
+        assert_eq!(got, status_variant(expected), "{statuses:?}");
     }
 }
 
 #[test]
 fn parity_health_check_status_with_advisories() {
-    // (errors, warnings, infos, promote_info, skipped) -> status code.
+    // (errors, warnings, infos, promote_info, skipped) -> status.
     let cases = [
-        ((0, 0, 0, false, false), 0),
-        ((0, 0, 2, false, false), 0),
-        ((0, 0, 2, true, false), 1),
-        ((0, 1, 2, false, false), 1),
-        ((1, 0, 0, false, true), 2),
-        ((0, 0, 0, false, true), 3),
+        ((0, 0, 0, false, false), "Pass"),
+        ((0, 0, 2, false, false), "Pass"),
+        ((0, 0, 2, true, false), "Warning"),
+        ((0, 1, 2, false, false), "Warning"),
+        ((1, 0, 0, false, true), "Fail"),
+        ((0, 0, 0, false, true), "Skipped"),
     ];
     for ((errors, warnings, infos, promote, skipped), expected) in cases {
-        let args = format!(
-            "{}, {}, {}, {}, {}",
-            u64_arg(errors),
-            u64_arg(warnings),
-            u64_arg(infos),
-            bool_arg(promote),
-            bool_arg(skipped)
+        let args = record_arg(
+            "CheckStatusWithSkipInput",
+            &[
+                ("error_count", u64_arg(errors)),
+                ("warning_count", u64_arg(warnings)),
+                ("info_count", u64_arg(infos)),
+                ("promote_info", bool_arg(promote)),
+                ("skipped", bool_arg(skipped)),
+            ],
         );
-        let got = as_u64(&call(
+        let got = as_variant(&typed_call(
             health_session(),
             "doctor.health.v1",
             "check_status_with_skip",
@@ -500,22 +570,24 @@ fn parity_migration_verdicts() {
     // kinds consulted only when the span plans; all-noop kinds here.
     // Windows are exactly 16 wide: the value contract refuses any other
     // length fail-closed (pinned by this test's construction).
-    let noop_kinds = seq_arg(&vec![i64_arg(0); 16]);
+    let noop_kinds = seq_arg(&vec![finite_arg("TransitionKind", "Noop"); 16]);
     let cases = [
-        (8, 16, 0),  // planned
-        (16, 16, 1), // noop
-        (16, 15, 2), // downgrade refused
-        (0, 16, 3),  // off-line refused
+        (8, 16, "Planned"),           // planned
+        (16, 16, "Noop"),             // noop
+        (16, 15, "DowngradeRefused"), // downgrade refused
+        (0, 16, "OfflineRefused"),    // off-line refused
     ];
     for (from, to, expected) in cases {
-        let args = format!(
-            "{}, {}, {}, {}",
-            i64_arg(from),
-            i64_arg(to),
-            noop_kinds,
-            u64_arg(8)
+        let args = record_arg(
+            "PlanInput",
+            &[
+                ("from_minor", i64_arg(from)),
+                ("to_minor", i64_arg(to)),
+                ("kinds", noop_kinds.clone()),
+                ("count", u64_arg(8)),
+            ],
         );
-        let got = as_i64(&call(
+        let got = as_variant(&typed_call(
             migration_session(),
             "doctor.migration.v1",
             "plan_verdict",
@@ -523,24 +595,26 @@ fn parity_migration_verdicts() {
         ));
         assert_eq!(got, expected, "{from} -> {to}");
     }
-    // Unknown edge on the path blocks (verdict 4): mirror of
+    // Unknown edge on the path blocks: mirror of
     // plan().fully_known == false on the production registry.
-    let mut kinds: Vec<String> = vec![i64_arg(0); 16];
-    kinds[3] = i64_arg(3);
-    let args = format!(
-        "{}, {}, {}, {}",
-        i64_arg(8),
-        i64_arg(16),
-        seq_arg(&kinds),
-        u64_arg(8)
+    let mut kinds: Vec<String> = vec![finite_arg("TransitionKind", "Noop"); 16];
+    kinds[3] = finite_arg("TransitionKind", "Unknown");
+    let args = record_arg(
+        "PlanInput",
+        &[
+            ("from_minor", i64_arg(8)),
+            ("to_minor", i64_arg(16)),
+            ("kinds", seq_arg(&kinds)),
+            ("count", u64_arg(8)),
+        ],
     );
-    let got = as_i64(&call(
+    let got = as_variant(&typed_call(
         migration_session(),
         "doctor.migration.v1",
         "plan_verdict",
         &args,
     ));
-    assert_eq!(got, 4);
+    assert_eq!(got, "Blocked");
     let registry = default_registry();
     let plan = plan(
         LanguageVersion::new(0, 8),
@@ -598,20 +672,22 @@ fn parity_edit_pair_conflict() {
         ((3, 3), (3, 3), true),  // identical insertions
     ];
     for ((a0, a1), (b0, b1), expected) in cases {
-        let args = format!(
-            "{}, {}, {}, {}",
-            u64_arg(a0),
-            u64_arg(a1),
-            u64_arg(b0),
-            u64_arg(b1)
+        let args = record_arg(
+            "PairConflictInput",
+            &[
+                ("a_start", u64_arg(a0)),
+                ("a_end", u64_arg(a1)),
+                ("b_start", u64_arg(b0)),
+                ("b_end", u64_arg(b1)),
+            ],
         );
-        let got = as_u64(&call(
+        let got = as_variant(&typed_call(
             edits_session(),
             "doctor.edits.v1",
             "pair_conflict",
             &args,
         ));
-        assert_eq!(got == 1, expected, "{a0}..{a1} vs {b0}..{b1}");
+        assert_eq!(got == "Conflict", expected, "{a0}..{a1} vs {b0}..{b1}");
         assert_eq!(
             rust_overlap((a0 as usize, a1 as usize), (b0 as usize, b1 as usize)),
             expected
@@ -624,21 +700,28 @@ fn parity_edit_pair_conflict() {
 #[test]
 fn parity_fix_eligibility() {
     let levels = [
-        (Applicability::Safe, 0u64),
-        (Applicability::SemanticallyProven, 1),
-        (Applicability::Review, 2),
-        (Applicability::Manual, 3),
+        (Applicability::Safe, "Safe"),
+        (Applicability::SemanticallyProven, "SemanticallyProven"),
+        (Applicability::Review, "Review"),
+        (Applicability::Manual, "Manual"),
     ];
     for safe in [true, false] {
         for proven in [true, false] {
-            for (level, code) in levels {
-                let args = format!(
-                    "{}, {}, {}",
-                    u64_arg(code),
-                    bool_arg(safe),
-                    bool_arg(proven)
+            for (level, variant) in levels {
+                let args = record_arg(
+                    "EligibilityInput",
+                    &[
+                        ("level", finite_arg("Applicability", variant)),
+                        ("allow_safe", bool_arg(safe)),
+                        ("allow_proven", bool_arg(proven)),
+                    ],
                 );
-                let got = as_bool(&call(fix_session(), "doctor.fix.v1", "eligible", &args));
+                let got = as_bool(&typed_call(
+                    fix_session(),
+                    "doctor.fix.v1",
+                    "eligible",
+                    &args,
+                ));
                 let eligibility = mncs_doctor::fix::Eligibility {
                     allow_safe: safe,
                     allow_proven: proven,
@@ -675,40 +758,43 @@ fn parity_fix_stop_rule() {
 
 #[test]
 fn parity_report_exit_for() {
-    // (worst, review_blocked, verified, verify_passed) -> exit code
+    // (worst, review_blocked, verified, verify_passed) -> exit decision.
     let cases = [
-        ((0u64, false, false, true), 0),
-        ((1u64, false, false, true), 1),
-        ((1u64, true, false, true), 2),
-        ((2u64, false, false, true), 1),
-        ((2u64, true, false, true), 2),
-        ((0u64, false, true, false), 3),
-        ((1u64, true, true, false), 3), // verification dominates
-        ((0u64, false, true, true), 0),
+        (("Pass", false, false, true), "Healthy"),
+        (("Warning", false, false, true), "Findings"),
+        (("Warning", true, false, true), "ReviewRequired"),
+        (("Fail", false, false, true), "Findings"),
+        (("Fail", true, false, true), "ReviewRequired"),
+        (("Pass", false, true, false), "VerificationFailed"),
+        (("Warning", true, true, false), "VerificationFailed"), // verification dominates
+        (("Pass", false, true, true), "Healthy"),
     ];
     for ((worst, blocked, verified, passed), expected) in cases {
-        let args = format!(
-            "{}, {}, {}, {}",
-            u64_arg(worst),
-            bool_arg(blocked),
-            bool_arg(verified),
-            bool_arg(passed)
+        let args = record_arg(
+            "ExitInput",
+            &[
+                ("worst", finite_arg("Status", worst)),
+                ("review_blocked", bool_arg(blocked)),
+                ("verified", bool_arg(verified)),
+                ("verify_passed", bool_arg(passed)),
+            ],
         );
-        let got = as_u64(&call(
+        let got = as_variant(&typed_call(
             report_session(),
             "doctor.report.v1",
             "exit_for",
             &args,
         ));
-        assert_eq!(got, expected as u64);
+        assert_eq!(got, expected);
         // Cross-check the Rust exit mapping on equivalent inputs.
         let checks = vec![CheckResult {
             id: "t".to_owned(),
             title: "t".to_owned(),
             status: match worst {
-                0 => Status::Pass,
-                1 => Status::Warning,
-                _ => Status::Fail,
+                "Pass" => Status::Pass,
+                "Warning" => Status::Warning,
+                "Fail" => Status::Fail,
+                _ => unreachable!(),
             },
             findings: Vec::new(),
         }];
@@ -723,7 +809,14 @@ fn parity_report_exit_for() {
             notes: Vec::new(),
         });
         let rust_code = mncs_doctor::report::exit_for(&checks, blocked, verification.as_ref());
-        assert_eq!(got as i32, rust_code.as_i32());
+        let rust_decision = match rust_code {
+            mncs_doctor::report::ExitCode::Healthy => "Healthy",
+            mncs_doctor::report::ExitCode::Findings => "Findings",
+            mncs_doctor::report::ExitCode::ReviewRequired => "ReviewRequired",
+            mncs_doctor::report::ExitCode::VerificationFailed => "VerificationFailed",
+            mncs_doctor::report::ExitCode::ToolFailure => unreachable!(),
+        };
+        assert_eq!(got, rust_decision);
     }
 }
 
@@ -738,26 +831,34 @@ fn parity_verify_compose() {
         ((1u64, 1u64), true, true, true),   // stable errors are fine
     ];
     for ((before, after), idempotent, external_ok, expected) in cases {
-        let delta = if after <= before { 1 } else { 0 };
-        let d = as_u64(&call(
+        let delta = if after <= before { "Pass" } else { "Fail" };
+        let d = as_variant(&typed_call(
             verify_session(),
             "doctor.verify.v1",
             "delta_ok",
-            &format!("{}, {}", u64_arg(before), u64_arg(after)),
+            &record_arg(
+                "DeltaInput",
+                &[
+                    ("errors_before", u64_arg(before)),
+                    ("errors_after", u64_arg(after)),
+                ],
+            ),
         ));
         assert_eq!(d, delta);
-        let got = as_u64(&call(
+        let got = as_variant(&typed_call(
             verify_session(),
             "doctor.verify.v1",
             "compose",
-            &format!(
-                "{}, {}, {}",
-                u64_arg(d),
-                u64_arg(idempotent as u64),
-                u64_arg(external_ok as u64)
+            &record_arg(
+                "ComposeInput",
+                &[
+                    ("delta", finite_arg("VerificationVerdict", &d)),
+                    ("idempotent", bool_arg(idempotent)),
+                    ("external_pass", bool_arg(external_ok)),
+                ],
             ),
         ));
-        assert_eq!(got == 1, expected);
+        assert_eq!(got == "Pass", expected);
     }
     // Rust verify_after agrees on a real re-diagnosis pair.
     let backend = mncs_doctor::diagnostics::ScannerBackend;
@@ -837,23 +938,25 @@ fn transport_mismatches_refuse_fail_closed() {
         Err(error) => error,
     };
     assert_eq!(invalid.code, "invalid_identity");
-    // Unsigned element into an [i64; 16] window.
-    let args = format!(
-        "{}, {}, {}, {}",
-        i64_arg(8),
-        i64_arg(16),
-        seq_arg(&vec![u64_arg(0); 16]),
-        u64_arg(8)
+    // A natural integer cannot be silently accepted as a TransitionKind.
+    let args = record_arg(
+        "PlanInput",
+        &[
+            ("from_minor", i64_arg(8)),
+            ("to_minor", i64_arg(16)),
+            ("kinds", seq_arg(&vec![u64_arg(0); 16])),
+            ("count", u64_arg(8)),
+        ],
     );
-    let out = migration_session()
-        .call_json(
+    let error = migration_session()
+        .call_typed_json(
             "doctor.migration.v1",
             "plan_verdict",
             &format!("[{args}]"),
             &options,
         )
-        .expect("call");
-    assert_eq!(out.status, "invalid_request");
+        .expect_err("wrong nominal element type must fail closed");
+    assert_eq!(error.code, "bad_typed_arguments");
 }
 
 #[test]

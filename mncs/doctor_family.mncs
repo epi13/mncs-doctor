@@ -22,25 +22,40 @@ fn discovery_code() -> (result: discovery.FileClass) {
     });
 }
 
-fn edits_code() -> (result: u64) {
-    return edits.pair_conflict(1, 4, 3, 6);
+fn edits_code() -> (result: edits.ConflictVerdict) {
+    return edits.pair_conflict(edits.PairConflictInput {
+        a_start: 1,
+        a_end: 4,
+        b_start: 3,
+        b_end: 6,
+    });
 }
 
-fn fix_code() -> (result: u64) {
-    return fix.merge_verdict(0);
+fn fix_code() -> (result: fix.MergeVerdict) {
+    return fix.merge_verdict(fix.MergeInput { conflicts: 0 });
 }
 
-fn health_code() -> (result: u64) {
-    return health.combine(1, 2);
+fn health_code() -> (result: health.Status) {
+    return health.combine(health.Status.Warning, health.Status.Fail);
 }
 
-fn migration_code() -> (result: i64) {
-    let kinds: [i64; 16] = [0; 16];
-    return migration.plan_verdict(8, 16, kinds, 0);
+fn migration_code() -> (result: migration.MigrationVerdict) {
+    let kinds: [migration.TransitionKind; 16] = [migration.TransitionKind.Noop; 16];
+    return migration.plan_verdict(migration.PlanInput {
+        from_minor: 8,
+        to_minor: 16,
+        kinds: kinds,
+        count: 0,
+    });
 }
 
-fn report_code() -> (result: u64) {
-    return report.exit_for(1, false, false, true);
+fn report_code() -> (result: report.ExitDecision) {
+    return report.exit_for(report.ExitInput {
+        worst: health.Status.Warning,
+        review_blocked: false,
+        verified: false,
+        verify_passed: true,
+    });
 }
 
 fn scanner_code() -> (result: [u64; 6]) {
@@ -60,8 +75,12 @@ fn transaction_code() -> (result: transaction.TransactionTargetVerdict) {
     });
 }
 
-fn verify_code() -> (result: u64) {
-    return verify.compose(1, 1, 1);
+fn verify_code() -> (result: verify.VerificationVerdict) {
+    return verify.compose(verify.ComposeInput {
+        delta: verify.VerificationVerdict.Pass,
+        idempotent: true,
+        external_pass: true,
+    });
 }
 
 fn version_code() -> (result: version.VersionClass) {

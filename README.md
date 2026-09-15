@@ -37,9 +37,13 @@ real transition rules. Every gap is a pressure entry, not a mock.
 Doctor policy increasingly lives in MNCS, not just fixtures:
 `mncs/doctor/` holds ten executed modules (version, health, migration, edit,
 fix, report, verify, transaction, discovery, scanner policy) running on the
-research bytecode backend via the production `mncs-embed` runtime. Scalar
-codes cross the host boundary;
-records/enums live inside MNCS; strings render host-side. `tests/
+research bytecode backend via the production `mncs-embed` runtime. Natural
+numeric facts such as version coordinates, byte counts, offsets, and scanner
+windows remain numeric. Semantic finite values and records cross through the
+generated Rust binding `src/generated/doctor_version.rs`; strings render
+host-side. The binding is content-addressed and submits the expected MNCS
+interface identity on every call, so a stale generated binding fails closed.
+`tests/
 mncs_parity.rs` proves the MNCS core agrees with the Rust reference on
 every probed input, and pins fail-closed transport (length/signedness/
 identity mismatches refuse as `invalid_request`). See `mncs/README.md`
