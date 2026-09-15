@@ -163,7 +163,48 @@ fn changed_path_reuses_digest_bound_inventory_after_initialization() {
     assert_eq!(report["inventory"]["files_rescanned"], 1);
     assert_eq!(report["inventory"]["files_reused"], 1);
     assert_eq!(report["inventory"]["invalidation_reason"], "changed_path");
+    assert_eq!(report["inventory"]["topology_reused"], true);
+    assert_eq!(report["inventory"]["topology_invalidated"], false);
+    assert!(
+        report["inventory"]["directories_revalidated"]
+            .as_u64()
+            .unwrap()
+            >= 2
+    );
+    assert!(report["inventory"]["topology_identity"].is_string());
     assert!(report["inventory"]["cache_identity"].is_string());
+}
+
+#[test]
+fn changed_discovery_options_invalidate_the_incremental_cache() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(initial.status.success());
+
+    let cache_path = root.join(".mncs/doctor/inventory.json");
+    let mut cache: serde_json::Value =
+        serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
+    cache["options_identity"] = serde_json::json!("changed-discovery-options");
+    fs::write(&cache_path, serde_json::to_vec_pretty(&cache).unwrap()).unwrap();
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_rescanned"], 2);
+    assert_eq!(report["inventory"]["files_reused"], 0);
+    assert!(report["inventory"]["invalidation_reason"]
+        .as_str()
+        .unwrap()
+        .contains("cache_invalid:discovery options changed"));
 }
 
 #[test]
@@ -195,7 +236,91 @@ fn unreported_source_mutation_invalidates_incremental_inventory() {
     assert!(report["inventory"]["invalidation_reason"]
         .as_str()
         .unwrap()
-        .contains("unreported source metadata changed: src/lib.mncs"));
+        .contains("unreported_source_metadata_changed:src/lib.mncs"));
+    assert_eq!(report["inventory"]["topology_reused"], true);
+    assert_eq!(report["inventory"]["topology_invalidated"], false);
+}
+
+#[test]
+fn unreported_new_source_invalidates_topology_without_rescanning_reused_sources() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(initial.status.success());
+    fs::write(
+        root.join("src/new.mncs"),
+        "mncs 0.17;\nmodule healthy.new;\n\nfn answer() -> (result: i64) {\n    return 42;\n}\n",
+    )
+    .unwrap();
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_rescanned"], 2);
+    assert_eq!(report["inventory"]["files_reused"], 1);
+    assert_eq!(report["inventory"]["topology_invalidated"], true);
+    assert_eq!(report["inventory"]["topology_reused"], false);
+    assert_eq!(
+        report["inventory"]["invalidation_reason"],
+        "topology_invalidated"
+    );
+}
+
+#[test]
+fn deleted_cached_source_is_removed_by_topology_refresh() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(initial.status.success());
+    fs::remove_file(root.join("src/lib.mncs")).unwrap();
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_rescanned"], 1);
+    assert_eq!(report["inventory"]["files_reused"], 0);
+    assert_eq!(report["inventory"]["topology_invalidated"], true);
+    assert_eq!(report["inventory"]["files_checked"], 1);
+}
+
+#[test]
+fn renamed_cached_source_is_replaced_without_a_full_byte_scan() {
+    let root = stage("repos/healthy");
+    let initial = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(initial.status.success());
+    fs::rename(root.join("src/lib.mncs"), root.join("src/moved.mncs")).unwrap();
+
+    let narrowed = run(
+        &root,
+        &[
+            "doctor",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
+    );
+    let report = stdout_json(&narrowed);
+    assert_eq!(report["inventory"]["files_rescanned"], 2);
+    assert_eq!(report["inventory"]["files_reused"], 0);
+    assert_eq!(report["inventory"]["topology_invalidated"], true);
 }
 
 #[test]

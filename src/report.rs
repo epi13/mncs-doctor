@@ -307,7 +307,11 @@ mod tests {
             total_bytes: 10,
             files_reused: 0,
             files_rescanned: 2,
+            directories_revalidated: 0,
+            topology_reused: false,
+            topology_invalidated: false,
             cache_identity: None,
+            topology_identity: None,
             invalidation_reason: None,
         });
         let a = render_human(&report, false);

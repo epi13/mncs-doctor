@@ -235,7 +235,7 @@ pub struct SourceFile {
 }
 
 /// A manifest sidecar found during discovery.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManifestHit {
     pub path: PathBuf,
     pub relative: String,
@@ -253,10 +253,47 @@ pub enum ManifestKind {
 }
 
 /// A directory skipped during traversal, with the reason.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkippedDir {
     pub relative: String,
     pub reason: String,
+}
+
+/// A cheap identity for one directory entry set.  The identity contains
+/// names and entry kinds (and, for symlinks, the target metadata identity),
+/// but never reads file contents.  It is the evidence used to establish that
+/// a cached source set is still topologically complete.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DirectoryTopology {
+    pub relative: String,
+    pub identity: String,
+}
+
+/// A source discovered by the topology pass.  The pass intentionally carries
+/// only path/classification facts; bytes are acquired separately and can be
+/// reused from the previous inventory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopologySource {
+    pub relative: String,
+    pub is_symlink: bool,
+}
+
+/// Filesystem topology and policy projection for one inventory acquisition.
+/// This is safe to compare without rereading source contents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct TopologySnapshot {
+    pub directories: Vec<DirectoryTopology>,
+    pub sources: Vec<TopologySource>,
+    pub manifests: Vec<ManifestHit>,
+    pub skipped: Vec<SkippedDir>,
+    pub extension_counts: BTreeMap<String, u64>,
+}
+
+impl TopologySnapshot {
+    pub fn identity(&self) -> String {
+        let bytes = serde_json::to_vec(self).expect("topology snapshot is serializable");
+        fingerprint(&bytes)
+    }
 }
 
 /// Deterministic inventory of a workspace.
@@ -271,6 +308,8 @@ pub struct Inventory {
     pub skipped: Vec<SkippedDir>,
     /// Per-extension file counts (includes non-source files seen).
     pub extension_counts: BTreeMap<String, u64>,
+    /// Cheap filesystem/policy projection used by the incremental cache.
+    pub topology: TopologySnapshot,
     /// Runtime-only accounting for incremental inventory reuse.
     #[serde(skip)]
     pub metrics: InventoryMetrics,
@@ -281,7 +320,11 @@ pub struct Inventory {
 pub struct InventoryMetrics {
     pub files_reused: usize,
     pub files_rescanned: usize,
+    pub directories_revalidated: usize,
+    pub topology_reused: bool,
+    pub topology_invalidated: bool,
     pub cache_identity: Option<String>,
+    pub topology_identity: Option<String>,
     pub invalidation_reason: Option<String>,
 }
 
@@ -295,7 +338,11 @@ impl Inventory {
             total_bytes: self.sources.iter().map(|s| s.len).sum(),
             files_reused: self.metrics.files_reused,
             files_rescanned: self.metrics.files_rescanned,
+            directories_revalidated: self.metrics.directories_revalidated,
+            topology_reused: self.metrics.topology_reused,
+            topology_invalidated: self.metrics.topology_invalidated,
             cache_identity: self.metrics.cache_identity.clone(),
+            topology_identity: self.metrics.topology_identity.clone(),
             invalidation_reason: self.metrics.invalidation_reason.clone(),
         }
     }
@@ -310,8 +357,13 @@ pub struct InventorySummary {
     pub total_bytes: u64,
     pub files_reused: usize,
     pub files_rescanned: usize,
+    pub directories_revalidated: usize,
+    pub topology_reused: bool,
+    pub topology_invalidated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topology_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invalidation_reason: Option<String>,
 }
@@ -357,55 +409,79 @@ pub fn discover_with_policy(
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
 ) -> Result<Inventory, DiscoveryError> {
+    let topology = discover_topology_with_policy(root, options, directory_policy, file_policy)?;
     let mut sources = Vec::new();
-    let mut manifests = Vec::new();
-    let mut skipped = Vec::new();
-    let mut extension_counts: BTreeMap<String, u64> = BTreeMap::new();
-    let mut visited: Vec<(u64, u64)> = Vec::new();
-    visit_dir(
-        root,
-        root,
-        0,
-        options,
-        &mut sources,
-        &mut manifests,
-        &mut skipped,
-        &mut extension_counts,
-        &mut visited,
-        directory_policy,
-        file_policy,
-    )?;
+    for candidate in &topology.sources {
+        let path = root.join(&candidate.relative);
+        sources.push(read_source_file(root, &path, candidate.is_symlink)?);
+    }
     sources.sort_by(|a: &SourceFile, b: &SourceFile| a.relative.cmp(&b.relative));
-    manifests.sort_by(|a: &ManifestHit, b: &ManifestHit| a.relative.cmp(&b.relative));
-    skipped.sort_by(|a: &SkippedDir, b: &SkippedDir| a.relative.cmp(&b.relative));
     let files_rescanned = sources.len();
     Ok(Inventory {
         root: root.to_path_buf(),
         sources,
-        manifests,
-        skipped,
-        extension_counts,
+        manifests: topology.manifests.clone(),
+        skipped: topology.skipped.clone(),
+        extension_counts: topology.extension_counts.clone(),
+        topology: topology.clone(),
         metrics: InventoryMetrics {
             files_rescanned,
+            directories_revalidated: topology.directories.len(),
+            topology_identity: Some(topology.identity()),
             ..InventoryMetrics::default()
         },
     })
 }
 
+/// Perform only the filesystem/policy topology pass.  It enumerates directory
+/// entries and metadata, but never reads source bytes.  Callers use this pass
+/// to validate a cache before deciding which files need rescanning.
+pub fn discover_topology_with_policy(
+    root: &Path,
+    options: &DiscoveryOptions,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+) -> Result<TopologySnapshot, DiscoveryError> {
+    let mut topology = TopologySnapshot::default();
+    let mut visited: Vec<(u64, u64)> = Vec::new();
+    visit_topology_dir(
+        root,
+        root,
+        0,
+        options,
+        &mut topology,
+        &mut visited,
+        directory_policy,
+        file_policy,
+    )?;
+    topology
+        .directories
+        .sort_by(|a, b| a.relative.cmp(&b.relative));
+    topology.sources.sort_by(|a, b| a.relative.cmp(&b.relative));
+    topology
+        .manifests
+        .sort_by(|a, b| a.relative.cmp(&b.relative));
+    topology.skipped.sort_by(|a, b| a.relative.cmp(&b.relative));
+    Ok(topology)
+}
+
 #[allow(clippy::too_many_arguments)]
-fn visit_dir(
+fn visit_topology_dir(
     root: &Path,
     dir: &Path,
     depth: usize,
     options: &DiscoveryOptions,
-    sources: &mut Vec<SourceFile>,
-    manifests: &mut Vec<ManifestHit>,
-    skipped: &mut Vec<SkippedDir>,
-    extension_counts: &mut BTreeMap<String, u64>,
+    topology: &mut TopologySnapshot,
     visited: &mut Vec<(u64, u64)>,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
 ) -> Result<(), DiscoveryError> {
+    // Doctor's own cache is a host-owned artifact.  It must not invalidate
+    // the project topology merely because the cache was created after the
+    // first scan.
+    if dir == root.join(".mncs") {
+        return Ok(());
+    }
     let boundary = directory_policy(DirectoryFacts {
         name_code: 0,
         extra_excluded: false,
@@ -417,7 +493,7 @@ fn visit_dir(
     })
     .map_err(DiscoveryError::Policy)?;
     if boundary != DirectoryDecision::Descend {
-        skipped.push(SkippedDir {
+        topology.skipped.push(SkippedDir {
             relative: rel_string(root, dir),
             reason: boundary.reason().to_owned(),
         });
@@ -428,19 +504,53 @@ fn visit_dir(
         .collect::<Result<_, _>>()
         .map_err(|e| io_err(dir, e))?;
     entries.sort_by_key(|e| e.file_name());
+    if dir == root {
+        entries.retain(|entry| entry.file_name() != ".mncs");
+    }
+    let entry_identities: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|e| io_err(&path, e))?;
+            let kind = if file_type.is_symlink() {
+                "symlink"
+            } else if file_type.is_dir() {
+                "directory"
+            } else if file_type.is_file() {
+                "file"
+            } else {
+                "other"
+            };
+            let target = if file_type.is_symlink() {
+                fs::metadata(&path)
+                    .ok()
+                    .map(|metadata| metadata_identity(&metadata))
+                    .unwrap_or_else(|| "unresolved".to_owned())
+            } else {
+                String::new()
+            };
+            Ok(format!(
+                "{}\0{}\0{}",
+                entry.file_name().to_string_lossy(),
+                kind,
+                target
+            ))
+        })
+        .collect::<Result<_, DiscoveryError>>()?;
+    topology.directories.push(DirectoryTopology {
+        relative: rel_string(root, dir),
+        identity: fingerprint(entry_identities.join("\n").as_bytes()),
+    });
     for entry in entries {
         let path = entry.path();
         let file_type = entry.file_type().map_err(|e| io_err(&path, e))?;
         if file_type.is_symlink() {
-            handle_symlink(
+            handle_topology_symlink(
                 root,
                 &path,
                 depth,
                 options,
-                sources,
-                manifests,
-                skipped,
-                extension_counts,
+                topology,
                 visited,
                 directory_policy,
                 file_policy,
@@ -463,21 +573,18 @@ fn visit_dir(
             })
             .map_err(DiscoveryError::Policy)?;
             if decision != DirectoryDecision::Descend {
-                skipped.push(SkippedDir {
+                topology.skipped.push(SkippedDir {
                     relative: rel_string(root, &path),
                     reason: decision.reason().to_owned(),
                 });
                 continue;
             }
-            visit_dir(
+            visit_topology_dir(
                 root,
                 &path,
                 depth + 1,
                 options,
-                sources,
-                manifests,
-                skipped,
-                extension_counts,
+                topology,
                 visited,
                 directory_policy,
                 file_policy,
@@ -485,30 +592,19 @@ fn visit_dir(
             continue;
         }
         if file_type.is_file() {
-            record_file(
-                root,
-                &path,
-                false,
-                sources,
-                manifests,
-                extension_counts,
-                file_policy,
-            )?;
+            record_topology_file(root, &path, false, topology, file_policy)?;
         }
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn handle_symlink(
+fn handle_topology_symlink(
     root: &Path,
     path: &Path,
     depth: usize,
     options: &DiscoveryOptions,
-    sources: &mut Vec<SourceFile>,
-    manifests: &mut Vec<ManifestHit>,
-    skipped: &mut Vec<SkippedDir>,
-    extension_counts: &mut BTreeMap<String, u64>,
+    topology: &mut TopologySnapshot,
     visited: &mut Vec<(u64, u64)>,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
@@ -533,21 +629,18 @@ fn handle_symlink(
             .map_err(DiscoveryError::Policy)?;
             if decision == DirectoryDecision::Descend {
                 visited.push(id);
-                visit_dir(
+                visit_topology_dir(
                     root,
                     path,
                     depth + 1,
                     options,
-                    sources,
-                    manifests,
-                    skipped,
-                    extension_counts,
+                    topology,
                     visited,
                     directory_policy,
                     file_policy,
                 )?;
             } else {
-                skipped.push(SkippedDir {
+                topology.skipped.push(SkippedDir {
                     relative: rel_string(root, path),
                     reason: decision.reason().to_owned(),
                 });
@@ -556,17 +649,9 @@ fn handle_symlink(
         }
         Ok(md) if md.is_file() => {
             if options.follow_file_symlinks {
-                record_file(
-                    root,
-                    path,
-                    true,
-                    sources,
-                    manifests,
-                    extension_counts,
-                    file_policy,
-                )?;
+                record_topology_file(root, path, true, topology, file_policy)?;
             } else {
-                skipped.push(SkippedDir {
+                topology.skipped.push(SkippedDir {
                     relative: rel_string(root, path),
                     reason: "symlinked file (policy=skip)".to_owned(),
                 });
@@ -574,12 +659,79 @@ fn handle_symlink(
             Ok(())
         }
         _ => {
-            skipped.push(SkippedDir {
+            topology.skipped.push(SkippedDir {
                 relative: rel_string(root, path),
                 reason: "unresolvable symlink".to_owned(),
             });
             Ok(())
         }
+    }
+}
+
+fn record_topology_file(
+    root: &Path,
+    path: &Path,
+    is_symlink: bool,
+    topology: &mut TopologySnapshot,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+) -> Result<(), DiscoveryError> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    *topology.extension_counts.entry(ext.clone()).or_insert(0) += 1;
+    let class = file_policy(FileFacts {
+        name_code: file_name_code(&name),
+        extension_code: u64::from(SOURCE_EXTENSIONS.contains(&ext.as_str())),
+    })
+    .map_err(DiscoveryError::Policy)?;
+    match class {
+        FileClass::ForgeManifest
+        | FileClass::WorkspaceManifest
+        | FileClass::ManifestJson
+        | FileClass::Cargo => {
+            let kind = match class {
+                FileClass::ForgeManifest => ManifestKind::Forge,
+                FileClass::WorkspaceManifest => ManifestKind::Workspace,
+                FileClass::ManifestJson => ManifestKind::ManifestJson,
+                FileClass::Cargo => ManifestKind::Cargo,
+                _ => unreachable!(),
+            };
+            topology.manifests.push(ManifestHit {
+                path: path.to_path_buf(),
+                relative: rel_string(root, path),
+                kind,
+            });
+        }
+        FileClass::Source => topology.sources.push(TopologySource {
+            relative: rel_string(root, path),
+            is_symlink,
+        }),
+        FileClass::Ignore => {}
+    }
+    Ok(())
+}
+
+fn metadata_identity(metadata: &fs::Metadata) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return format!(
+            "{}:{}:{}:{}:{}",
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        format!("{}:{}", metadata.len(), metadata.is_dir())
     }
 }
 
@@ -656,56 +808,6 @@ fn file_name_code(name: &str) -> u64 {
         _ if name.ends_with(".mncs.json") => 4,
         _ => 0,
     }
-}
-
-fn record_file(
-    root: &Path,
-    path: &Path,
-    is_symlink: bool,
-    sources: &mut Vec<SourceFile>,
-    manifests: &mut Vec<ManifestHit>,
-    extension_counts: &mut BTreeMap<String, u64>,
-    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
-) -> Result<(), DiscoveryError> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    *extension_counts.entry(ext.clone()).or_insert(0) += 1;
-
-    let class = file_policy(FileFacts {
-        name_code: file_name_code(&name),
-        extension_code: u64::from(SOURCE_EXTENSIONS.contains(&ext.as_str())),
-    })
-    .map_err(DiscoveryError::Policy)?;
-    match class {
-        FileClass::ForgeManifest
-        | FileClass::WorkspaceManifest
-        | FileClass::ManifestJson
-        | FileClass::Cargo => {
-            let kind = match class {
-                FileClass::ForgeManifest => ManifestKind::Forge,
-                FileClass::WorkspaceManifest => ManifestKind::Workspace,
-                FileClass::ManifestJson => ManifestKind::ManifestJson,
-                FileClass::Cargo => ManifestKind::Cargo,
-                _ => unreachable!(),
-            };
-            manifests.push(ManifestHit {
-                path: path.to_path_buf(),
-                relative: rel_string(root, path),
-                kind,
-            });
-        }
-        FileClass::Source => {
-            sources.push(read_source_file(root, path, is_symlink)?);
-        }
-        FileClass::Ignore => {}
-    }
-    Ok(())
 }
 
 /// Read one already-identified source without traversing its repository.
