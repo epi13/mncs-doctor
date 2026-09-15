@@ -45,59 +45,48 @@ const FAMILY_ARTIFACT_SHA256: &str =
 
 struct ModuleSpec {
     key: &'static str,
-    module: &'static str,
     source: &'static str,
 }
 
 const MODULES: &[ModuleSpec] = &[
     ModuleSpec {
         key: "version",
-        module: "doctor.version.v1",
         source: include_str!("../mncs/doctor/version.mncs"),
     },
     ModuleSpec {
         key: "health",
-        module: "doctor.health.v1",
         source: include_str!("../mncs/doctor/health.mncs"),
     },
     ModuleSpec {
         key: "migration",
-        module: "doctor.migration.v1",
         source: include_str!("../mncs/doctor/migration.mncs"),
     },
     ModuleSpec {
         key: "edits",
-        module: "doctor.edits.v1",
         source: include_str!("../mncs/doctor/edits.mncs"),
     },
     ModuleSpec {
         key: "fix",
-        module: "doctor.fix.v1",
         source: include_str!("../mncs/doctor/fix.mncs"),
     },
     ModuleSpec {
         key: "report",
-        module: "doctor.report.v1",
         source: include_str!("../mncs/doctor/report.mncs"),
     },
     ModuleSpec {
         key: "verify",
-        module: "doctor.verify.v1",
         source: include_str!("../mncs/doctor/verify.mncs"),
     },
     ModuleSpec {
         key: "transaction",
-        module: "doctor.transaction.v1",
         source: include_str!("../mncs/doctor/transaction.mncs"),
     },
     ModuleSpec {
         key: "discovery",
-        module: "doctor.discovery.v1",
         source: include_str!("../mncs/doctor/discovery.mncs"),
     },
     ModuleSpec {
         key: "scanner",
-        module: "doctor.scanner.v1",
         source: include_str!("../mncs/doctor/scanner.mncs"),
     },
 ];
@@ -558,25 +547,26 @@ impl DoctorMncsRuntime {
     }
 
     fn scan_feed(&self, bytes: &[u8], state: [u64; 6]) -> Result<[u64; 6], RuntimeError> {
-        let value = self.call(
-            "scanner",
-            "feed",
-            &format!(
-                "[{}, {}]",
-                byte_sequence_arg(bytes),
-                sequence_arg(&state, 6)
-            ),
-        )?;
-        read_u64_array(&value, 6)
+        let values = doctor_version::feed(
+            &self.session,
+            bytes.to_vec(),
+            state.to_vec(),
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.scanner.v1", "feed")?;
+        state_array(values)
     }
 
     fn scan_finish(&self, state: [u64; 6]) -> Result<[u64; 6], RuntimeError> {
-        let value = self.call(
-            "scanner",
-            "finish",
-            &format!("[{}]", sequence_arg(&state, 6)),
-        )?;
-        read_u64_array(&value, 6)
+        let values = doctor_version::finish(
+            &self.session,
+            state.to_vec(),
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.scanner.v1", "finish")?;
+        state_array(values)
     }
 
     /// Ask MNCS whether a repair loop should stop. `None` means continue;
@@ -735,58 +725,6 @@ impl DoctorMncsRuntime {
         Ok(matches!(verdict, doctor_version::VerificationVerdict::Pass))
     }
 
-    fn call(
-        &self,
-        key: &str,
-        function: &str,
-        args: &str,
-    ) -> Result<serde_json::Value, RuntimeError> {
-        let spec = MODULES.iter().find(|spec| spec.key == key).ok_or_else(|| {
-            RuntimeError::new("mncs_runtime_config", format!("unknown module {key}"))
-        })?;
-        let output = self
-            .session
-            .call_json(
-                spec.module,
-                function,
-                args,
-                &mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
-            )
-            .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
-        if output.status != "returned" {
-            return Err(RuntimeError::new(
-                "mncs_policy_call",
-                format!(
-                    "{}::{} returned {}; artifact={} reason={}",
-                    spec.module,
-                    function,
-                    output.status,
-                    output.artifact_sha256,
-                    output.failure_reason.as_deref().unwrap_or("unspecified")
-                ),
-            ));
-        }
-        if output.returned.len() != 1 {
-            return Err(RuntimeError::new(
-                "mncs_value_contract",
-                format!(
-                    "{}::{} returned {} values; expected exactly one",
-                    spec.module,
-                    function,
-                    output.returned.len()
-                ),
-            ));
-        }
-        let value = serde_json::to_value(&output.returned[0]).map_err(|error| {
-            RuntimeError::new(
-                "mncs_value_contract",
-                format!("return serialization failed: {error}"),
-            )
-        })?;
-        self.record_entrypoint(spec.module, function)?;
-        Ok(value)
-    }
-
     fn record_entrypoint(&self, module: &str, function: &str) -> Result<(), RuntimeError> {
         let entrypoint = format!("{module}::{function}");
         let mut trace = self
@@ -809,84 +747,15 @@ fn version_coordinate(version: LanguageVersion) -> i64 {
     i64::from(version.major) * 1_000 + i64::from(version.minor)
 }
 
-fn u64_arg(value: u64) -> String {
-    format!("{{\"integer\":{{\"value\":{value},\"type\":{{\"bits\":64,\"signed\":false}}}}}}")
-}
-
-fn sequence_arg(values: &[u64], width: usize) -> String {
-    let mut items: Vec<String> = values.iter().copied().map(u64_arg).collect();
-    items.resize_with(width, || u64_arg(0));
-    format!("{{\"sequence\":{{\"values\":[{}]}}}}", items.join(","))
-}
-
-fn byte_sequence_arg(values: &[u8]) -> String {
-    let items = values
-        .iter()
-        .map(|value| format!("{{\"byte\":{{\"value\":{value}}}}}"))
-        .collect::<Vec<_>>();
-    format!("{{\"sequence\":{{\"values\":[{}]}}}}", items.join(","))
-}
-
-fn read_integer(
-    value: &serde_json::Value,
-    signed: bool,
-) -> Result<&serde_json::Value, RuntimeError> {
-    let integer = value
-        .get("integer")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "expected integer return"))?;
-    let type_info = integer
-        .get("type")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "integer return has no type"))?;
-    let bits = type_info.get("bits").and_then(serde_json::Value::as_u64);
-    let actual_signed = type_info.get("signed").and_then(serde_json::Value::as_bool);
-    if bits != Some(64) || actual_signed != Some(signed) {
+fn state_array(values: Vec<u64>) -> Result<[u64; 6], RuntimeError> {
+    if values.len() != 6 {
         return Err(RuntimeError::new(
             "mncs_value_contract",
-            format!("expected i64/u64 return, got bits={bits:?} signed={actual_signed:?}"),
-        ));
-    }
-    integer
-        .get("value")
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "integer return has no value"))
-}
-
-fn read_u64(value: &serde_json::Value) -> Result<u64, RuntimeError> {
-    read_integer(value, false)?
-        .as_u64()
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "u64 return value is not unsigned"))
-}
-
-fn read_u64_array(
-    value: &serde_json::Value,
-    expected_len: usize,
-) -> Result<[u64; 6], RuntimeError> {
-    if expected_len != 6 {
-        return Err(RuntimeError::new(
-            "mncs_runtime_config",
-            format!("scanner array reader expected width 6, got {expected_len}"),
-        ));
-    }
-    let values = value
-        .get("sequence")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|sequence| sequence.get("values"))
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| RuntimeError::new("mncs_value_contract", "expected u64 sequence return"))?;
-    if values.len() != expected_len {
-        return Err(RuntimeError::new(
-            "mncs_value_contract",
-            format!(
-                "expected sequence width {expected_len}, returned {}",
-                values.len()
-            ),
+            format!("expected scanner state width 6, returned {}", values.len()),
         ));
     }
     let mut output = [0_u64; 6];
-    for (index, element) in values.iter().enumerate() {
-        output[index] = read_u64(element)?;
-    }
+    output.copy_from_slice(&values);
     Ok(output)
 }
 

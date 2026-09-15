@@ -3,13 +3,13 @@
 use mncs_embed::{CallOptions, EmbedError, Session};
 use serde_json::{json, Map, Value};
 
-pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.1";
+pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.2";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
     "1af5a86bad2a5cf60cdb6ab541f2c11454797c0ec5a47e3c695f58a92eb6e523";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "debddd548ff21fe4b04de02c96fbd41971ab762f45e298188a9aaea3c0830566";
+    "079190a6e04fee08b29c7f04a34e8658ab760e1103343c8b52d41586132628ed";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -1747,6 +1747,39 @@ pub fn classify(
     Ok(VersionClass::from_host_value(&value)?)
 }
 
+pub fn combine(
+    session: &Session,
+    a: Status,
+    b: Status,
+    options: CallOptions,
+) -> Result<Status, EmbedError> {
+    let arguments = serde_json::to_string(&vec![a.host_value(), b.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.health.v1", "combine", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(Status::from_host_value(&value)?)
+}
+
+pub fn compare(
+    session: &Session,
+    a_major: i64,
+    a_minor: i64,
+    b_major: i64,
+    b_minor: i64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": a_major}}),
+        json!({"integer": {"value": a_minor}}),
+        json!({"integer": {"value": b_major}}),
+        json!({"integer": {"value": b_minor}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.version.v1", "compare", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
 pub fn compose(
     session: &Session,
     input: ComposeInput,
@@ -1807,6 +1840,34 @@ pub fn directory_decision(
     Ok(DirectoryDecision::from_host_value(&value)?)
 }
 
+pub fn discovery_code(session: &Session, options: CallOptions) -> Result<FileClass, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "discovery_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(FileClass::from_host_value(&value)?)
+}
+
+pub fn edits_code(session: &Session, options: CallOptions) -> Result<ConflictVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "edits_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ConflictVerdict::from_host_value(&value)?)
+}
+
 pub fn eligible(
     session: &Session,
     input: EligibilityInput,
@@ -1817,6 +1878,31 @@ pub fn eligible(
     let output = typed_call(session, "doctor.fix.v1", "eligible", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn enumerate(
+    session: &Session,
+    from_minor: i64,
+    count: u64,
+    options: CallOptions,
+) -> Result<Vec<i64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": from_minor}}),
+        json!({"integer": {"value": count, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "enumerate",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_i64(item))
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn excluded_directory_name(
@@ -1849,6 +1935,21 @@ pub fn exit_for(
     Ok(ExitDecision::from_host_value(&value)?)
 }
 
+pub fn feed(
+    session: &Session,
+    bytes: Vec<u8>,
+    state: Vec<u64>,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.scanner.v1", "feed", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn file_class(
     session: &Session,
     input: FileClassInput,
@@ -1879,6 +1980,28 @@ pub fn finish(
         .iter()
         .map(|item| decode_u64(item))
         .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn fix_code(session: &Session, options: CallOptions) -> Result<MergeVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.family.v1", "fix_code", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(MergeVerdict::from_host_value(&value)?)
+}
+
+pub fn health_code(session: &Session, options: CallOptions) -> Result<Status, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "health_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Status::from_host_value(&value)?)
 }
 
 pub fn is_conflict(
@@ -2005,6 +2128,23 @@ pub fn merge_verdict(
     Ok(MergeVerdict::from_host_value(&value)?)
 }
 
+pub fn migration_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<MigrationVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "migration_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(MigrationVerdict::from_host_value(&value)?)
+}
+
 pub fn overall(
     session: &Session,
     input: OverallInput,
@@ -2033,6 +2173,32 @@ pub fn pair_conflict(
     )?;
     let value = returned_value(&output)?;
     Ok(ConflictVerdict::from_host_value(&value)?)
+}
+
+pub fn plan_span(
+    session: &Session,
+    from_major: i64,
+    from_minor: i64,
+    to_major: i64,
+    to_minor: i64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": from_major}}),
+        json!({"integer": {"value": from_minor}}),
+        json!({"integer": {"value": to_major}}),
+        json!({"integer": {"value": to_minor}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "plan_span",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
 }
 
 pub fn plan_verdict(
@@ -2065,6 +2231,55 @@ pub fn rank(
     Ok(Severity::from_host_value(&value)?)
 }
 
+pub fn report_code(session: &Session, options: CallOptions) -> Result<ExitDecision, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "report_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ExitDecision::from_host_value(&value)?)
+}
+
+pub fn scan_kinds(
+    session: &Session,
+    kinds: Vec<TransitionKind>,
+    count: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": kinds.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}), json!({"integer": {"value": count, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "scan_kinds",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn scanner_code(session: &Session, options: CallOptions) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "scanner_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn seen_before(
     session: &Session,
     input: SeenBeforeInput,
@@ -2089,6 +2304,50 @@ pub fn shape(
     Ok(EditShape::from_host_value(&value)?)
 }
 
+pub fn span_edges(
+    session: &Session,
+    from_minor: i64,
+    to_minor: i64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": from_minor}}),
+        json!({"integer": {"value": to_minor}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "span_edges",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn span_verdict(
+    session: &Session,
+    from_minor: i64,
+    to_minor: i64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": from_minor}}),
+        json!({"integer": {"value": to_minor}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "span_verdict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
 pub fn stop_rule(
     session: &Session,
     input: StopRuleInput,
@@ -2099,6 +2358,23 @@ pub fn stop_rule(
     let output = typed_call(session, "doctor.fix.v1", "stop_rule", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(StopDecision::from_host_value(&value)?)
+}
+
+pub fn transaction_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<TransactionTargetVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "transaction_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(TransactionTargetVerdict::from_host_value(&value)?)
 }
 
 pub fn validate_target(
@@ -2117,6 +2393,37 @@ pub fn validate_target(
     )?;
     let value = returned_value(&output)?;
     Ok(TransactionTargetVerdict::from_host_value(&value)?)
+}
+
+pub fn verify_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<VerificationVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "verify_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VerificationVerdict::from_host_value(&value)?)
+}
+
+pub fn version_code(session: &Session, options: CallOptions) -> Result<VersionClass, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "version_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionClass::from_host_value(&value)?)
 }
 
 pub const BINDING_METADATA: (&str, &str, &str, &str, &str) = (

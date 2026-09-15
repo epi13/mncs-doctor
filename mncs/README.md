@@ -19,7 +19,8 @@ finite/record contract are consumed through the generated Rust binding
 `src/generated/doctor_version.rs`. The generator records the module,
 callable, interface identity, schema revision, and binding content identity;
 each wrapper submits the expected interface identity to the runtime. The
-remaining numeric boundaries below are natural facts or deliberately narrow
+scanner's bounded byte/state calls are generated as a multi-argument wrapper,
+so the remaining numeric boundaries below are natural facts or deliberately narrow
 structural compatibility surfaces, not a second semantic ABI. Discovery
 directory names, file names, and file extensions are nominal generated finite
 values as well.

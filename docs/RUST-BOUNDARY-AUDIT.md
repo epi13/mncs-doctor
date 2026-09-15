@@ -13,8 +13,9 @@ Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
 (`mncs-research-bytecode`) once per process, retains one session for all ten
 imported policy modules, and uses the generated Rust binding for nominal
 records and finite values. The binding submits the expected interface
-identity on every call. Generic `call_json` remains only for bounded natural
-numeric/byte ingress such as the scanner. Fail-closed transport is pinned:
+identity on every call. The generated binding now also covers the
+multi-argument bounded-byte scanner calls, so production has no generic
+`call_json` transport path. Fail-closed transport is pinned:
 length/signedness mismatches refuse as `invalid_request`
 (`MNCS_VALUE_CONTRACT`), never silently. Reports include source/artifact
 identities and the entrypoints actually used (see `tests/mncs_parity.rs` and

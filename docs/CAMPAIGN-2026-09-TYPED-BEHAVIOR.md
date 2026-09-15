@@ -28,6 +28,12 @@ Every generated wrapper submits the expected interface identity, so a stale
 binding fails deterministically instead of allowing a changed enum, field,
 parameter, or return type to be reinterpreted.
 
+The binding generator now also emits multi-argument callable wrappers and
+bounded byte-view transport. Doctor's scanner `feed(bytes, state)` and
+`finish(state)` calls therefore use generated Rust bindings; the production
+runtime no longer formats a generic typed-call JSON envelope for scanner
+ingress.
+
 The host still transports natural numeric facts such as version coordinates,
 scanner bytes, counts, offsets, and fixed-size windows. Discovery name and
 extension facts now also cross as nominal generated finite values. It no
