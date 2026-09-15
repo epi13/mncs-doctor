@@ -9,7 +9,9 @@
 use std::sync::OnceLock;
 
 use mncs_doctor::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
-use mncs_doctor::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts};
+use mncs_doctor::discovery::{
+    DirectoryDecision, DirectoryFacts, DirectoryName, FileClass, FileExtension, FileFacts, FileName,
+};
 use mncs_doctor::edits::{EditSet, TextEdit};
 use mncs_doctor::fix::{Applicability, StopReason};
 use mncs_doctor::health::{worst_of, CheckResult, Status};
@@ -63,6 +65,11 @@ module_session!(
     scanner_session,
     "../mncs/doctor/scanner.mncs",
     "doctor.scanner.v1"
+);
+module_session!(
+    discovery_session,
+    "../mncs/doctor/discovery.mncs",
+    "doctor.discovery.v1"
 );
 
 fn i64_arg(value: i64) -> String {
@@ -464,31 +471,31 @@ fn parity_transaction_target_policy() {
 fn parity_discovery_fact_classification() {
     let directory_cases = [
         (
-            (0, false, false, false, false, 0, 64),
+            (DirectoryName::Other, false, false, false, false, 0, 64),
             DirectoryDecision::Descend,
         ),
         (
-            (4, false, false, false, false, 1, 64),
+            (DirectoryName::Target, false, false, false, false, 1, 64),
             DirectoryDecision::SkipExcluded,
         ),
         (
-            (0, false, true, false, false, 1, 64),
+            (DirectoryName::Other, false, true, false, false, 1, 64),
             DirectoryDecision::SkipSymlink,
         ),
         (
-            (0, false, true, true, true, 1, 64),
+            (DirectoryName::Other, false, true, true, true, 1, 64),
             DirectoryDecision::SkipCycle,
         ),
         (
-            (0, false, false, false, false, 65, 64),
+            (DirectoryName::Other, false, false, false, false, 65, 64),
             DirectoryDecision::SkipDepth,
         ),
         (
-            (0, true, false, false, false, 1, 64),
+            (DirectoryName::Other, true, false, false, false, 1, 64),
             DirectoryDecision::SkipExcluded,
         ),
         (
-            (17, false, false, false, false, 1, 64),
+            (DirectoryName::DotVenv, false, false, false, false, 1, 64),
             DirectoryDecision::SkipExcluded,
         ),
     ];
@@ -497,7 +504,7 @@ fn parity_discovery_fact_classification() {
         assert_eq!(
             runtime
                 .discovery_directory_decision(DirectoryFacts {
-                    name_code: name,
+                    name,
                     extra_excluded: extra,
                     is_symlink: symlink,
                     follow_symlink: follow,
@@ -510,20 +517,26 @@ fn parity_discovery_fact_classification() {
         );
     }
     let file_cases = [
-        // Recognised manifest names take precedence over the extension code.
-        ((1, 1), FileClass::ForgeManifest),
-        ((1, 0), FileClass::ForgeManifest),
-        ((4, 0), FileClass::ManifestJson),
-        ((0, 1), FileClass::Source),
-        ((0, 0), FileClass::Ignore),
+        // Recognised manifest names take precedence over the extension fact.
+        (
+            (FileName::ForgeManifest, FileExtension::Mncs),
+            FileClass::ForgeManifest,
+        ),
+        (
+            (FileName::ForgeManifest, FileExtension::Other),
+            FileClass::ForgeManifest,
+        ),
+        (
+            (FileName::ManifestJson, FileExtension::Other),
+            FileClass::ManifestJson,
+        ),
+        ((FileName::Other, FileExtension::Mncs), FileClass::Source),
+        ((FileName::Other, FileExtension::Other), FileClass::Ignore),
     ];
     for ((name, extension), expected) in file_cases {
         assert_eq!(
             runtime
-                .discovery_file_class(FileFacts {
-                    name_code: name,
-                    extension_code: extension,
-                })
+                .discovery_file_class(FileFacts { name, extension })
                 .unwrap(),
             expected
         );
@@ -956,6 +969,24 @@ fn transport_mismatches_refuse_fail_closed() {
             &options,
         )
         .expect_err("wrong nominal element type must fail closed");
+    assert_eq!(error.code, "bad_typed_arguments");
+
+    // Discovery facts are generated nominal values too; a natural integer
+    // cannot silently become a directory/file classification.
+    let error = discovery_session()
+        .call_typed_json(
+            "doctor.discovery.v1",
+            "file_class",
+            &format!(
+                "[{}]",
+                record_arg(
+                    "FileClassInput",
+                    &[("name", u64_arg(0)), ("extension", u64_arg(1))],
+                )
+            ),
+            &options,
+        )
+        .expect_err("numeric discovery facts must fail closed");
     assert_eq!(error.code, "bad_typed_arguments");
 }
 

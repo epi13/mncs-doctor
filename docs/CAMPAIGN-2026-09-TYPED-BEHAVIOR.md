@@ -20,7 +20,7 @@ metadata rather than handwritten transport structs. It records:
 
 - module identity `doctor.family.v1`;
 - the callable interface identity
-  `519692eb4c9df56668f06dc81b83a453dfbf521e297da8601f2977682695fa32`;
+  `1af5a86bad2a5cf60cdb6ab541f2c11454797c0ec5a47e3c695f58a92eb6e523`;
 - typed-call schema revision;
 - generator and binding content identities.
 
@@ -29,9 +29,10 @@ binding fails deterministically instead of allowing a changed enum, field,
 parameter, or return type to be reinterpreted.
 
 The host still transports natural numeric facts such as version coordinates,
-scanner bytes, counts, offsets, and fixed-size windows. It no longer maps
-semantic health, exit, verification, migration, edit, or fix decisions
-through manually maintained integer tables.
+scanner bytes, counts, offsets, and fixed-size windows. Discovery name and
+extension facts now also cross as nominal generated finite values. It no
+longer maps semantic health, exit, verification, migration, edit, fix, or
+discovery decisions through manually maintained integer tables.
 
 ## Verification
 

@@ -20,7 +20,9 @@ finite/record contract are consumed through the generated Rust binding
 callable, interface identity, schema revision, and binding content identity;
 each wrapper submits the expected interface identity to the runtime. The
 remaining numeric boundaries below are natural facts or deliberately narrow
-structural compatibility surfaces, not a second semantic ABI.
+structural compatibility surfaces, not a second semantic ABI. Discovery
+directory names, file names, and file extensions are nominal generated finite
+values as well.
 
 ## Value contract (token_set pattern)
 
@@ -42,6 +44,7 @@ strings render host-side.
 | exit policy | generated `ExitDecision` finite value, rendered as process codes by the host |
 | verification | generated `VerificationVerdict` finite value |
 | edit/fix verdicts | generated nominal finite values for conflict, shape, merge, and seen decisions |
+| discovery facts | generated `DirectoryName`, `FileName`, and `FileExtension` finite values |
 | windows | fixed sequences (`[u64; 8]`, `[i64; 16]`) + live count; the value contract refuses wrong lengths/signedness fail-closed |
 
 The registry (which profiles exist, which is current) is host-loaded

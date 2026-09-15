@@ -106,8 +106,9 @@ permission preservation remain host invariants.
 
 ### `discovery.rs` — A (policy) + B (mechanism)
 Production `doctor.discovery.v1` decides exclusion/traversal verdicts and
-file classes from host-acquired compact facts; deterministic ordering stays
-in the host walker. Mechanism (directory enumeration beyond one level,
+file classes from host-acquired nominal directory-name, file-name, and
+extension facts; deterministic ordering stays in the host walker. Mechanism
+(directory enumeration beyond one level,
 metadata, symlink inspection) is B (DOC-P-008…014). `fs_list` covers one
 level with kinds (file/dir/other); multi-level navigation handles are not
 exposed.
