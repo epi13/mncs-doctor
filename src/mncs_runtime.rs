@@ -28,7 +28,7 @@ use crate::verify::VerificationOutcome;
 use crate::version::{LanguageVersion, VersionClass};
 
 #[path = "generated/doctor_version.rs"]
-mod doctor_version;
+pub(crate) mod doctor_version;
 
 /// Exact language revision used by the embedded policy runtime.
 pub const MNCS_LANGUAGE_REV: &str = "25525f0636f45b2f91a3391a37975b7a7334508e";
@@ -41,7 +41,7 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "c2f29fca026ebc7c6baf782253c0a82d4141a7ea2c03e5887bb85e20d22a3d4f";
+    "76df3a58253ee677f4d2d721b9d1453b95f4ba2f5224315be1a96df9d8059845";
 
 struct ModuleSpec {
     key: &'static str,
@@ -478,7 +478,7 @@ impl DoctorMncsRuntime {
         let decision = doctor_version::directory_decision(
             &self.session,
             doctor_version::DirectoryDecisionInput {
-                name_code: facts.name_code,
+                name: facts.name,
                 extra_excluded: facts.extra_excluded,
                 is_symlink: facts.is_symlink,
                 follow_symlink: facts.follow_symlink,
@@ -504,8 +504,8 @@ impl DoctorMncsRuntime {
         let class = doctor_version::file_class(
             &self.session,
             doctor_version::FileClassInput {
-                name_code: facts.name_code,
-                extension_code: facts.extension_code,
+                name: facts.name,
+                extension: facts.extension,
             },
             mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
         )

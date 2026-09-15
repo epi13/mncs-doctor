@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.1";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "519692eb4c9df56668f06dc81b83a453dfbf521e297da8601f2977682695fa32";
+    "1af5a86bad2a5cf60cdb6ab541f2c11454797c0ec5a47e3c695f58a92eb6e523";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "96cd18c33437be224cf0aac3e83f17c8b7f3c11514bc1a0e1ea1b5d8c4b4d1b7";
+    "debddd548ff21fe4b04de02c96fbd41971ab762f45e298188a9aaea3c0830566";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -239,6 +239,83 @@ impl DirectoryDecision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectoryName {
+    Other,
+    Git,
+    Hg,
+    Svn,
+    Target,
+    NodeModules,
+    Venv,
+    Pycache,
+    PytestCache,
+    RuffCache,
+    MypyCache,
+    Dist,
+    Worktrees,
+    Tox,
+    Idea,
+    Vscode,
+    AtlasJoernBaseline,
+    DotVenv,
+}
+
+impl HostValue for DirectoryName {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Other => "Other",
+            Self::Git => "Git",
+            Self::Hg => "Hg",
+            Self::Svn => "Svn",
+            Self::Target => "Target",
+            Self::NodeModules => "NodeModules",
+            Self::Venv => "Venv",
+            Self::Pycache => "Pycache",
+            Self::PytestCache => "PytestCache",
+            Self::RuffCache => "RuffCache",
+            Self::MypyCache => "MypyCache",
+            Self::Dist => "Dist",
+            Self::Worktrees => "Worktrees",
+            Self::Tox => "Tox",
+            Self::Idea => "Idea",
+            Self::Vscode => "Vscode",
+            Self::AtlasJoernBaseline => "AtlasJoernBaseline",
+            Self::DotVenv => "DotVenv",
+        };
+        json!({"finite": {"type": "DirectoryName", "variant": variant}})
+    }
+}
+
+impl DirectoryName {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Other" => Ok(Self::Other),
+            "Git" => Ok(Self::Git),
+            "Hg" => Ok(Self::Hg),
+            "Svn" => Ok(Self::Svn),
+            "Target" => Ok(Self::Target),
+            "NodeModules" => Ok(Self::NodeModules),
+            "Venv" => Ok(Self::Venv),
+            "Pycache" => Ok(Self::Pycache),
+            "PytestCache" => Ok(Self::PytestCache),
+            "RuffCache" => Ok(Self::RuffCache),
+            "MypyCache" => Ok(Self::MypyCache),
+            "Dist" => Ok(Self::Dist),
+            "Worktrees" => Ok(Self::Worktrees),
+            "Tox" => Ok(Self::Tox),
+            "Idea" => Ok(Self::Idea),
+            "Vscode" => Ok(Self::Vscode),
+            "AtlasJoernBaseline" => Ok(Self::AtlasJoernBaseline),
+            "DotVenv" => Ok(Self::DotVenv),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown DirectoryName variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditShape {
     Insertion,
     Deletion,
@@ -341,6 +418,73 @@ impl FileClass {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown FileClass variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileExtension {
+    Other,
+    Mncs,
+}
+
+impl HostValue for FileExtension {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Other => "Other",
+            Self::Mncs => "Mncs",
+        };
+        json!({"finite": {"type": "FileExtension", "variant": variant}})
+    }
+}
+
+impl FileExtension {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Other" => Ok(Self::Other),
+            "Mncs" => Ok(Self::Mncs),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown FileExtension variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileName {
+    Other,
+    ForgeManifest,
+    WorkspaceManifest,
+    Cargo,
+    ManifestJson,
+}
+
+impl HostValue for FileName {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Other => "Other",
+            Self::ForgeManifest => "ForgeManifest",
+            Self::WorkspaceManifest => "WorkspaceManifest",
+            Self::Cargo => "Cargo",
+            Self::ManifestJson => "ManifestJson",
+        };
+        json!({"finite": {"type": "FileName", "variant": variant}})
+    }
+}
+
+impl FileName {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Other" => Ok(Self::Other),
+            "ForgeManifest" => Ok(Self::ForgeManifest),
+            "WorkspaceManifest" => Ok(Self::WorkspaceManifest),
+            "Cargo" => Ok(Self::Cargo),
+            "ManifestJson" => Ok(Self::ManifestJson),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown FileName variant {other}"),
             )),
         }
     }
@@ -926,7 +1070,7 @@ pub struct DirectoryDecisionInput {
     pub follow_symlink: bool,
     pub is_symlink: bool,
     pub max_depth: u64,
-    pub name_code: u64,
+    pub name: DirectoryName,
 }
 
 impl HostValue for DirectoryDecisionInput {
@@ -938,7 +1082,7 @@ impl HostValue for DirectoryDecisionInput {
             "follow_symlink": json!({"boolean": {"value": self.follow_symlink}}),
             "is_symlink": json!({"boolean": {"value": self.is_symlink}}),
             "max_depth": json!({"integer": {"value": self.max_depth, "type": {"bits": 64, "signed": false}}}),
-            "name_code": json!({"integer": {"value": self.name_code, "type": {"bits": 64, "signed": false}}}),
+            "name": self.name.host_value(),
         }}})
     }
 }
@@ -976,9 +1120,9 @@ impl DirectoryDecisionInput {
                 .get("max_depth")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
-        let name_code = decode_u64(
+        let name = DirectoryName::from_host_value(
             fields
-                .get("name_code")
+                .get("name")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
         Ok(Self {
@@ -988,7 +1132,7 @@ impl DirectoryDecisionInput {
             follow_symlink,
             is_symlink,
             max_depth,
-            name_code,
+            name,
         })
     }
 }
@@ -1089,15 +1233,15 @@ impl ExitInput {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileClassInput {
-    pub extension_code: u64,
-    pub name_code: u64,
+    pub extension: FileExtension,
+    pub name: FileName,
 }
 
 impl HostValue for FileClassInput {
     fn host_value(&self) -> Value {
         json!({"record": {"type": "FileClassInput", "fields": {
-            "extension_code": json!({"integer": {"value": self.extension_code, "type": {"bits": 64, "signed": false}}}),
-            "name_code": json!({"integer": {"value": self.name_code, "type": {"bits": 64, "signed": false}}}),
+            "extension": self.extension.host_value(),
+            "name": self.name.host_value(),
         }}})
     }
 }
@@ -1105,20 +1249,17 @@ impl HostValue for FileClassInput {
 impl FileClassInput {
     fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
         let fields = record_fields(value)?;
-        let extension_code = decode_u64(
+        let extension = FileExtension::from_host_value(
             fields
-                .get("extension_code")
+                .get("extension")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
-        let name_code = decode_u64(
+        let name = FileName::from_host_value(
             fields
-                .get("name_code")
+                .get("name")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
-        Ok(Self {
-            extension_code,
-            name_code,
-        })
+        Ok(Self { extension, name })
     }
 }
 
@@ -1674,6 +1815,24 @@ pub fn eligible(
     let arguments = serde_json::to_string(&vec![input.host_value()])
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(session, "doctor.fix.v1", "eligible", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn excluded_directory_name(
+    session: &Session,
+    input: DirectoryName,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "excluded_directory_name",
+        &arguments,
+        options,
+    )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
 }

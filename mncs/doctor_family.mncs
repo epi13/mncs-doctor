@@ -17,8 +17,8 @@ use doctor.version.v1 as version;
 
 fn discovery_code() -> (result: discovery.FileClass) {
     return discovery.file_class(discovery.FileClassInput {
-        name_code: 0,
-        extension_code: 1,
+        name: discovery.FileName.Other,
+        extension: discovery.FileExtension.Mncs,
     });
 }
 

@@ -4,17 +4,35 @@ module doctor.discovery.v1;
 // doctor.discovery — classification policy over host directory-entry facts.
 //
 // The host still performs recursive enumeration, metadata acquisition, path
-// joining, cycle identity, and byte reads. Compact name/extension codes are
-// the transport because arbitrary strings and path values are not yet a
-// bounded MNCS boundary. This module decides what those facts mean.
+// joining, cycle identity, and byte reads. Names and extensions cross this
+// boundary as nominal finite values so the host cannot silently invent or
+// renumber semantic classifications. This module decides what those facts
+// mean.
 
-// Directory name codes 1..17 are the known tool/cache exclusions; 0 is an
-// ordinary name. The finite result makes the policy independent of numeric
-// discriminants at the host boundary.
+enum DirectoryName {
+    Other,
+    Git,
+    Hg,
+    Svn,
+    Target,
+    NodeModules,
+    Venv,
+    Pycache,
+    PytestCache,
+    RuffCache,
+    MypyCache,
+    Dist,
+    Worktrees,
+    Tox,
+    Idea,
+    Vscode,
+    AtlasJoernBaseline,
+    DotVenv,
+}
 enum DirectoryDecision { Descend, SkipDepth, SkipExcluded, SkipCycle, SkipSymlink }
 
 record DirectoryDecisionInput {
-    name_code: u64,
+    name: DirectoryName,
     extra_excluded: bool,
     is_symlink: bool,
     follow_symlink: bool,
@@ -23,11 +41,34 @@ record DirectoryDecisionInput {
     max_depth: u64,
 }
 
+fn excluded_directory_name(name: DirectoryName) -> (result: bool) {
+    return match name {
+        DirectoryName.Other => false,
+        DirectoryName.Git => true,
+        DirectoryName.Hg => true,
+        DirectoryName.Svn => true,
+        DirectoryName.Target => true,
+        DirectoryName.NodeModules => true,
+        DirectoryName.Venv => true,
+        DirectoryName.Pycache => true,
+        DirectoryName.PytestCache => true,
+        DirectoryName.RuffCache => true,
+        DirectoryName.MypyCache => true,
+        DirectoryName.Dist => true,
+        DirectoryName.Worktrees => true,
+        DirectoryName.Tox => true,
+        DirectoryName.Idea => true,
+        DirectoryName.Vscode => true,
+        DirectoryName.AtlasJoernBaseline => true,
+        DirectoryName.DotVenv => true,
+    };
+}
+
 fn directory_decision(input: DirectoryDecisionInput) -> (result: DirectoryDecision) {
     if input.depth > input.max_depth {
         return DirectoryDecision.SkipDepth;
     }
-    if !input.is_symlink && (input.extra_excluded || (input.name_code >= 1 && input.name_code <= 17)) {
+    if !input.is_symlink && (input.extra_excluded || excluded_directory_name(input.name)) {
         return DirectoryDecision.SkipExcluded;
     }
     if input.is_symlink && input.cycle {
@@ -39,30 +80,24 @@ fn directory_decision(input: DirectoryDecisionInput) -> (result: DirectoryDecisi
     return DirectoryDecision.Descend;
 }
 
-// File name codes: 1=Forge TOML, 2=workspace TOML, 3=Cargo TOML,
-// 4=*.mncs.json. Extension code 1 is `.mncs`.
+enum FileName { Other, ForgeManifest, WorkspaceManifest, Cargo, ManifestJson }
+enum FileExtension { Other, Mncs }
 enum FileClass { Ignore, Source, ForgeManifest, WorkspaceManifest, ManifestJson, Cargo }
 
 record FileClassInput {
-    name_code: u64,
-    extension_code: u64,
+    name: FileName,
+    extension: FileExtension,
 }
 
 fn file_class(input: FileClassInput) -> (result: FileClass) {
-    if input.name_code == 1 {
-        return FileClass.ForgeManifest;
-    }
-    if input.name_code == 2 {
-        return FileClass.WorkspaceManifest;
-    }
-    if input.name_code == 3 {
-        return FileClass.Cargo;
-    }
-    if input.name_code == 4 {
-        return FileClass.ManifestJson;
-    }
-    if input.extension_code == 1 {
-        return FileClass.Source;
-    }
-    return FileClass.Ignore;
+    return match input.name {
+        FileName.ForgeManifest => FileClass.ForgeManifest,
+        FileName.WorkspaceManifest => FileClass.WorkspaceManifest,
+        FileName.Cargo => FileClass.Cargo,
+        FileName.ManifestJson => FileClass.ManifestJson,
+        FileName.Other => match input.extension {
+            FileExtension.Mncs => FileClass.Source,
+            FileExtension.Other => FileClass.Ignore,
+        },
+    };
 }

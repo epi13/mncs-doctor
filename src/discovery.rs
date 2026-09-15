@@ -20,15 +20,16 @@ use thiserror::Error;
 /// walk-up order from the start directory).
 const ROOT_MARKERS: &[&str] = &["mncs-forge.toml", "mncs-workspace.toml", ".mncs-forge"];
 
-/// File extensions inventoried as MNCS sources.
-const SOURCE_EXTENSIONS: &[&str] = &["mncs"];
+/// Nominal discovery facts are the generated values from the language-owned
+/// family binding. The host acquires the fact from a path entry but does not
+/// define or assign a semantic integer discriminant.
+pub use crate::mncs_runtime::doctor_version::{DirectoryName, FileExtension, FileName};
 
 /// Facts acquired by the host before MNCS decides whether a directory should
-/// be visited. Names are compact identity codes because arbitrary strings do
-/// not yet cross the bounded value boundary.
+/// be visited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirectoryFacts {
-    pub name_code: u64,
+    pub name: DirectoryName,
     pub extra_excluded: bool,
     pub is_symlink: bool,
     pub follow_symlink: bool,
@@ -62,8 +63,8 @@ impl DirectoryDecision {
 /// Facts used to classify one regular file or a followed file symlink.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileFacts {
-    pub name_code: u64,
-    pub extension_code: u64,
+    pub name: FileName,
+    pub extension: FileExtension,
 }
 
 /// MNCS file classification. The host retains path and byte acquisition.
@@ -483,7 +484,7 @@ fn visit_topology_dir(
         return Ok(());
     }
     let boundary = directory_policy(DirectoryFacts {
-        name_code: 0,
+        name: DirectoryName::Other,
         extra_excluded: false,
         is_symlink: false,
         follow_symlink: false,
@@ -560,7 +561,7 @@ fn visit_topology_dir(
         if file_type.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let decision = directory_policy(DirectoryFacts {
-                name_code: directory_name_code(&name),
+                name: directory_name(&name),
                 extra_excluded: options
                     .extra_excluded_dirs
                     .iter()
@@ -618,7 +619,7 @@ fn handle_topology_symlink(
                 .unwrap_or_default();
             let id = dir_id(&md);
             let decision = directory_policy(DirectoryFacts {
-                name_code: directory_name_code(&name),
+                name: directory_name(&name),
                 extra_excluded: false,
                 is_symlink: true,
                 follow_symlink: options.symlink_policy == SymlinkPolicy::Follow,
@@ -685,8 +686,8 @@ fn record_topology_file(
         .unwrap_or_default();
     *topology.extension_counts.entry(ext.clone()).or_insert(0) += 1;
     let class = file_policy(FileFacts {
-        name_code: file_name_code(&name),
-        extension_code: u64::from(SOURCE_EXTENSIONS.contains(&ext.as_str())),
+        name: file_name(&name),
+        extension: file_extension(&ext),
     })
     .map_err(DiscoveryError::Policy)?;
     match class {
@@ -750,7 +751,7 @@ fn rust_directory_decision(facts: DirectoryFacts) -> DirectoryDecision {
     if facts.depth > facts.max_depth {
         return DirectoryDecision::SkipDepth;
     }
-    if !facts.is_symlink && (facts.extra_excluded || is_excluded_name_code(facts.name_code)) {
+    if !facts.is_symlink && (facts.extra_excluded || !matches!(facts.name, DirectoryName::Other)) {
         return DirectoryDecision::SkipExcluded;
     }
     if facts.is_symlink && facts.cycle {
@@ -763,50 +764,56 @@ fn rust_directory_decision(facts: DirectoryFacts) -> DirectoryDecision {
 }
 
 fn rust_file_class(facts: FileFacts) -> FileClass {
-    match facts.name_code {
-        1 => FileClass::ForgeManifest,
-        2 => FileClass::WorkspaceManifest,
-        3 => FileClass::Cargo,
-        4 => FileClass::ManifestJson,
-        _ if facts.extension_code == 1 => FileClass::Source,
-        _ => FileClass::Ignore,
+    match facts.name {
+        FileName::ForgeManifest => FileClass::ForgeManifest,
+        FileName::WorkspaceManifest => FileClass::WorkspaceManifest,
+        FileName::Cargo => FileClass::Cargo,
+        FileName::ManifestJson => FileClass::ManifestJson,
+        FileName::Other => match facts.extension {
+            FileExtension::Mncs => FileClass::Source,
+            FileExtension::Other => FileClass::Ignore,
+        },
     }
 }
 
-fn directory_name_code(name: &str) -> u64 {
+fn directory_name(name: &str) -> DirectoryName {
     match name {
-        ".git" => 1,
-        ".hg" => 2,
-        ".svn" => 3,
-        "target" => 4,
-        "node_modules" => 5,
-        "venv" => 6,
-        "__pycache__" => 7,
-        ".pytest_cache" => 8,
-        ".ruff_cache" => 9,
-        ".mypy_cache" => 10,
-        "dist" => 11,
-        ".worktrees" => 12,
-        ".tox" => 13,
-        ".idea" => 14,
-        ".vscode" => 15,
-        ".atlas-joern-baseline" => 16,
-        ".venv" => 17,
-        _ => 0,
+        ".git" => DirectoryName::Git,
+        ".hg" => DirectoryName::Hg,
+        ".svn" => DirectoryName::Svn,
+        "target" => DirectoryName::Target,
+        "node_modules" => DirectoryName::NodeModules,
+        "venv" => DirectoryName::Venv,
+        "__pycache__" => DirectoryName::Pycache,
+        ".pytest_cache" => DirectoryName::PytestCache,
+        ".ruff_cache" => DirectoryName::RuffCache,
+        ".mypy_cache" => DirectoryName::MypyCache,
+        "dist" => DirectoryName::Dist,
+        ".worktrees" => DirectoryName::Worktrees,
+        ".tox" => DirectoryName::Tox,
+        ".idea" => DirectoryName::Idea,
+        ".vscode" => DirectoryName::Vscode,
+        ".atlas-joern-baseline" => DirectoryName::AtlasJoernBaseline,
+        ".venv" => DirectoryName::DotVenv,
+        _ => DirectoryName::Other,
     }
 }
 
-fn is_excluded_name_code(code: u64) -> bool {
-    (1..=17).contains(&code)
+fn file_name(name: &str) -> FileName {
+    match name {
+        "mncs-forge.toml" => FileName::ForgeManifest,
+        "mncs-workspace.toml" => FileName::WorkspaceManifest,
+        "Cargo.toml" => FileName::Cargo,
+        _ if name.ends_with(".mncs.json") => FileName::ManifestJson,
+        _ => FileName::Other,
+    }
 }
 
-fn file_name_code(name: &str) -> u64 {
-    match name {
-        "mncs-forge.toml" => 1,
-        "mncs-workspace.toml" => 2,
-        "Cargo.toml" => 3,
-        _ if name.ends_with(".mncs.json") => 4,
-        _ => 0,
+fn file_extension(extension: &str) -> FileExtension {
+    if extension == "mncs" {
+        FileExtension::Mncs
+    } else {
+        FileExtension::Other
     }
 }
 
