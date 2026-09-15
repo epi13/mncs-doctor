@@ -11,9 +11,10 @@ bootstrap with a concrete next conversion target.
 Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
 `DoctorMncsRuntime` opens the checked-in `mncs/doctor/family.backend.json`
 (`mncs-research-bytecode`) once per process, retains one session for all ten
-imported policy modules, and calls scalar/array entrypoints via `call_json`.
-Records/enums live inside MNCS; codes cross the boundary
-(token_set pattern, stdlib precedent). Fail-closed transport is pinned:
+imported policy modules, and uses the generated Rust binding for nominal
+records and finite values. The binding submits the expected interface
+identity on every call. Generic `call_json` remains only for bounded natural
+numeric/byte ingress such as the scanner. Fail-closed transport is pinned:
 length/signedness mismatches refuse as `invalid_request`
 (`MNCS_VALUE_CONTRACT`), never silently. Reports include source/artifact
 identities and the entrypoints actually used (see `tests/mncs_parity.rs` and
@@ -32,13 +33,15 @@ data and host-facing version parsing; production classification is MNCS.
 ### `health.rs` — A (policy)
 `combine`/`overall`/`check_status`/`rank` live in
 `mncs/doctor/health.mncs` with parity (`parity_health_*`, full 4×4
-combine matrix, 8 aggregation shapes incl. empty). Finding *collection*
+combine matrix, 8 aggregation shapes incl. empty). Status and severity are
+nominal finite values in the generated binding; finding *collection*
 (byte scanning) stays host-side with the scanner (see diagnostics).
 
 ### `migration.rs` — A (planning) + D (knowledge, execution)
 `span_verdict`/`span_edges`/`enumerate`/`scan_kinds`/`plan_verdict` live
 in `mncs/doctor/migration.mncs` with parity against `plan()` structure
-(`parity_migration_*`). Transition *knowledge* stays host-loaded data
+(`parity_migration_*`). Transition kind and plan verdict are nominal finite
+values in the generated binding. Transition *knowledge* stays host-loaded data
 (DOC-P-003, correctly upstream-owned). Edge *application* (byte rewrites)
 stays in the transaction executor (D, mechanism).
 
@@ -46,6 +49,7 @@ stays in the transaction executor (D, mechanism).
 `pair_conflict`/`shape`/`conflicts_with_kept` live in
 `mncs/doctor/edits.mncs` with parity against `EditSet::validate` over 7
 overlap shapes incl. same-point inserts (`parity_edit_pair_conflict`).
+Conflict and shape results are nominal finite values in the generated binding.
 Fingerprinting (sha256 over bytes) stays a host primitive: no natural
 MNCS spelling at the boundary (stdlib `sha256.mncs` is pure-MNCS but
 byte-string ingress is the gap). Span application stays host-side (D).
@@ -53,7 +57,8 @@ byte-string ingress is the gap). Span application stays host-side (D).
 ### `fix.rs` — A (policy) + E/D (execution)
 `eligible`/`merge_verdict`/`stop_rule`/`seen_before` live in
 `mncs/doctor/fix.mncs` with parity over the full eligibility matrix and
-stopping-rule precedences (`parity_fix_*`). Production planning, edit
+stopping-rule precedences (`parity_fix_*`). Applicability, merge, and seen
+results are nominal finite values in the generated binding. Production planning, edit
 conflict validation, and loop decisions use MNCS; providers still acquire
 text and construct candidate edits in Rust. Chunk-fed BOM/newline scanning
 is also MNCS-backed, while full delimiter/hygiene diagnostic construction
@@ -71,12 +76,15 @@ upstream structured diagnostics contract and richer ingress land
 `exit_for` lives in `mncs/doctor/report.mncs` with parity over 8
 command outcomes **and** cross-checked against the Rust `exit_for`
 (`parity_report_exit_for`). Human rendering + JSON encoding stay
-host-side (D): byte-string shaping has no compact MNCS spelling and
+host-side (D): the semantic result is a nominal `ExitDecision` in the
+generated binding; byte-string shaping has no compact MNCS spelling and
 string-capable JSON encoding is absent (DOC-P-010).
 
 ### `verify.rs` — A (policy) + D/B (mechanism)
 `delta_ok`/`compose` live in `mncs/doctor/verify.mncs` with parity incl.
-a real `verify_after` cross-check (`parity_verify_compose`).
+a real `verify_after` cross-check (`parity_verify_compose`). Delta and
+composition results are nominal `VerificationVerdict` values in the
+generated binding.
 Re-diagnosis execution stays host-side (D); process spawning stays host
 side (B: no spawn primitive — DOC-P-011).
 

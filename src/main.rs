@@ -31,7 +31,8 @@ use mncs_doctor::fix::{
 };
 use mncs_doctor::health::{run_all_checks, CheckResult, HealthContext, Status};
 use mncs_doctor::migration::{
-    apply_plan, default_registry, plan as plan_migration, resolve_target,
+    apply_plan, default_registry, plan as plan_migration, resolve_target, MigrationVerdict,
+    TransitionKind,
 };
 use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
 use mncs_doctor::report::{render_human, ExitCode, Report};
@@ -1040,31 +1041,22 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         };
         match plan_migration(from, target_version, &registry) {
             Ok(plan) => {
-                let kinds: Vec<i64> = plan
-                    .steps
-                    .iter()
-                    .map(|step| match step.kind {
-                        mncs_doctor::migration::TransitionKind::Noop => 0,
-                        mncs_doctor::migration::TransitionKind::Metadata => 1,
-                        mncs_doctor::migration::TransitionKind::Source => 2,
-                        mncs_doctor::migration::TransitionKind::Unknown => 3,
-                    })
-                    .collect();
+                let kinds: Vec<TransitionKind> = plan.steps.iter().map(|step| step.kind).collect();
                 let observed = policy
                     .migration_plan_verdict(from, target_version, &kinds)
                     .map_err(|error| {
                         format!("MNCS migration policy failed (fail-closed): {error}")
                     })?;
                 let expected = if plan.is_noop {
-                    1
+                    MigrationVerdict::Noop
                 } else if !plan.fully_known {
-                    4
+                    MigrationVerdict::Blocked
                 } else {
-                    0
+                    MigrationVerdict::Planned
                 };
                 if observed != expected {
                     return Err(format!(
-                        "MNCS/Rust migration verdict mismatch for {}: MNCS={observed}, reference={expected}",
+                        "MNCS/Rust migration verdict mismatch for {}: MNCS={observed:?}, reference={expected:?}",
                         file.relative
                     ));
                 }

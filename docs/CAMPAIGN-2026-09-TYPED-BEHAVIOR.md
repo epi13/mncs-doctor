@@ -1,0 +1,47 @@
+# Typed Doctor policy boundary — September 2026
+
+This addendum records the second part of the 2026 Doctor campaign. It does
+not replace `CAMPAIGN-2026-09-PRODUCTION.md`, which describes the original
+runtime adoption and its measured baseline.
+
+## Objective
+
+Remove manually synchronized semantic integer maps from the production Rust
+host layer while preserving legitimate host responsibilities: filesystem
+and process access, bounded serialization, rendering, and transaction
+mechanics.
+
+## Delivered boundary
+
+The Doctor family now exposes nominal finite values and records for health,
+report, verification, edit, fix, and migration policy. The checked-in
+`src/generated/doctor_version.rs` is generated from the language-owned ABI
+metadata rather than handwritten transport structs. It records:
+
+- module identity `doctor.family.v1`;
+- the callable interface identity
+  `519692eb4c9df56668f06dc81b83a453dfbf521e297da8601f2977682695fa32`;
+- typed-call schema revision;
+- generator and binding content identities.
+
+Every generated wrapper submits the expected interface identity, so a stale
+binding fails deterministically instead of allowing a changed enum, field,
+parameter, or return type to be reinterpreted.
+
+The host still transports natural numeric facts such as version coordinates,
+scanner bytes, counts, offsets, and fixed-size windows. It no longer maps
+semantic health, exit, verification, migration, edit, or fix decisions
+through manually maintained integer tables.
+
+## Verification
+
+The retyped family artifact was regenerated from `mncs/doctor_family.mncs`
+and the generated Rust binding was regenerated from its ABI. `cargo check
+--all-targets`, the library tests, the Doctor integration suites, and the
+19-case MNCS parity suite pass. The parity suite also sends an integer where
+the native `TransitionKind` finite value is required and verifies the typed
+transport rejects it.
+
+The production runtime and parity tests use the same generated nominal
+types. Rust remains responsible for acquiring facts and applying effects;
+MNCS remains the authority for the policy decision.

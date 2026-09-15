@@ -16,26 +16,32 @@ suite compares against.
 opened by the production runtime. See DOC-P-018 and
 `docs/BACKEND-MATRIX-2026-09.md`. Semantic decisions that have a native
 finite/record contract are consumed through the generated Rust binding
-`src/generated/doctor_version.rs`; the remaining scalar seams below are
-explicit transitional compatibility surfaces, not a second semantic ABI.
+`src/generated/doctor_version.rs`. The generator records the module,
+callable, interface identity, schema revision, and binding content identity;
+each wrapper submits the expected interface identity to the runtime. The
+remaining numeric boundaries below are natural facts or deliberately narrow
+structural compatibility surfaces, not a second semantic ABI.
 
 ## Value contract (token_set pattern)
 
-Codes cross the host boundary; records/enums live inside MNCS; human
+Native records/enums carry semantic decisions across the host boundary;
+natural numeric facts and bounded scanner windows remain numeric; human
 strings render host-side.
 
 | Domain | Encoding |
 |--------|----------|
 | versions | `(major: i64, minor: i64)` scalar pairs |
 | classify | generated `VersionClass` finite value |
-| compare | -1/0/1 (left relative to right) |
-| severity | 0=info 1=warning 2=error |
-| status | 0=pass 1=warning 2=fail 3=skipped |
-| applicability | 0=safe 1=proven 2=review 3=manual |
-| transition kind | 0=noop 1=metadata 2=source 3=unknown |
-| plan verdict | 0=planned 1=noop 2=downgrade 3=off-line 4=blocked |
-| stop rule | 0=continue 1=fixpoint 2=budget 3=oscillation |
-| exit codes | 0/1/2/3 per `docs/EXIT-CODES.md` (4 is a host trap) |
+| compare | -1/0/1 structural relation used by version helpers |
+| severity | generated `Severity` finite value |
+| status | generated `Status` finite value |
+| applicability | generated `Applicability` finite value |
+| transition kind | generated `TransitionKind` finite value |
+| plan verdict | generated `MigrationVerdict` finite value |
+| stop rule | generated `StopDecision` finite value |
+| exit policy | generated `ExitDecision` finite value, rendered as process codes by the host |
+| verification | generated `VerificationVerdict` finite value |
+| edit/fix verdicts | generated nominal finite values for conflict, shape, merge, and seen decisions |
 | windows | fixed sequences (`[u64; 8]`, `[i64; 16]`) + live count; the value contract refuses wrong lengths/signedness fail-closed |
 
 The registry (which profiles exist, which is current) is host-loaded

@@ -3,27 +3,38 @@ module doctor.verify.v1;
 
 // doctor.verify — verification *composition policy* in MNCS.
 //
-// Boundary: re-diagnosis execution and external process spawning stay
-// host-side (narrow seams). What lives here is how verification evidence
-// composes into a pass/fail verdict: error deltas, idempotence, and
-// external-check outcomes. All inputs are scalar evidence codes.
+// Re-diagnosis execution and external process spawning stay host-side. The
+// evidence-composition verdict is a nominal finite value at the boundary.
 
-// Error-delta verdict: passing means no NEW errors appeared.
-// Returns 1=pass, 0=fail.
-fn delta_ok(errors_before: u64, errors_after: u64) -> (result: u64) {
-    if errors_after <= errors_before {
-        return 1;
-    }
-    return 0;
+enum VerificationVerdict { Pass, Fail }
+
+record DeltaInput {
+    errors_before: u64,
+    errors_after: u64
 }
 
-// Full verification verdict over the three evidence channels:
-// the error delta, the idempotence witness (1=idempotent, 0=not), and
-// the external-command channel (1=all succeeded, 0=some failed).
-// Every channel must pass.
-fn compose(delta_pass: u64, idempotent: u64, external_pass: u64) -> (result: u64) {
-    if delta_pass == 1 && idempotent == 1 && external_pass == 1 {
-        return 1;
+record ComposeInput {
+    delta: VerificationVerdict,
+    idempotent: bool,
+    external_pass: bool
+}
+
+// Error-delta verdict: passing means no NEW errors appeared.
+fn delta_ok(input: DeltaInput) -> (result: VerificationVerdict) {
+    if input.errors_after <= input.errors_before {
+        return VerificationVerdict.Pass;
     }
-    return 0;
+    return VerificationVerdict.Fail;
+}
+
+// Every evidence channel must pass.
+fn compose(input: ComposeInput) -> (result: VerificationVerdict) {
+    let delta_pass: bool = match input.delta {
+        Pass => true,
+        Fail => false,
+    };
+    if delta_pass && input.idempotent && input.external_pass {
+        return VerificationVerdict.Pass;
+    }
+    return VerificationVerdict.Fail;
 }

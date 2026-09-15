@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.1";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "e009f90674105e152a05282763525dfd5d3ccbc6eb53110b19b0d97d61b0e13c";
+    "519692eb4c9df56668f06dc81b83a453dfbf521e297da8601f2977682695fa32";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "fb70f0acd1e8072acc6c1aedc81a1c9cb41b44fab2366d0fbe297b4dec92d28b";
+    "96cd18c33437be224cf0aac3e83f17c8b7f3c11514bc1a0e1ea1b5d8c4b4d1b7";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -137,6 +137,70 @@ fn returned_value(output: &mncs_embed::CallOutput) -> Result<Value, EmbedError> 
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applicability {
+    Safe,
+    SemanticallyProven,
+    Review,
+    Manual,
+}
+
+impl HostValue for Applicability {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Safe => "Safe",
+            Self::SemanticallyProven => "SemanticallyProven",
+            Self::Review => "Review",
+            Self::Manual => "Manual",
+        };
+        json!({"finite": {"type": "Applicability", "variant": variant}})
+    }
+}
+
+impl Applicability {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Safe" => Ok(Self::Safe),
+            "SemanticallyProven" => Ok(Self::SemanticallyProven),
+            "Review" => Ok(Self::Review),
+            "Manual" => Ok(Self::Manual),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown Applicability variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictVerdict {
+    Clean,
+    Conflict,
+}
+
+impl HostValue for ConflictVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Clean => "Clean",
+            Self::Conflict => "Conflict",
+        };
+        json!({"finite": {"type": "ConflictVerdict", "variant": variant}})
+    }
+}
+
+impl ConflictVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Clean" => Ok(Self::Clean),
+            "Conflict" => Ok(Self::Conflict),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown ConflictVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectoryDecision {
     Descend,
     SkipDepth,
@@ -169,6 +233,73 @@ impl DirectoryDecision {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown DirectoryDecision variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditShape {
+    Insertion,
+    Deletion,
+    Replacement,
+}
+
+impl HostValue for EditShape {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Insertion => "Insertion",
+            Self::Deletion => "Deletion",
+            Self::Replacement => "Replacement",
+        };
+        json!({"finite": {"type": "EditShape", "variant": variant}})
+    }
+}
+
+impl EditShape {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Insertion" => Ok(Self::Insertion),
+            "Deletion" => Ok(Self::Deletion),
+            "Replacement" => Ok(Self::Replacement),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown EditShape variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitDecision {
+    Healthy,
+    Findings,
+    ReviewRequired,
+    VerificationFailed,
+}
+
+impl HostValue for ExitDecision {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Healthy => "Healthy",
+            Self::Findings => "Findings",
+            Self::ReviewRequired => "ReviewRequired",
+            Self::VerificationFailed => "VerificationFailed",
+        };
+        json!({"finite": {"type": "ExitDecision", "variant": variant}})
+    }
+}
+
+impl ExitDecision {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Healthy" => Ok(Self::Healthy),
+            "Findings" => Ok(Self::Findings),
+            "ReviewRequired" => Ok(Self::ReviewRequired),
+            "VerificationFailed" => Ok(Self::VerificationFailed),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown ExitDecision variant {other}"),
             )),
         }
     }
@@ -210,6 +341,169 @@ impl FileClass {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown FileClass variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeVerdict {
+    Keep,
+    Skip,
+}
+
+impl HostValue for MergeVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Keep => "Keep",
+            Self::Skip => "Skip",
+        };
+        json!({"finite": {"type": "MergeVerdict", "variant": variant}})
+    }
+}
+
+impl MergeVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Keep" => Ok(Self::Keep),
+            "Skip" => Ok(Self::Skip),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown MergeVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationVerdict {
+    Planned,
+    Noop,
+    DowngradeRefused,
+    OfflineRefused,
+    Blocked,
+}
+
+impl HostValue for MigrationVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Planned => "Planned",
+            Self::Noop => "Noop",
+            Self::DowngradeRefused => "DowngradeRefused",
+            Self::OfflineRefused => "OfflineRefused",
+            Self::Blocked => "Blocked",
+        };
+        json!({"finite": {"type": "MigrationVerdict", "variant": variant}})
+    }
+}
+
+impl MigrationVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Planned" => Ok(Self::Planned),
+            "Noop" => Ok(Self::Noop),
+            "DowngradeRefused" => Ok(Self::DowngradeRefused),
+            "OfflineRefused" => Ok(Self::OfflineRefused),
+            "Blocked" => Ok(Self::Blocked),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown MigrationVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeenVerdict {
+    Fresh,
+    Seen,
+}
+
+impl HostValue for SeenVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Fresh => "Fresh",
+            Self::Seen => "Seen",
+        };
+        json!({"finite": {"type": "SeenVerdict", "variant": variant}})
+    }
+}
+
+impl SeenVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Fresh" => Ok(Self::Fresh),
+            "Seen" => Ok(Self::Seen),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown SeenVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+
+impl HostValue for Severity {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Error => "Error",
+        };
+        json!({"finite": {"type": "Severity", "variant": variant}})
+    }
+}
+
+impl Severity {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Info" => Ok(Self::Info),
+            "Warning" => Ok(Self::Warning),
+            "Error" => Ok(Self::Error),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown Severity variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Pass,
+    Warning,
+    Fail,
+    Skipped,
+}
+
+impl HostValue for Status {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Pass => "Pass",
+            Self::Warning => "Warning",
+            Self::Fail => "Fail",
+            Self::Skipped => "Skipped",
+        };
+        json!({"finite": {"type": "Status", "variant": variant}})
+    }
+}
+
+impl Status {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Pass" => Ok(Self::Pass),
+            "Warning" => Ok(Self::Warning),
+            "Fail" => Ok(Self::Fail),
+            "Skipped" => Ok(Self::Skipped),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown Status variant {other}"),
             )),
         }
     }
@@ -289,6 +583,70 @@ impl TransactionTargetVerdict {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransitionKind {
+    Noop,
+    Metadata,
+    Source,
+    Unknown,
+}
+
+impl HostValue for TransitionKind {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Noop => "Noop",
+            Self::Metadata => "Metadata",
+            Self::Source => "Source",
+            Self::Unknown => "Unknown",
+        };
+        json!({"finite": {"type": "TransitionKind", "variant": variant}})
+    }
+}
+
+impl TransitionKind {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Noop" => Ok(Self::Noop),
+            "Metadata" => Ok(Self::Metadata),
+            "Source" => Ok(Self::Source),
+            "Unknown" => Ok(Self::Unknown),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown TransitionKind variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerificationVerdict {
+    Pass,
+    Fail,
+}
+
+impl HostValue for VerificationVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Pass => "Pass",
+            Self::Fail => "Fail",
+        };
+        json!({"finite": {"type": "VerificationVerdict", "variant": variant}})
+    }
+}
+
+impl VerificationVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Pass" => Ok(Self::Pass),
+            "Fail" => Ok(Self::Fail),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown VerificationVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionClass {
     Current,
     Sealed,
@@ -320,6 +678,243 @@ impl VersionClass {
                 format!("unknown VersionClass variant {other}"),
             )),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckStatusInput {
+    pub error_count: u64,
+    pub warning_count: u64,
+}
+
+impl HostValue for CheckStatusInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "CheckStatusInput", "fields": {
+            "error_count": json!({"integer": {"value": self.error_count, "type": {"bits": 64, "signed": false}}}),
+            "warning_count": json!({"integer": {"value": self.warning_count, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl CheckStatusInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let error_count = decode_u64(
+            fields
+                .get("error_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let warning_count = decode_u64(
+            fields
+                .get("warning_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            error_count,
+            warning_count,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckStatusWithSkipInput {
+    pub error_count: u64,
+    pub info_count: u64,
+    pub promote_info: bool,
+    pub skipped: bool,
+    pub warning_count: u64,
+}
+
+impl HostValue for CheckStatusWithSkipInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "CheckStatusWithSkipInput", "fields": {
+            "error_count": json!({"integer": {"value": self.error_count, "type": {"bits": 64, "signed": false}}}),
+            "info_count": json!({"integer": {"value": self.info_count, "type": {"bits": 64, "signed": false}}}),
+            "promote_info": json!({"boolean": {"value": self.promote_info}}),
+            "skipped": json!({"boolean": {"value": self.skipped}}),
+            "warning_count": json!({"integer": {"value": self.warning_count, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl CheckStatusWithSkipInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let error_count = decode_u64(
+            fields
+                .get("error_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let info_count = decode_u64(
+            fields
+                .get("info_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let promote_info = decode_bool(
+            fields
+                .get("promote_info")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let skipped = decode_bool(
+            fields
+                .get("skipped")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let warning_count = decode_u64(
+            fields
+                .get("warning_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            error_count,
+            info_count,
+            promote_info,
+            skipped,
+            warning_count,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComposeInput {
+    pub delta: VerificationVerdict,
+    pub external_pass: bool,
+    pub idempotent: bool,
+}
+
+impl HostValue for ComposeInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ComposeInput", "fields": {
+            "delta": self.delta.host_value(),
+            "external_pass": json!({"boolean": {"value": self.external_pass}}),
+            "idempotent": json!({"boolean": {"value": self.idempotent}}),
+        }}})
+    }
+}
+
+impl ComposeInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let delta = VerificationVerdict::from_host_value(
+            fields
+                .get("delta")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let external_pass = decode_bool(
+            fields
+                .get("external_pass")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let idempotent = decode_bool(
+            fields
+                .get("idempotent")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            delta,
+            external_pass,
+            idempotent,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConflictsWithKeptInput {
+    pub end: u64,
+    pub kept_count: u64,
+    pub kept_ends: Vec<u64>,
+    pub kept_starts: Vec<u64>,
+    pub start: u64,
+}
+
+impl HostValue for ConflictsWithKeptInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ConflictsWithKeptInput", "fields": {
+            "end": json!({"integer": {"value": self.end, "type": {"bits": 64, "signed": false}}}),
+            "kept_count": json!({"integer": {"value": self.kept_count, "type": {"bits": 64, "signed": false}}}),
+            "kept_ends": json!({"sequence": {"values": self.kept_ends.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
+            "kept_starts": json!({"sequence": {"values": self.kept_starts.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
+            "start": json!({"integer": {"value": self.start, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl ConflictsWithKeptInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let end = decode_u64(
+            fields
+                .get("end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let kept_count = decode_u64(
+            fields
+                .get("kept_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let kept_ends = sequence_values(
+            fields
+                .get("kept_ends")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let kept_starts = sequence_values(
+            fields
+                .get("kept_starts")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let start = decode_u64(
+            fields
+                .get("start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            end,
+            kept_count,
+            kept_ends,
+            kept_starts,
+            start,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeltaInput {
+    pub errors_after: u64,
+    pub errors_before: u64,
+}
+
+impl HostValue for DeltaInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "DeltaInput", "fields": {
+            "errors_after": json!({"integer": {"value": self.errors_after, "type": {"bits": 64, "signed": false}}}),
+            "errors_before": json!({"integer": {"value": self.errors_before, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl DeltaInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let errors_after = decode_u64(
+            fields
+                .get("errors_after")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let errors_before = decode_u64(
+            fields
+                .get("errors_before")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            errors_after,
+            errors_before,
+        })
     }
 }
 
@@ -399,6 +994,100 @@ impl DirectoryDecisionInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EligibilityInput {
+    pub allow_proven: bool,
+    pub allow_safe: bool,
+    pub level: Applicability,
+}
+
+impl HostValue for EligibilityInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "EligibilityInput", "fields": {
+            "allow_proven": json!({"boolean": {"value": self.allow_proven}}),
+            "allow_safe": json!({"boolean": {"value": self.allow_safe}}),
+            "level": self.level.host_value(),
+        }}})
+    }
+}
+
+impl EligibilityInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let allow_proven = decode_bool(
+            fields
+                .get("allow_proven")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let allow_safe = decode_bool(
+            fields
+                .get("allow_safe")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let level = Applicability::from_host_value(
+            fields
+                .get("level")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            allow_proven,
+            allow_safe,
+            level,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExitInput {
+    pub review_blocked: bool,
+    pub verified: bool,
+    pub verify_passed: bool,
+    pub worst: Status,
+}
+
+impl HostValue for ExitInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ExitInput", "fields": {
+            "review_blocked": json!({"boolean": {"value": self.review_blocked}}),
+            "verified": json!({"boolean": {"value": self.verified}}),
+            "verify_passed": json!({"boolean": {"value": self.verify_passed}}),
+            "worst": self.worst.host_value(),
+        }}})
+    }
+}
+
+impl ExitInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let review_blocked = decode_bool(
+            fields
+                .get("review_blocked")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let verified = decode_bool(
+            fields
+                .get("verified")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let verify_passed = decode_bool(
+            fields
+                .get("verify_passed")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let worst = Status::from_host_value(
+            fields
+                .get("worst")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            review_blocked,
+            verified,
+            verify_passed,
+            worst,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FileClassInput {
     pub extension_code: u64,
     pub name_code: u64,
@@ -429,6 +1118,256 @@ impl FileClassInput {
         Ok(Self {
             extension_code,
             name_code,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergeInput {
+    pub conflicts: u64,
+}
+
+impl HostValue for MergeInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "MergeInput", "fields": {
+            "conflicts": json!({"integer": {"value": self.conflicts, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl MergeInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let conflicts = decode_u64(
+            fields
+                .get("conflicts")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { conflicts })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverallInput {
+    pub count: u64,
+    pub statuses: Vec<Status>,
+}
+
+impl HostValue for OverallInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "OverallInput", "fields": {
+            "count": json!({"integer": {"value": self.count, "type": {"bits": 64, "signed": false}}}),
+            "statuses": json!({"sequence": {"values": self.statuses.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl OverallInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let count = decode_u64(
+            fields
+                .get("count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let statuses = sequence_values(
+            fields
+                .get("statuses")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| Status::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { count, statuses })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairConflictInput {
+    pub a_end: u64,
+    pub a_start: u64,
+    pub b_end: u64,
+    pub b_start: u64,
+}
+
+impl HostValue for PairConflictInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "PairConflictInput", "fields": {
+            "a_end": json!({"integer": {"value": self.a_end, "type": {"bits": 64, "signed": false}}}),
+            "a_start": json!({"integer": {"value": self.a_start, "type": {"bits": 64, "signed": false}}}),
+            "b_end": json!({"integer": {"value": self.b_end, "type": {"bits": 64, "signed": false}}}),
+            "b_start": json!({"integer": {"value": self.b_start, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl PairConflictInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let a_end = decode_u64(
+            fields
+                .get("a_end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let a_start = decode_u64(
+            fields
+                .get("a_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let b_end = decode_u64(
+            fields
+                .get("b_end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let b_start = decode_u64(
+            fields
+                .get("b_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            a_end,
+            a_start,
+            b_end,
+            b_start,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanInput {
+    pub count: u64,
+    pub from_minor: i64,
+    pub kinds: Vec<TransitionKind>,
+    pub to_minor: i64,
+}
+
+impl HostValue for PlanInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "PlanInput", "fields": {
+            "count": json!({"integer": {"value": self.count, "type": {"bits": 64, "signed": false}}}),
+            "from_minor": json!({"integer": {"value": self.from_minor}}),
+            "kinds": json!({"sequence": {"values": self.kinds.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "to_minor": json!({"integer": {"value": self.to_minor}}),
+        }}})
+    }
+}
+
+impl PlanInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let count = decode_u64(
+            fields
+                .get("count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let from_minor = decode_i64(
+            fields
+                .get("from_minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let kinds = sequence_values(
+            fields
+                .get("kinds")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| TransitionKind::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let to_minor = decode_i64(
+            fields
+                .get("to_minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            count,
+            from_minor,
+            kinds,
+            to_minor,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeenBeforeInput {
+    pub count: u64,
+    pub fired: Vec<u64>,
+    pub id: u64,
+}
+
+impl HostValue for SeenBeforeInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "SeenBeforeInput", "fields": {
+            "count": json!({"integer": {"value": self.count, "type": {"bits": 64, "signed": false}}}),
+            "fired": json!({"sequence": {"values": self.fired.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
+            "id": json!({"integer": {"value": self.id, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl SeenBeforeInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let count = decode_u64(
+            fields
+                .get("count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let fired = sequence_values(
+            fields
+                .get("fired")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let id = decode_u64(
+            fields
+                .get("id")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { count, fired, id })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeInput {
+    pub end: u64,
+    pub replacement_len: u64,
+    pub start: u64,
+}
+
+impl HostValue for ShapeInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ShapeInput", "fields": {
+            "end": json!({"integer": {"value": self.end, "type": {"bits": 64, "signed": false}}}),
+            "replacement_len": json!({"integer": {"value": self.replacement_len, "type": {"bits": 64, "signed": false}}}),
+            "start": json!({"integer": {"value": self.start, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl ShapeInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let end = decode_u64(
+            fields
+                .get("end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let replacement_len = decode_u64(
+            fields
+                .get("replacement_len")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let start = decode_u64(
+            fields
+                .get("start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            end,
+            replacement_len,
+            start,
         })
     }
 }
@@ -613,6 +1552,42 @@ pub fn typed_call(
     session.call_typed_json(module, function, arguments, &options)
 }
 
+pub fn check_status(
+    session: &Session,
+    input: CheckStatusInput,
+    options: CallOptions,
+) -> Result<Status, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.health.v1",
+        "check_status",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Status::from_host_value(&value)?)
+}
+
+pub fn check_status_with_skip(
+    session: &Session,
+    input: CheckStatusWithSkipInput,
+    options: CallOptions,
+) -> Result<Status, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.health.v1",
+        "check_status_with_skip",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Status::from_host_value(&value)?)
+}
+
 pub fn classify(
     session: &Session,
     input: VersionInput,
@@ -631,6 +1606,48 @@ pub fn classify(
     Ok(VersionClass::from_host_value(&value)?)
 }
 
+pub fn compose(
+    session: &Session,
+    input: ComposeInput,
+    options: CallOptions,
+) -> Result<VerificationVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.verify.v1", "compose", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(VerificationVerdict::from_host_value(&value)?)
+}
+
+pub fn conflicts_with_kept(
+    session: &Session,
+    input: ConflictsWithKeptInput,
+    options: CallOptions,
+) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.edits.v1",
+        "conflicts_with_kept",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
+}
+
+pub fn delta_ok(
+    session: &Session,
+    input: DeltaInput,
+    options: CallOptions,
+) -> Result<VerificationVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.verify.v1", "delta_ok", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(VerificationVerdict::from_host_value(&value)?)
+}
+
 pub fn directory_decision(
     session: &Session,
     input: DirectoryDecisionInput,
@@ -647,6 +1664,30 @@ pub fn directory_decision(
     )?;
     let value = returned_value(&output)?;
     Ok(DirectoryDecision::from_host_value(&value)?)
+}
+
+pub fn eligible(
+    session: &Session,
+    input: EligibilityInput,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.fix.v1", "eligible", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn exit_for(
+    session: &Session,
+    input: ExitInput,
+    options: CallOptions,
+) -> Result<ExitDecision, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.report.v1", "exit_for", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ExitDecision::from_host_value(&value)?)
 }
 
 pub fn file_class(
@@ -681,6 +1722,58 @@ pub fn finish(
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn is_conflict(
+    session: &Session,
+    input: ConflictVerdict,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.edits.v1",
+        "is_conflict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_fail(session: &Session, input: Status, options: CallOptions) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.health.v1", "is_fail", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_healthy(
+    session: &Session,
+    input: Status,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.report.v1",
+        "is_healthy",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_pass(session: &Session, input: Status, options: CallOptions) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.health.v1", "is_pass", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn is_supported(
     session: &Session,
     input: VersionClass,
@@ -699,15 +1792,49 @@ pub fn is_supported(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_unknown(
+    session: &Session,
+    input: TransitionKind,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "is_unknown",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_warning(
+    session: &Session,
+    input: Status,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.health.v1",
+        "is_warning",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn merge_verdict(
     session: &Session,
-    input: u64,
+    input: MergeInput,
     options: CallOptions,
-) -> Result<u64, EmbedError> {
-    let arguments = serde_json::to_string(&vec![
-        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
-    ])
-    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+) -> Result<MergeVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(
         session,
         "doctor.fix.v1",
@@ -716,17 +1843,91 @@ pub fn merge_verdict(
         options,
     )?;
     let value = returned_value(&output)?;
-    Ok(decode_u64(&value)?)
+    Ok(MergeVerdict::from_host_value(&value)?)
 }
 
-pub fn rank(session: &Session, input: u64, options: CallOptions) -> Result<u64, EmbedError> {
-    let arguments = serde_json::to_string(&vec![
-        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
-    ])
-    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+pub fn overall(
+    session: &Session,
+    input: OverallInput,
+    options: CallOptions,
+) -> Result<Status, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.health.v1", "overall", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(Status::from_host_value(&value)?)
+}
+
+pub fn pair_conflict(
+    session: &Session,
+    input: PairConflictInput,
+    options: CallOptions,
+) -> Result<ConflictVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.edits.v1",
+        "pair_conflict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ConflictVerdict::from_host_value(&value)?)
+}
+
+pub fn plan_verdict(
+    session: &Session,
+    input: PlanInput,
+    options: CallOptions,
+) -> Result<MigrationVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.migration.v1",
+        "plan_verdict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(MigrationVerdict::from_host_value(&value)?)
+}
+
+pub fn rank(
+    session: &Session,
+    input: Severity,
+    options: CallOptions,
+) -> Result<Severity, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(session, "doctor.health.v1", "rank", &arguments, options)?;
     let value = returned_value(&output)?;
-    Ok(decode_u64(&value)?)
+    Ok(Severity::from_host_value(&value)?)
+}
+
+pub fn seen_before(
+    session: &Session,
+    input: SeenBeforeInput,
+    options: CallOptions,
+) -> Result<SeenVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.fix.v1", "seen_before", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(SeenVerdict::from_host_value(&value)?)
+}
+
+pub fn shape(
+    session: &Session,
+    input: ShapeInput,
+    options: CallOptions,
+) -> Result<EditShape, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "doctor.edits.v1", "shape", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(EditShape::from_host_value(&value)?)
 }
 
 pub fn stop_rule(

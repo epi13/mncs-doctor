@@ -7,11 +7,28 @@ module doctor.migration.v1;
 // per-edge provenance) belongs upstream in mncs-language (DOC-P-003) and
 // arrives as host-loaded data. This module computes *path structure* over
 // the linear profile chain: span validation, edge enumeration, no-op
-// detection, and refusal classification. Edge kinds cross as codes:
-//   kind: 0=noop, 1=metadata, 2=source, 3=unknown.
-// Plan verdicts:
-//   0=planned, 1=noop (already there), 2=downgrade-refused,
-//   3=off-line-refused, 4=blocked (an unknown edge lies on the path).
+// detection, and refusal classification. Edge kinds and plan verdicts are
+// nominal finite values at the native boundary. Version coordinates, edge
+// counts, and bounded windows remain numeric facts.
+
+enum TransitionKind { Noop, Metadata, Source, Unknown }
+enum MigrationVerdict { Planned, Noop, DowngradeRefused, OfflineRefused, Blocked }
+
+record PlanInput {
+    from_minor: i64,
+    to_minor: i64,
+    kinds: [TransitionKind; 16],
+    count: u64
+}
+
+fn is_unknown(kind: TransitionKind) -> (result: bool) {
+    return match kind {
+        Noop => false,
+        Metadata => false,
+        Source => false,
+        Unknown => true,
+    };
+}
 
 // Span verdict for from->to on the 0.x line. Mirrors the structural half
 // of plan(): same version is a no-op plan, downgrades refuse, off-line
@@ -54,28 +71,30 @@ fn enumerate(from_minor: i64, count: u64) -> (result: [i64; 16]) {
     return row;
 }
 
-// Scan the kinds of the enumerated edges for the worst blocker:
-// unknown (3) blocks, source (2) and metadata (1) pass with work,
-// all-noop (0) passes clean. Returns 0=fully-known, 1=has-unknown.
-fn scan_kinds(kinds: [i64; 16], count: u64) -> (result: i64) {
-    iterate i over kinds carrying blocked: i64 = 0 {
+// Scan the kinds of the enumerated edges for the worst blocker.
+fn scan_kinds(kinds: [TransitionKind; 16], count: u64) -> (result: bool) {
+    iterate i over kinds carrying blocked: bool = false {
         let live: bool = i < count;
-        let unknown: bool = live && kinds[i] == 3;
-        next blocked = select(unknown, 1, blocked);
+        let unknown: bool = live && is_unknown(kinds[i]);
+        next blocked = blocked || unknown;
     }
     return blocked;
 }
 
-// Full plan verdict: structural verdict first, then the unknown-edge
-// scan. `kinds`/`count` describe the enumerated edges; they are only
-// consulted when the span itself plans (verdict 0).
-fn plan_verdict(from_minor: i64, to_minor: i64, kinds: [i64; 16], count: u64) -> (result: i64) {
-    let span: i64 = span_verdict(from_minor, to_minor);
+// Full plan verdict: structural verdict first, then the unknown-edge scan.
+fn plan_verdict(input: PlanInput) -> (result: MigrationVerdict) {
+    let span: i64 = span_verdict(input.from_minor, input.to_minor);
     if span != 0 {
-        return span;
+        if span == 1 {
+            return MigrationVerdict.Noop;
+        }
+        if span == 2 {
+            return MigrationVerdict.DowngradeRefused;
+        }
+        return MigrationVerdict.OfflineRefused;
     }
-    if scan_kinds(kinds, count) == 1 {
-        return 4;
+    if scan_kinds(input.kinds, input.count) {
+        return MigrationVerdict.Blocked;
     }
-    return 0;
+    return MigrationVerdict.Planned;
 }

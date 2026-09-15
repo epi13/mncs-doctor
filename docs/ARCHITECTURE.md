@@ -21,10 +21,13 @@ repository
 
 The live command path enters `DoctorMncsRuntime` before discovery. It verifies
 and opens the checked-in ten-module family artifact once per process, retains
-one session for all imported policy modules, validates every scalar return,
+one session for all imported policy modules, validates every typed return,
 records entrypoints, and fails closed on initialization or call-contract
-errors. `mncs-embed` is a normal runtime dependency pinned to the language
-revision recorded in JSON reports.
+errors. Semantic finite values and records are passed through generated Rust
+wrappers with the expected interface identity; only natural numeric facts
+(such as scanner windows and version coordinates) use numeric transport.
+`mncs-embed` is a normal runtime dependency pinned to the language revision
+recorded in JSON reports.
 
 ## Modules and dependency direction
 
