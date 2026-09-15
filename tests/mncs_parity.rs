@@ -2,25 +2,20 @@
 //!
 //! Each test runs the same inputs through the Rust reference implementation
 //! and the MNCS policy module (compiled once per module via `mncs-embed`,
-//! pinned rev) and asserts identical verdicts. Scalar codes cross the host
-//! boundary (token_set pattern); records/enums live inside MNCS.
-//!
-//! Status-code tables (shared by both sides):
-//!   classify: 0=current 1=sealed 2=unsupported 3=unknown
-//!   severity: 0=info 1=warning 2=error
-//!   status:   0=pass 1=warning 2=fail 3=skipped
-//!   kind:     0=noop 1=metadata 2=source 3=unknown
+//! pinned rev) and asserts identical verdicts. Semantic finite values cross
+//! the embedded boundary through generated bindings; scalar codes remain only
+//! in legacy parity surfaces that have not yet received native contracts.
 
 use std::sync::OnceLock;
 
 use mncs_doctor::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
 use mncs_doctor::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts};
 use mncs_doctor::edits::{EditSet, TextEdit};
-use mncs_doctor::fix::Applicability;
+use mncs_doctor::fix::{Applicability, StopReason};
 use mncs_doctor::health::{worst_of, CheckResult, Status};
 use mncs_doctor::migration::{default_registry, fixture_registry, plan};
-use mncs_doctor::mncs_runtime::TransactionTargetVerdict;
-use mncs_doctor::version::{classify, LanguageVersion, VersionClass};
+use mncs_doctor::mncs_runtime::{DoctorMncsRuntime, TransactionTargetVerdict};
+use mncs_doctor::version::{classify, LanguageVersion};
 
 fn session_for(source: &str) -> mncs_embed::Session {
     let artifact =
@@ -185,15 +180,6 @@ fn parity_version_compare() {
     }
 }
 
-fn rust_classify_code(major: u32, minor: u32) -> i64 {
-    match classify(Some(LanguageVersion::new(major, minor))) {
-        VersionClass::Current => 0,
-        VersionClass::Sealed => 1,
-        VersionClass::Unsupported => 2,
-        VersionClass::Unknown => 3,
-    }
-}
-
 #[test]
 fn parity_version_classify() {
     // Current profile (0,17) supplied by the host registry, as designed.
@@ -207,23 +193,14 @@ fn parity_version_classify() {
         (2, 0),
         (0, 0),
     ];
+    let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
     for (major, minor) in versions {
-        let args = format!(
-            "{}, {}, {}, {}",
-            i64_arg(major),
-            i64_arg(minor),
-            i64_arg(0),
-            i64_arg(17)
-        );
-        let got = as_i64(&call(
-            version_session(),
-            "doctor.version.v1",
-            "classify",
-            &args,
-        ));
+        let got = runtime
+            .classify_version(LanguageVersion::new(major, minor))
+            .expect("generated typed version binding");
         assert_eq!(
             got,
-            rust_classify_code(major as u32, minor as u32),
+            classify(Some(LanguageVersion::new(major, minor))),
             "{major}.{minor}"
         );
     }
@@ -368,116 +345,119 @@ fn parity_health_check_status_with_advisories() {
 
 #[test]
 fn parity_transaction_target_policy() {
-    let session = session_for(include_str!("../mncs/doctor/transaction.mncs"));
     let cases = [
-        ((false, false, false, false, false, false), 0),
-        ((false, true, false, true, false, false), 3),
-        ((false, true, true, false, false, false), 2),
-        ((true, false, false, false, false, false), 3),
-        ((true, true, false, false, true, false), 4),
-        ((true, true, false, true, false, true), 3),
-        ((true, true, false, true, true, true), 1),
-        ((true, true, false, true, true, false), 0),
+        (
+            (false, false, false, false, false, false),
+            TransactionTargetVerdict::Allow,
+        ),
+        (
+            (false, true, false, true, false, false),
+            TransactionTargetVerdict::Stale,
+        ),
+        (
+            (false, true, true, false, false, false),
+            TransactionTargetVerdict::Symlink,
+        ),
+        (
+            (true, false, false, false, false, false),
+            TransactionTargetVerdict::Stale,
+        ),
+        (
+            (true, true, false, false, true, false),
+            TransactionTargetVerdict::NonFile,
+        ),
+        (
+            (true, true, false, true, false, true),
+            TransactionTargetVerdict::Stale,
+        ),
+        (
+            (true, true, false, true, true, true),
+            TransactionTargetVerdict::Identical,
+        ),
+        (
+            (true, true, false, true, true, false),
+            TransactionTargetVerdict::Allow,
+        ),
     ];
-    for ((expected, actual, symlink, file, matches, identical), expected_code) in cases {
-        let args = format!(
-            "{}, {}, {}, {}, {}, {}",
-            bool_arg(expected),
-            bool_arg(actual),
-            bool_arg(symlink),
-            bool_arg(file),
-            bool_arg(matches),
-            bool_arg(identical)
+    let runtime = DoctorMncsRuntime::new().unwrap();
+    for ((expected, actual, symlink, file, matches, identical), expected_verdict) in cases {
+        assert_eq!(
+            runtime
+                .transaction_target_verdict(expected, actual, symlink, file, matches, identical)
+                .unwrap(),
+            expected_verdict
         );
-        let got = as_u64(&call(
-            &session,
-            "doctor.transaction.v1",
-            "validate_target",
-            &args,
-        ));
-        assert_eq!(got, expected_code);
     }
-    let runtime = mncs_doctor::mncs_runtime::DoctorMncsRuntime::new().unwrap();
-    assert_eq!(
-        runtime
-            .transaction_target_verdict(false, false, false, false, false, false)
-            .unwrap(),
-        TransactionTargetVerdict::Allow
-    );
 }
 
 #[test]
 fn parity_discovery_fact_classification() {
-    let session = session_for(include_str!("../mncs/doctor/discovery.mncs"));
     let directory_cases = [
-        ((0, false, false, false, false, 0, 64), 0),
-        ((4, false, false, false, false, 1, 64), 2),
-        ((0, false, true, false, false, 1, 64), 4),
-        ((0, false, true, true, true, 1, 64), 3),
-        ((0, false, false, false, false, 65, 64), 1),
-        ((0, true, false, false, false, 1, 64), 2),
-        ((17, false, false, false, false, 1, 64), 2),
+        (
+            (0, false, false, false, false, 0, 64),
+            DirectoryDecision::Descend,
+        ),
+        (
+            (4, false, false, false, false, 1, 64),
+            DirectoryDecision::SkipExcluded,
+        ),
+        (
+            (0, false, true, false, false, 1, 64),
+            DirectoryDecision::SkipSymlink,
+        ),
+        (
+            (0, false, true, true, true, 1, 64),
+            DirectoryDecision::SkipCycle,
+        ),
+        (
+            (0, false, false, false, false, 65, 64),
+            DirectoryDecision::SkipDepth,
+        ),
+        (
+            (0, true, false, false, false, 1, 64),
+            DirectoryDecision::SkipExcluded,
+        ),
+        (
+            (17, false, false, false, false, 1, 64),
+            DirectoryDecision::SkipExcluded,
+        ),
     ];
+    let runtime = DoctorMncsRuntime::new().unwrap();
     for ((name, extra, symlink, follow, cycle, depth, max_depth), expected) in directory_cases {
-        let args = format!(
-            "{}, {}, {}, {}, {}, {}, {}",
-            u64_arg(name),
-            bool_arg(extra),
-            bool_arg(symlink),
-            bool_arg(follow),
-            bool_arg(cycle),
-            u64_arg(depth),
-            u64_arg(max_depth)
-        );
         assert_eq!(
-            as_u64(&call(
-                &session,
-                "doctor.discovery.v1",
-                "directory_decision",
-                &args,
-            )),
+            runtime
+                .discovery_directory_decision(DirectoryFacts {
+                    name_code: name,
+                    extra_excluded: extra,
+                    is_symlink: symlink,
+                    follow_symlink: follow,
+                    cycle,
+                    depth,
+                    max_depth,
+                })
+                .unwrap(),
             expected
         );
     }
     let file_cases = [
         // Recognised manifest names take precedence over the extension code.
-        ((1, 1), 2),
-        ((1, 0), 2),
-        ((4, 0), 4),
-        ((0, 1), 1),
-        ((0, 0), 0),
+        ((1, 1), FileClass::ForgeManifest),
+        ((1, 0), FileClass::ForgeManifest),
+        ((4, 0), FileClass::ManifestJson),
+        ((0, 1), FileClass::Source),
+        ((0, 0), FileClass::Ignore),
     ];
     for ((name, extension), expected) in file_cases {
-        let args = format!("{}, {}", u64_arg(name), u64_arg(extension));
         assert_eq!(
-            as_u64(&call(&session, "doctor.discovery.v1", "file_class", &args,)),
+            runtime
+                .discovery_file_class(FileFacts {
+                    name_code: name,
+                    extension_code: extension,
+                })
+                .unwrap(),
             expected
         );
     }
-    let runtime = mncs_doctor::mncs_runtime::DoctorMncsRuntime::new().unwrap();
-    assert_eq!(
-        runtime
-            .discovery_directory_decision(DirectoryFacts {
-                name_code: 4,
-                extra_excluded: false,
-                is_symlink: false,
-                follow_symlink: false,
-                cycle: false,
-                depth: 1,
-                max_depth: 64,
-            })
-            .unwrap(),
-        DirectoryDecision::SkipExcluded
-    );
-    assert_eq!(
-        runtime
-            .discovery_file_class(FileFacts {
-                name_code: 0,
-                extension_code: 1,
-            })
-            .unwrap(),
-        FileClass::Source
-    );
 }
 
 #[test]
@@ -675,26 +655,19 @@ fn parity_fix_eligibility() {
 
 #[test]
 fn parity_fix_stop_rule() {
-    // (planned_empty, fired_before, iterations, budget) -> stop code
-    // 0=continue 1=fixpoint 2=budget 3=oscillation; precedences pinned.
+    // (planned_empty, fired_before, iterations, budget) -> native stop result.
     let cases = [
-        ((true, false, 0, 16), 1),
-        ((false, true, 0, 16), 3),
-        ((false, false, 16, 16), 2),
-        ((false, false, 3, 16), 0),
-        ((true, true, 99, 16), 1),  // fixpoint first
-        ((false, true, 99, 16), 3), // oscillation before budget
+        ((true, false, 0, 16), Some(StopReason::Fixpoint)),
+        ((false, true, 0, 16), Some(StopReason::Oscillation)),
+        ((false, false, 16, 16), Some(StopReason::BudgetExhausted)),
+        ((false, false, 3, 16), None),
+        ((true, true, 99, 16), Some(StopReason::Fixpoint)),
+        ((false, true, 99, 16), Some(StopReason::Oscillation)),
     ];
+    let runtime = DoctorMncsRuntime::new().unwrap();
     for ((empty, fired, iters, budget), expected) in cases {
-        let args = format!(
-            "{}, {}, {}, {}",
-            bool_arg(empty),
-            bool_arg(fired),
-            u64_arg(iters),
-            u64_arg(budget)
-        );
-        let got = as_u64(&call(fix_session(), "doctor.fix.v1", "stop_rule", &args));
-        assert_eq!(got, expected as u64, "{empty} {fired} {iters} {budget}");
+        let got = runtime.fix_stop_rule(empty, fired, iters, budget).unwrap();
+        assert_eq!(got, expected, "{empty} {fired} {iters} {budget}");
     }
 }
 

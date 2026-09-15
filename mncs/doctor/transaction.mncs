@@ -8,37 +8,38 @@ module doctor.transaction.v1;
 // whether those facts permit a staged operation. It never performs a write,
 // rename, chmod, or rollback: those remain narrow host mechanisms.
 //
-// Verdicts: 0=allow, 1=identical/no-op, 2=symlink refusal,
-// 3=stale/presence mismatch, 4=non-file refusal.
+enum TransactionTargetVerdict { Allow, Identical, Symlink, Stale, NonFile }
 
-fn validate_target(
+record TransactionTargetInput {
     expected_present: bool,
     actual_present: bool,
     is_symlink: bool,
     is_file: bool,
     fingerprint_matches: bool,
-    identical: bool
-) -> (result: u64) {
-    if is_symlink {
-        return 2;
+    identical: bool,
+}
+
+fn validate_target(input: TransactionTargetInput) -> (result: TransactionTargetVerdict) {
+    if input.is_symlink {
+        return TransactionTargetVerdict.Symlink;
     }
-    if expected_present {
-        if !actual_present {
-            return 3;
+    if input.expected_present {
+        if !input.actual_present {
+            return TransactionTargetVerdict.Stale;
         }
-        if !is_file {
-            return 4;
+        if !input.is_file {
+            return TransactionTargetVerdict.NonFile;
         }
-        if !fingerprint_matches {
-            return 3;
+        if !input.fingerprint_matches {
+            return TransactionTargetVerdict.Stale;
         }
-        if identical {
-            return 1;
+        if input.identical {
+            return TransactionTargetVerdict.Identical;
         }
-        return 0;
+        return TransactionTargetVerdict.Allow;
     }
-    if actual_present {
-        return 3;
+    if input.actual_present {
+        return TransactionTargetVerdict.Stale;
     }
-    return 0;
+    return TransactionTargetVerdict.Allow;
 }

@@ -15,8 +15,11 @@ use doctor.transaction.v1 as transaction;
 use doctor.verify.v1 as verify;
 use doctor.version.v1 as version;
 
-fn discovery_code() -> (result: u64) {
-    return discovery.file_class(0, 1);
+fn discovery_code() -> (result: discovery.FileClass) {
+    return discovery.file_class(discovery.FileClassInput {
+        name_code: 0,
+        extension_code: 1,
+    });
 }
 
 fn edits_code() -> (result: u64) {
@@ -46,14 +49,26 @@ fn scanner_code() -> (result: [u64; 6]) {
     return scanner.feed(bytes, state);
 }
 
-fn transaction_code() -> (result: u64) {
-    return transaction.validate_target(true, true, false, true, true, false);
+fn transaction_code() -> (result: transaction.TransactionTargetVerdict) {
+    return transaction.validate_target(transaction.TransactionTargetInput {
+        expected_present: true,
+        actual_present: true,
+        is_symlink: false,
+        is_file: true,
+        fingerprint_matches: true,
+        identical: false,
+    });
 }
 
 fn verify_code() -> (result: u64) {
     return verify.compose(1, 1, 1);
 }
 
-fn version_code() -> (result: i64) {
-    return version.classify(0, 16, 0, 16);
+fn version_code() -> (result: version.VersionClass) {
+    return version.classify(version.VersionInput {
+        major: 0,
+        minor: 16,
+        current_major: 0,
+        current_minor: 16,
+    });
 }
