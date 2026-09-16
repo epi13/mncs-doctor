@@ -1,0 +1,15 @@
+{
+  "schema_version": "mncs.native-userland-status/1",
+  "repository_id": "mncs-doctor",
+  "status": "host_bootstrap",
+  "canonical_entrypoint": "mncs-doctor",
+  "native_sources": {},
+  "host_paths": [
+    {
+      "path": "src/verify.rs",
+      "role": "canonical filesystem/process/bootstrap orchestration",
+      "canonical": true
+    }
+  ],
+  "next_migration_slice": "native no-follow metadata/traversal and temporary-resource policy"
+}
