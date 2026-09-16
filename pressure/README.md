@@ -11,7 +11,7 @@ Status vocabulary: `open` (confirmed) · `workaround` (stopgap shipped) ·
 retained as archive) · `rejected-as-pressure` (not a language concern).
 
 Reconciled 2026-09-12 against `mncs-language`/`mncs-compiler`/
-`mncs-language-service`/`mncs-forge-mcp`/RAVEL current main, Profile
+`mncs-language-service`/`mncs-forge`/RAVEL current main, Profile
 0.16 scope doc, registry, and live execution. This campaign additionally
 verified the production embed path, chunk-fed ingress, Profile 0.16 effects,
 the source-level backend matrix, and the compiler freeze path. DOC-P-004 was

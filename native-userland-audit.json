@@ -1,0 +1,34 @@
+{
+  "schema_version": "mncs.native-userland-audit/1",
+  "repository": "mncs-doctor",
+  "status": "host_bootstrap",
+  "canonical_mncs_surfaces": [
+    "doctor policy modules and remediation contracts"
+  ],
+  "host_canonical_responsibilities": [
+    {
+      "area": "Rust application CLI, traversal, metadata, permissions, and symlink inspection",
+      "classification": "missing_reusable_runtime_capability",
+      "eliminating_capability": "typed no-follow filesystem, metadata, and argv effects"
+    },
+    {
+      "area": "process execution, temporary resources, and JSON/text rendering",
+      "classification": "missing_reusable_runtime_capability",
+      "eliminating_capability": "bounded process, temporary-resource, bytes, and canonical JSON effects"
+    },
+    {
+      "area": "OS/package-manager/provider integrations",
+      "classification": "external_interoperability_only",
+      "eliminating_capability": "none; keep narrow generated Rust bindings"
+    }
+  ],
+  "existing_pressures": [
+    "MNCS-TOOLING-C5FD211E05C1",
+    "MNCS-TOOLING-B9ED716B4A9A",
+    "MNCS-TOOLING-2658866CECD9",
+    "MNCS-TOOLING-B665F138D324",
+    "MNCS-TOOLING-146FB6F4BBC6"
+  ],
+  "migration_order": 4,
+  "next_native_slice": "native path-surface policy over runtime filesystem effects"
+}
