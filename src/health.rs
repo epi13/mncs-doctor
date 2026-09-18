@@ -363,6 +363,7 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
             });
         }
     }
+    findings.extend(check_architecture_knowledge(ctx).findings);
     let status = if findings.iter().any(|f| f.severity == Severity::Error) {
         Status::Fail
     } else if findings.iter().any(|f| f.severity == Severity::Warning) {
@@ -372,7 +373,7 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
     };
     CheckResult {
         id: "toolchain-health".to_owned(),
-        title: "Toolchain compatibility".to_owned(),
+        title: "Toolchain and architecture compatibility".to_owned(),
         status,
         findings,
     }
@@ -420,6 +421,62 @@ fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
     CheckResult {
         id: "language-knowledge".to_owned(),
         title: "Authoritative language knowledge".to_owned(),
+        status,
+        findings,
+    }
+}
+
+fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
+    let mut findings = Vec::new();
+    let status = match ctx.toolchain.architecture_knowledge.as_ref() {
+        None => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                message: "Commons architecture projection was not probed".to_owned(),
+                path: None,
+                explanation:
+                    "Doctor cannot compare family ownership or shadow state without Commons facts."
+                        .to_owned(),
+                suggested_action: "Make MNCS-Commons available or set MNCS_COMMONS_ROOT."
+                    .to_owned(),
+            });
+            Status::Skipped
+        }
+        Some(architecture)
+            if architecture.state == "invalid" || !architecture.errors.is_empty() =>
+        {
+            for error in &architecture.errors {
+                findings.push(Finding {
+                    severity: Severity::Error,
+                    message: "architecture drift or invalid Commons projection".to_owned(),
+                    path: architecture.source_path.clone(),
+                    explanation: error.clone(),
+                    suggested_action:
+                        "Refresh Commons architecture facts and the project's architecture claims."
+                            .to_owned(),
+                });
+            }
+            Status::Fail
+        }
+        Some(architecture) if architecture.claims_state == "verified" => Status::Pass,
+        Some(architecture) => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                message: "Commons architecture facts loaded without local project claims".to_owned(),
+                path: architecture.source_path.clone(),
+                explanation: architecture
+                    .warnings
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "No .mncs/architecture-claims.json was available.".to_owned()),
+                suggested_action: "Add project architecture claims when a repository declares family-owned capabilities.".to_owned(),
+            });
+            Status::Skipped
+        }
+    };
+    CheckResult {
+        id: "architecture-knowledge".to_owned(),
+        title: "Commons architecture drift".to_owned(),
         status,
         findings,
     }

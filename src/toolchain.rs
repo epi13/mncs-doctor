@@ -17,6 +17,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::architecture_knowledge::ArchitectureKnowledgeStatus;
 use crate::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
 use crate::discovery::SourceFile;
 use crate::fix::Applicability;
@@ -67,6 +68,9 @@ pub struct ToolchainStatus {
     /// Freshness and identity of the authoritative mncs-language capability index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language_knowledge: Option<LanguageKnowledgeStatus>,
+    /// Content-addressed Commons architecture facts and optional project drift checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture_knowledge: Option<ArchitectureKnowledgeStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +107,10 @@ pub fn probe_toolchain_at(root: Option<&std::path::Path>) -> ToolchainStatus {
             version: "workspace".to_owned(),
         });
     let language_knowledge = Some(crate::language_knowledge::probe(root));
+    let architecture_knowledge = Some(crate::architecture_knowledge::probe(
+        root,
+        language_knowledge.as_ref(),
+    ));
     let current_profile = language_knowledge
         .as_ref()
         .and_then(|status| status.current_profile.clone())
@@ -119,6 +127,7 @@ pub fn probe_toolchain_at(root: Option<&std::path::Path>) -> ToolchainStatus {
         debug_protocol,
         current_profile,
         language_knowledge,
+        architecture_knowledge,
     }
 }
 

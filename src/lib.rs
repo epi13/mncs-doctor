@@ -13,6 +13,7 @@
 //! well-documented header scan (see [`diagnostics`]). Full semantic analysis
 //! is delegated to language backends through [`diagnostics::LanguageBackend`].
 
+pub mod architecture_knowledge;
 pub mod diagnostics;
 pub mod discovery;
 pub mod edits;
