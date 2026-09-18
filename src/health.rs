@@ -75,6 +75,7 @@ pub fn run_all_checks(ctx: &HealthContext<'_>) -> Vec<CheckResult> {
         check_newline_encoding(ctx),
         check_manifest_health(ctx),
         check_toolchain_health(ctx),
+        check_language_knowledge(ctx),
         check_migration_availability(ctx),
     ]
 }
@@ -377,6 +378,53 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
     }
 }
 
+fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
+    let mut findings = Vec::new();
+    let status = match ctx.toolchain.language_knowledge.as_ref() {
+        None => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                message: "authoritative language capability index was not probed".to_owned(),
+                path: None,
+                explanation: "Doctor cannot validate profile/compiler agreement without the shared mncs-language projection.".to_owned(),
+                suggested_action: "Build or locate mncs-language/docs/language-capabilities.json.".to_owned(),
+            });
+            Status::Pass
+        }
+        Some(knowledge) if knowledge.state == "invalid" || knowledge.freshness == "stale" => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                message: "authoritative language capability index is stale or invalid".to_owned(),
+                path: knowledge.source_path.clone(),
+                explanation: knowledge
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| format!("stale source paths: {:?}", knowledge.stale_paths)),
+                suggested_action: "Regenerate the index from mncs-language and rerun Doctor."
+                    .to_owned(),
+            });
+            Status::Fail
+        }
+        Some(knowledge) if knowledge.freshness == "verified" => Status::Pass,
+        Some(knowledge) => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                message: "authoritative language capability index could not verify its sources".to_owned(),
+                path: knowledge.source_path.clone(),
+                explanation: knowledge.error.clone().unwrap_or_else(|| "The index is usable but its provenance sources are not available in this checkout.".to_owned()),
+                suggested_action: "Make the matching mncs-language checkout available for provenance verification.".to_owned(),
+            });
+            Status::Pass
+        }
+    };
+    CheckResult {
+        id: "language-knowledge".to_owned(),
+        title: "Authoritative language knowledge".to_owned(),
+        status,
+        findings,
+    }
+}
+
 fn check_migration_availability(ctx: &HealthContext<'_>) -> CheckResult {
     let outdated = by_code(ctx.diagnostics, &["DOC103"]).len();
     let unmigratable = by_code(ctx.diagnostics, &["DOC102", "DOC104"]).len();
@@ -457,7 +505,7 @@ mod tests {
             toolchain: &tc,
         };
         let results = run_all_checks(&ctx);
-        assert_eq!(results.len(), 7);
+        assert_eq!(results.len(), 8);
         // No toolchain installed in test env guarantee: toolchain check is
         // warning at worst here, never fail.
         assert!(results.iter().all(|r| r.status != Status::Fail));

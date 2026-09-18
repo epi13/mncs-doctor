@@ -6,8 +6,9 @@
 //! of known source profiles plus their lifecycle status. It performs no
 //! parsing and encodes no semantic meaning of any profile.
 //!
-//! If upstream publishes a machine-readable profile registry, this table
-//! should be generated from it (see `pressure/DOC-P-001.md`).
+//! This remains a compatibility fallback for shallow header planning. When a
+//! project root is available, toolchain probing consumes the authoritative
+//! `mncs-language/docs/language-capabilities.json` projection instead.
 
 use std::fmt;
 use std::str::FromStr;
@@ -15,7 +16,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A source language version such as `0.17`.
+/// A source language version such as `0.18`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LanguageVersion {
     /// Major component (today always 0; `1.0` is reserved/unsupported upstream).
@@ -89,10 +90,10 @@ pub struct ProfileRecord {
 /// one record carries [`ProfileStatus::Current`]; nothing else in the
 /// codebase hardcodes a current version.
 pub fn registry() -> Vec<ProfileRecord> {
-    let mut records: Vec<ProfileRecord> = (1u32..=17)
+    let mut records: Vec<ProfileRecord> = (1u32..=18)
         .map(|minor| ProfileRecord {
             version: LanguageVersion::new(0, minor),
-            status: if minor == 17 {
+            status: if minor == 18 {
                 ProfileStatus::Current
             } else {
                 ProfileStatus::Sealed
@@ -108,7 +109,7 @@ pub fn registry() -> Vec<ProfileRecord> {
 
 /// The current toolchain profile per the mirrored registry.
 pub fn current_version() -> LanguageVersion {
-    LanguageVersion::new(0, 17)
+    LanguageVersion::new(0, 18)
 }
 
 /// Look up a version in the mirrored registry.
@@ -189,7 +190,7 @@ mod tests {
     #[test]
     fn registry_has_single_current() {
         let records = registry();
-        assert_eq!(records.len(), 18);
+        assert_eq!(records.len(), 19);
         let current: Vec<_> = records
             .iter()
             .filter(|r| r.status == ProfileStatus::Current)

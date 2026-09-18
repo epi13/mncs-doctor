@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn healthy_current_file_is_quiet() {
-        let diags = ScannerBackend.diagnose(&file_with("mncs 0.17;\nmodule a;\nfn f() {}\n"));
+        let diags = ScannerBackend.diagnose(&file_with("mncs 0.18;\nmodule a;\nfn f() {}\n"));
         assert!(diags.is_empty(), "{diags:?}");
     }
 

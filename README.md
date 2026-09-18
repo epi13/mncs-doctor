@@ -98,7 +98,8 @@ Checks:
 
 ## Family toolchain discovery
 
-Doctor reports the current mirrored MNCS profile (`0.17`) and probes the
+Doctor reports the current MNCS profile (`0.18`) from the shared capability
+index when available, and probes the
 optional owner-native family components when they are installed or explicitly
 bound: `mncs-test` through `MNCS_TEST_BIN`, `mncs-debug` through
 `MNCS_DEBUG_BIN`, and the Actions checkout through `MNCS_ACTIONS_ROOT`.

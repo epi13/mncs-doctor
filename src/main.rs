@@ -36,7 +36,7 @@ use mncs_doctor::migration::{
 };
 use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
 use mncs_doctor::report::{render_human, ExitCode, Report};
-use mncs_doctor::toolchain::{find_rust_cli, probe_toolchain, RustCliBackend};
+use mncs_doctor::toolchain::{find_rust_cli, probe_toolchain, probe_toolchain_at, RustCliBackend};
 use mncs_doctor::transaction::{summarize_diff, CommitReport, FileOp, Transaction};
 use mncs_doctor::verify::{run_external, verify_after_with_diagnostics, ExternalCheck};
 use mncs_doctor::{DOCTOR_VERSION, REPORT_SCHEMA_VERSION};
@@ -659,7 +659,7 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
-    let toolchain = probe_toolchain();
+    let toolchain = probe_toolchain_at(Some(&root));
     let ctx = HealthContext {
         inventory: &scoped_inventory,
         diagnostics: &diags,

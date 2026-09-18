@@ -18,6 +18,7 @@ pub mod discovery;
 pub mod edits;
 pub mod fix;
 pub mod health;
+pub mod language_knowledge;
 pub mod migration;
 pub mod mncs_runtime;
 pub mod report;

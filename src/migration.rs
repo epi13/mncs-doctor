@@ -149,11 +149,11 @@ impl MigrationRegistry {
 }
 
 /// Production registry: every adjacent sealed/current edge `0.1 -> ... ->
-/// 0.17` recorded as [`TransitionKind::Unknown`] with explicit provenance.
+/// 0.18` recorded as [`TransitionKind::Unknown`] with explicit provenance.
 /// See module docs for why this is the honest seed.
 pub fn default_registry() -> MigrationRegistry {
     let mut registry = MigrationRegistry::new();
-    for minor in 1u32..17 {
+    for minor in 1u32..18 {
         let from = LanguageVersion::new(0, minor);
         let to = LanguageVersion::new(0, minor + 1);
         registry.insert(MigrationTransition {
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn production_registry_covers_adjacent_edges_as_unknown() {
         let registry = default_registry();
-        assert_eq!(registry.len(), 16);
+        assert_eq!(registry.len(), 17);
         let t = registry.get(v(15), v(16)).expect("edge");
         assert_eq!(t.kind, TransitionKind::Unknown);
         assert!(!t.provenance.is_empty());

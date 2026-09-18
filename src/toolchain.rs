@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
 use crate::discovery::SourceFile;
 use crate::fix::Applicability;
+use crate::language_knowledge::LanguageKnowledgeStatus;
 
 /// One probed tool component.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +64,9 @@ pub struct ToolchainStatus {
     /// Current profile used by Doctor's host-side profile mirror.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_profile: Option<String>,
+    /// Freshness and identity of the authoritative mncs-language capability index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_knowledge: Option<LanguageKnowledgeStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +80,12 @@ pub struct ProtocolCompatibility {
 /// Probe the local toolchain. Each probe is a single fast local process;
 /// failures degrade to absence.
 pub fn probe_toolchain() -> ToolchainStatus {
+    probe_toolchain_at(None)
+}
+
+/// Probe the local toolchain with a project root so language knowledge is
+/// resolved from the same authoritative index used by the project.
+pub fn probe_toolchain_at(root: Option<&std::path::Path>) -> ToolchainStatus {
     let rust_cli = find_rust_cli().and_then(|exe| probe_rust_cli(&exe));
     let family_cli = probe_family_cli();
     let test_provider = probe_component("MNCS_TEST_BIN", "mncs-test");
@@ -92,6 +102,11 @@ pub fn probe_toolchain() -> ToolchainStatus {
             path: path.to_string_lossy().into_owned(),
             version: "workspace".to_owned(),
         });
+    let language_knowledge = Some(crate::language_knowledge::probe(root));
+    let current_profile = language_knowledge
+        .as_ref()
+        .and_then(|status| status.current_profile.clone())
+        .or_else(|| Some(crate::version::current_version().short()));
     ToolchainStatus {
         rust_cli,
         family_cli,
@@ -102,7 +117,8 @@ pub fn probe_toolchain() -> ToolchainStatus {
         debug_provider,
         actions_provider,
         debug_protocol,
-        current_profile: Some(crate::version::current_version().short()),
+        current_profile,
+        language_knowledge,
     }
 }
 
