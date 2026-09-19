@@ -1,7 +1,7 @@
 {
   "schema_version": "mncs-family.repository-manifest/v0alpha1",
   "repository": "mncs-doctor",
-  "revision": 1,
+  "revision": 2,
   "manifest_location": "in-repository",
   "authority": {
     "note": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority."
@@ -10,7 +10,11 @@
     "layout": "mncs.repository-layout/1",
     "surfaces": [
       {"path": "mncs/", "class": "canonical", "note": "Native diagnostic and policy kernels."},
-      {"path": "src/", "class": "host-boundary", "note": "Filesystem discovery, process/tool adapters, transactional edits, and report projection."},
+      {"path": "src/discovery.rs", "class": "host-boundary", "note": "Filesystem/repository discovery boundary.", "classification": {"authority": "none", "lifecycle": "active", "boundary_kind": "filesystem", "semantic_role": "platform-adapter"}},
+      {"path": "src/toolchain.rs", "class": "host-boundary", "note": "Compiler/process bootstrap and tool discovery boundary.", "classification": {"authority": "none", "lifecycle": "active", "boundary_kind": "compiler-bootstrap", "semantic_role": "host-bootstrap"}},
+      {"path": "src/transaction.rs", "class": "host-boundary", "note": "Transactional filesystem repair boundary.", "classification": {"authority": "none", "lifecycle": "active", "boundary_kind": "filesystem", "semantic_role": "platform-adapter"}},
+      {"path": "src/health.rs", "class": "canonical", "authority": "mncs-doctor", "note": "Current host health/validation policy pending bounded native parity; Standard schema authority is external.", "classification": {"authority": "canonical", "lifecycle": "temporary", "boundary_kind": "none", "semantic_role": "temporary-host-semantic"}},
+      {"path": "src/architecture_knowledge.rs", "class": "canonical", "authority": "mncs-doctor", "note": "Doctor-specific validation projection; does not replace Commons architecture validation.", "classification": {"authority": "canonical", "lifecycle": "temporary", "boundary_kind": "none", "semantic_role": "temporary-host-semantic"}},
       {"path": "pressure/", "class": "reference", "note": "Local observations route to Commons; not a second pressure authority."}
     ]
   },
