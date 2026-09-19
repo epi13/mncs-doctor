@@ -6,6 +6,7 @@
 //! rendering lives in [`crate::report`].
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -291,6 +292,7 @@ fn check_manifest_health(ctx: &HealthContext<'_>) -> CheckResult {
             ManifestKind::Cargo => {}
         }
     }
+    findings.extend(check_family_repository_manifest(ctx).findings);
     findings.sort_by(|a, b| a.path.cmp(&b.path));
     let status = if findings.iter().any(|f| f.severity == Severity::Error) {
         Status::Fail
@@ -304,6 +306,426 @@ fn check_manifest_health(ctx: &HealthContext<'_>) -> CheckResult {
         title: "Project metadata health".to_owned(),
         status,
         findings,
+    }
+}
+
+/// Validate the repository-owned MNCS family manifest without reimplementing
+/// the Standard's full JSON Schema.  The Standard remains the schema
+/// authority; Doctor checks the binding facts that affect local freshness and
+/// safe context entry.
+fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> CheckResult {
+    let relative = ".mncs/project.json";
+    let path = ctx.inventory.root.join(relative);
+    if !path.is_file() {
+        return CheckResult {
+            id: "family-repository-manifest".to_owned(),
+            title: "Family repository manifest".to_owned(),
+            status: Status::Skipped,
+            findings: Vec::new(),
+        };
+    }
+
+    let mut findings = Vec::new();
+    let value = match std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    {
+        Some(value) => value,
+        None => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                message: "family repository manifest is not valid JSON".to_owned(),
+                path: Some(relative.to_owned()),
+                explanation:
+                    "The repository-owned manifest cannot be used as bounded family context."
+                        .to_owned(),
+                suggested_action:
+                    "Repair .mncs/project.json and validate it against the MNCS Standard schema."
+                        .to_owned(),
+            });
+            return CheckResult {
+                id: "family-repository-manifest".to_owned(),
+                title: "Family repository manifest".to_owned(),
+                status: Status::Fail,
+                findings,
+            };
+        }
+    };
+
+    let object = match value.as_object() {
+        Some(object) => object,
+        None => {
+            findings.push(Finding {
+                severity: Severity::Error,
+                message: "family repository manifest must be a JSON object".to_owned(),
+                path: Some(relative.to_owned()),
+                explanation: "The family-manifest contract is object-shaped.".to_owned(),
+                suggested_action: "Use the MNCS Standard repository-manifest schema.".to_owned(),
+            });
+            return CheckResult {
+                id: "family-repository-manifest".to_owned(),
+                title: "Family repository manifest".to_owned(),
+                status: Status::Fail,
+                findings,
+            };
+        }
+    };
+
+    if object.get("schema_version").and_then(|v| v.as_str())
+        != Some("mncs-family.repository-manifest/v0alpha1")
+    {
+        findings.push(manifest_finding(
+            Severity::Error,
+            "family repository manifest schema is unsupported",
+            "Doctor only accepts the existing Standard-owned family-manifest contract.",
+            "Use mncs-family.repository-manifest/v0alpha1; do not introduce a parallel manifest.",
+        ));
+    }
+    if object
+        .get("repository")
+        .and_then(|v| v.as_str())
+        .is_none_or(str::is_empty)
+    {
+        findings.push(manifest_finding(
+            Severity::Error,
+            "family repository manifest has no repository identity",
+            "A bounded context packet needs a stable repository identifier.",
+            "Set the repository field to the repository's canonical family identity.",
+        ));
+    }
+    if object
+        .get("revision")
+        .and_then(|v| v.as_u64())
+        .is_none_or(|revision| revision == 0)
+    {
+        findings.push(manifest_finding(
+            Severity::Error,
+            "family repository manifest revision is missing or invalid",
+            "Manifest revisions make repository-owned declarations auditable.",
+            "Set revision to a positive integer and increment it for declaration changes.",
+        ));
+    }
+
+    match object.get("contracts").and_then(|v| v.as_object()) {
+        Some(contracts) => {
+            for key in ["provides", "consumes", "tests"] {
+                if !contracts.get(key).is_some_and(serde_json::Value::is_array) {
+                    findings.push(manifest_finding(
+                        Severity::Error,
+                        &format!("family repository manifest contracts.{key} is not an array"),
+                        "The existing manifest contract keeps declared contracts and evidence structurally queryable.",
+                        "Use arrays for provides, consumes, and tests.",
+                    ));
+                }
+            }
+            validate_fingerprint_sources(&mut findings, &path, contracts);
+        }
+        None => findings.push(manifest_finding(
+            Severity::Error,
+            "family repository manifest has no contracts object",
+            "Context consumers cannot determine declared providers or evidence obligations.",
+            "Add the contracts object required by the MNCS Standard manifest schema.",
+        )),
+    }
+
+    if let Some(organization) = object.get("organization") {
+        validate_organization(&mut findings, organization);
+        validate_generated_region_files(
+            &mut findings,
+            &ctx.inventory.root,
+            organization,
+            ctx.toolchain,
+        );
+    }
+
+    findings.sort_by(|a, b| a.message.cmp(&b.message));
+    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
+        Status::Fail
+    } else if findings.iter().any(|f| f.severity == Severity::Warning) {
+        Status::Warning
+    } else {
+        Status::Pass
+    };
+    CheckResult {
+        id: "family-repository-manifest".to_owned(),
+        title: "Family repository manifest".to_owned(),
+        status,
+        findings,
+    }
+}
+
+fn manifest_finding(
+    severity: Severity,
+    message: &str,
+    explanation: &str,
+    suggested_action: &str,
+) -> Finding {
+    Finding {
+        severity,
+        message: message.to_owned(),
+        path: Some(".mncs/project.json".to_owned()),
+        explanation: explanation.to_owned(),
+        suggested_action: suggested_action.to_owned(),
+    }
+}
+
+fn validate_fingerprint_sources(
+    findings: &mut Vec<Finding>,
+    manifest_path: &Path,
+    contracts: &serde_json::Map<String, serde_json::Value>,
+) {
+    for (section, value) in contracts {
+        let Some(entries) = value.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            let Some(sources) = entry.get("fingerprint_sources").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            let Some(root) = manifest_path.parent().and_then(Path::parent) else {
+                continue;
+            };
+            for source in sources.iter().filter_map(|v| v.as_str()) {
+                if source.trim().is_empty() {
+                    continue;
+                }
+                if !root.join(source).exists() {
+                    findings.push(Finding {
+                        severity: Severity::Error,
+                        message: format!("manifest {section} fingerprint source is missing: {source}"),
+                        path: Some(".mncs/project.json".to_owned()),
+                        explanation: "A declared source cannot contribute a reproducible repository identity.".to_owned(),
+                        suggested_action: "Correct the path or remove the stale contract declaration.".to_owned(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn validate_organization(findings: &mut Vec<Finding>, organization: &serde_json::Value) {
+    let Some(organization) = organization.as_object() else {
+        findings.push(manifest_finding(
+            Severity::Error,
+            "manifest organization must be an object",
+            "Repository layout metadata is an optional object extension of the Standard manifest.",
+            "Use the organization object shape from the Standard repository-organization contract.",
+        ));
+        return;
+    };
+    if organization.get("layout").and_then(|v| v.as_str()) != Some("mncs.repository-layout/1") {
+        findings.push(manifest_finding(
+            Severity::Error,
+            "manifest organization layout is unsupported",
+            "A stable layout identity lets tools interpret optional surface classifications.",
+            "Set organization.layout to mncs.repository-layout/1.",
+        ));
+    }
+    const CLASSES: &[&str] = &[
+        "canonical",
+        "host-boundary",
+        "compatibility",
+        "differential-oracle",
+        "reference",
+        "migration-shadow",
+        "generated",
+        "historical",
+    ];
+    if let Some(surfaces) = organization.get("surfaces").and_then(|v| v.as_array()) {
+        for surface in surfaces {
+            let Some(surface) = surface.as_object() else {
+                findings.push(manifest_finding(
+                    Severity::Error,
+                    "manifest organization surface is not an object",
+                    "Surface classifications must be individually queryable.",
+                    "Use path and class fields for each organization surface.",
+                ));
+                continue;
+            };
+            let class = surface.get("class").and_then(|v| v.as_str());
+            let path = surface.get("path").and_then(|v| v.as_str());
+            if path.is_none_or(str::is_empty)
+                || !class.is_some_and(|class| CLASSES.contains(&class))
+            {
+                findings.push(manifest_finding(
+                    Severity::Error,
+                    "manifest organization surface has an invalid path or class",
+                    "Only the Standard-defined artifact classes may shape bounded repository context.",
+                    "Set a non-empty path and one of the eight repository-layout artifact classes.",
+                ));
+            }
+        }
+    }
+    if let Some(regions) = organization
+        .get("generated_regions")
+        .and_then(|v| v.as_array())
+    {
+        for region in regions {
+            let valid = region.as_object().is_some_and(|region| {
+                ["path", "begin", "end", "source"].iter().all(|key| {
+                    region
+                        .get(*key)
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| !s.is_empty())
+                })
+            });
+            if !valid {
+                findings.push(manifest_finding(
+                    Severity::Error,
+                    "manifest generated region is incomplete",
+                    "Generated projections need explicit bounded markers and an authoritative source.",
+                    "Provide non-empty path, begin, end, and source fields.",
+                ));
+            }
+        }
+    }
+}
+
+fn validate_generated_region_files(
+    findings: &mut Vec<Finding>,
+    root: &Path,
+    organization: &serde_json::Value,
+    toolchain: &ToolchainStatus,
+) {
+    let Some(regions) = organization
+        .get("generated_regions")
+        .and_then(|value| value.as_array())
+    else {
+        return;
+    };
+    for region in regions {
+        let Some(region) = region.as_object() else {
+            continue;
+        };
+        let Some(relative) = region.get("path").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let path = Path::new(relative);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            findings.push(manifest_finding(
+                Severity::Error,
+                "manifest generated region escapes the repository root",
+                "Generated projections must be bounded to repository-owned paths.",
+                "Use a relative path without parent-directory components.",
+            ));
+            continue;
+        }
+        let target = root.join(path);
+        let text = match std::fs::read_to_string(&target) {
+            Ok(text) => text,
+            Err(error) => {
+                findings.push(Finding {
+                    severity: Severity::Error,
+                    message: format!("generated projection is missing or unreadable: {relative}"),
+                    path: Some(relative.to_owned()),
+                    explanation: format!(
+                        "Doctor could not inspect the declared generated region: {error}"
+                    ),
+                    suggested_action: "Regenerate the projection or correct its declared path."
+                        .to_owned(),
+                });
+                continue;
+            }
+        };
+        let begin = region.get("begin").and_then(|value| value.as_str());
+        let end = region.get("end").and_then(|value| value.as_str());
+        let (Some(begin), Some(end)) = (begin, end) else {
+            continue;
+        };
+        let Some(begin_offset) = text.find(begin) else {
+            findings.push(generated_region_finding(
+                Severity::Error,
+                relative,
+                "generated region begin marker is absent",
+                "Run the owning deterministic projection generator.",
+            ));
+            continue;
+        };
+        let Some(end_offset) = text.find(end) else {
+            findings.push(generated_region_finding(
+                Severity::Error,
+                relative,
+                "generated region end marker is absent",
+                "Run the owning deterministic projection generator.",
+            ));
+            continue;
+        };
+        if end_offset < begin_offset {
+            findings.push(generated_region_finding(
+                Severity::Error,
+                relative,
+                "generated region markers are out of order",
+                "Restore the bounded generated region before checking freshness.",
+            ));
+            continue;
+        }
+        let generated = &text[begin_offset..end_offset];
+        if generated.contains("Language profile:") {
+            match toolchain
+                .language_knowledge
+                .as_ref()
+                .and_then(|knowledge| knowledge.content_identity.as_deref())
+            {
+                Some(identity) if !generated.contains(identity) => {
+                    findings.push(generated_region_finding(
+                        Severity::Error,
+                        relative,
+                        "generated language identity is stale",
+                        "Regenerate the projection from the current language capability index.",
+                    ))
+                }
+                None => findings.push(generated_region_finding(
+                    Severity::Info,
+                    relative,
+                    "generated language identity could not be checked",
+                    "Provide current mncs-language knowledge before claiming freshness.",
+                )),
+                _ => {}
+            }
+        }
+        if generated.contains("Commons architecture identity:") {
+            match toolchain
+                .architecture_knowledge
+                .as_ref()
+                .and_then(|knowledge| knowledge.content_identity.as_deref())
+            {
+                Some(identity) if !generated.contains(identity) => {
+                    findings.push(generated_region_finding(
+                        Severity::Error,
+                        relative,
+                        "generated Commons architecture identity is stale",
+                        "Regenerate the projection from the current Commons architecture model.",
+                    ))
+                }
+                None => findings.push(generated_region_finding(
+                    Severity::Info,
+                    relative,
+                    "generated Commons architecture identity could not be checked",
+                    "Provide current Commons architecture knowledge before claiming freshness.",
+                )),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn generated_region_finding(
+    severity: Severity,
+    path: &str,
+    message: &str,
+    suggested_action: &str,
+) -> Finding {
+    Finding {
+        severity,
+        message: message.to_owned(),
+        path: Some(path.to_owned()),
+        explanation: "Generated Markdown is a projection, not an independent source of truth."
+            .to_owned(),
+        suggested_action: suggested_action.to_owned(),
     }
 }
 
@@ -619,5 +1041,145 @@ mod tests {
             .unwrap();
         assert_eq!(parse.status, Status::Fail);
         assert_eq!(overall_status(&results), Status::Fail);
+    }
+
+    #[test]
+    fn family_manifest_checks_local_identity_and_fingerprint_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "mncs-doctor-family-manifest-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".mncs")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join(".mncs/project.json"),
+            r#"{
+              "schema_version": "mncs-family.repository-manifest/v0alpha1",
+              "repository": "fixture",
+              "revision": 1,
+              "manifest_location": "in-repository",
+              "organization": {"layout": "mncs.repository-layout/1", "surfaces": [{"path": "src/", "class": "canonical"}]},
+              "contracts": {
+                "provides": [{"contract": "fixture", "version": "1", "kind": "test", "stability": "experimental", "fingerprint_sources": ["src/"]}],
+                "consumes": [],
+                "tests": []
+              }
+            }"#,
+        )
+        .unwrap();
+        let inventory = Inventory {
+            root: root.clone(),
+            sources: Vec::new(),
+            manifests: Vec::new(),
+            skipped: Vec::new(),
+            extension_counts: Default::default(),
+            topology: Default::default(),
+            metrics: Default::default(),
+        };
+        let diagnostics = BTreeMap::new();
+        let toolchain = ToolchainStatus::default();
+        let check = check_family_repository_manifest(&HealthContext {
+            inventory: &inventory,
+            diagnostics: &diagnostics,
+            toolchain: &toolchain,
+        });
+        assert_eq!(check.status, Status::Pass);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn family_manifest_rejects_missing_fingerprint_source() {
+        let root = std::env::temp_dir().join(format!(
+            "mncs-doctor-family-manifest-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".mncs")).unwrap();
+        std::fs::write(
+            root.join(".mncs/project.json"),
+            r#"{
+              "schema_version": "mncs-family.repository-manifest/v0alpha1",
+              "repository": "fixture",
+              "revision": 1,
+              "manifest_location": "in-repository",
+              "contracts": {
+                "provides": [{"contract": "fixture", "version": "1", "kind": "test", "stability": "experimental", "fingerprint_sources": ["missing/"]}],
+                "consumes": [],
+                "tests": []
+              }
+            }"#,
+        )
+        .unwrap();
+        let inventory = Inventory {
+            root: root.clone(),
+            sources: Vec::new(),
+            manifests: Vec::new(),
+            skipped: Vec::new(),
+            extension_counts: Default::default(),
+            topology: Default::default(),
+            metrics: Default::default(),
+        };
+        let diagnostics = BTreeMap::new();
+        let toolchain = ToolchainStatus::default();
+        let check = check_family_repository_manifest(&HealthContext {
+            inventory: &inventory,
+            diagnostics: &diagnostics,
+            toolchain: &toolchain,
+        });
+        assert_eq!(check.status, Status::Fail);
+        assert!(check
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("fingerprint source is missing")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn family_manifest_detects_missing_generated_region_markers() {
+        let root = std::env::temp_dir().join(format!(
+            "mncs-doctor-generated-region-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".mncs")).unwrap();
+        std::fs::write(root.join("README.md"), "# Human prose\n").unwrap();
+        std::fs::write(
+            root.join(".mncs/project.json"),
+            r#"{
+              "schema_version": "mncs-family.repository-manifest/v0alpha1",
+              "repository": "fixture",
+              "revision": 1,
+              "manifest_location": "in-repository",
+              "organization": {
+                "layout": "mncs.repository-layout/1",
+                "generated_regions": [{"path": "README.md", "begin": "<!-- begin -->", "end": "<!-- end -->", "source": "family context"}]
+              },
+              "contracts": {"provides": [], "consumes": [], "tests": []}
+            }"#,
+        )
+        .unwrap();
+        let inventory = Inventory {
+            root: root.clone(),
+            sources: Vec::new(),
+            manifests: Vec::new(),
+            skipped: Vec::new(),
+            extension_counts: Default::default(),
+            topology: Default::default(),
+            metrics: Default::default(),
+        };
+        let diagnostics = BTreeMap::new();
+        let toolchain = ToolchainStatus::default();
+        let check = check_family_repository_manifest(&HealthContext {
+            inventory: &inventory,
+            diagnostics: &diagnostics,
+            toolchain: &toolchain,
+        });
+        assert_eq!(check.status, Status::Fail);
+        assert!(check
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("begin marker is absent")));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

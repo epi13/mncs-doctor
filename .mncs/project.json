@@ -1,0 +1,30 @@
+{
+  "schema_version": "mncs-family.repository-manifest/v0alpha1",
+  "repository": "mncs-doctor",
+  "revision": 1,
+  "manifest_location": "in-repository",
+  "authority": {
+    "note": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority."
+  },
+  "organization": {
+    "layout": "mncs.repository-layout/1",
+    "surfaces": [
+      {"path": "mncs/", "class": "canonical", "note": "Native diagnostic and policy kernels."},
+      {"path": "src/", "class": "host-boundary", "note": "Filesystem discovery, process/tool adapters, transactional edits, and report projection."},
+      {"path": "pressure/", "class": "reference", "note": "Local observations route to Commons; not a second pressure authority."}
+    ]
+  },
+  "contracts": {
+    "provides": [
+      {"contract": "repository-diagnostics", "version": "1", "kind": "health-and-drift-tool", "stability": "experimental", "fingerprint_sources": ["src/", "mncs/", "README.md"]},
+      {"contract": "repository-validation", "version": "1", "kind": "validation-surface", "stability": "experimental", "fingerprint_sources": ["src/health.rs", "src/architecture_knowledge.rs", "src/language_knowledge.rs"]}
+    ],
+    "consumes": [
+      {"contract": "mncs-language.capability-index", "envelope": {"op": "any"}, "required": false},
+      {"contract": "mncs-commons.family-architecture", "envelope": {"op": "any"}, "required": false}
+    ],
+    "tests": [
+      {"test": "doctor-tests", "covers": ["repository-diagnostics", "repository-validation"], "obligation": "self", "command": {"argv": ["cargo", "test"]}}
+    ]
+  }
+}
