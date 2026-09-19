@@ -17,10 +17,14 @@ pub struct LanguageKnowledgeStatus {
     pub freshness: String,
     pub source_path: Option<String>,
     pub content_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_inventory_identity: Option<String>,
     pub current_profile: Option<String>,
     pub module_count: usize,
     pub intrinsic_count: usize,
     pub provenance_count: usize,
+    #[serde(default)]
+    pub language_delta_history_available: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stale_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,6 +55,16 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
         .get("content_identity")
         .and_then(|v| v.as_str())
         .map(str::to_owned);
+    let compiler_inventory = value.get("compiler_inventory");
+    let compiler_inventory_identity = value
+        .get("compiler_inventory_identity")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            compiler_inventory
+                .and_then(|v| v.get("inventory_identity"))
+                .and_then(|v| v.as_str())
+        })
+        .map(str::to_owned);
     let current_profile = value
         .get("current_profile")
         .and_then(|v| v.as_str())
@@ -63,14 +77,32 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
         .get("intrinsics")
         .and_then(|v| v.as_array())
         .map_or(0, Vec::len);
+    let intrinsics_match_compiler = compiler_inventory
+        .and_then(|inventory| inventory.get("intrinsics"))
+        .is_some_and(|intrinsics| value.get("intrinsics") == Some(intrinsics));
     let provenance = value
         .get("provenance")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    if content_identity.is_none() || current_profile.is_none() || provenance.is_empty() {
-        return invalid(&path, "capability index envelope is incomplete".to_owned());
+    if content_identity.is_none()
+        || compiler_inventory_identity.is_none()
+        || current_profile.is_none()
+        || provenance.is_empty()
+        || !intrinsics_match_compiler
+    {
+        let reason = if !intrinsics_match_compiler {
+            "capability index intrinsics do not match the compiler-owned inventory"
+        } else if compiler_inventory_identity.is_none() {
+            "capability index has no authoritative compiler inventory identity"
+        } else {
+            "capability index envelope is incomplete"
+        };
+        return invalid(&path, reason.to_owned());
     }
+    let language_delta_history_available = path
+        .with_file_name("language-capability-deltas.json")
+        .is_file();
     let language_root = path.parent().and_then(Path::parent);
     let mut stale_paths = Vec::new();
     let mut unavailable = false;
@@ -84,6 +116,19 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
                 unavailable = true;
                 continue;
             };
+            if let Some(compiler_identity) = relative.strip_prefix("compiler:") {
+                let observed = item
+                    .get("inventory_identity")
+                    .and_then(|value| value.as_str())
+                    .or_else(|| compiler_inventory_identity.as_deref());
+                if compiler_identity == "language-inventory"
+                    && observed == compiler_inventory_identity.as_deref()
+                {
+                    continue;
+                }
+                stale_paths.push(relative.to_owned());
+                continue;
+            }
             let source = language_root.join(relative);
             if !source.is_file() {
                 unavailable = true;
@@ -111,6 +156,7 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
         freshness: freshness.to_owned(),
         source_path: Some(path.to_string_lossy().into_owned()),
         content_identity,
+        compiler_inventory_identity,
         current_profile,
         module_count,
         intrinsic_count,
@@ -118,6 +164,7 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
             .get("provenance")
             .and_then(|v| v.as_array())
             .map_or(0, Vec::len),
+        language_delta_history_available,
         stale_paths,
         error: None,
     }
@@ -162,10 +209,12 @@ fn missing(message: &str) -> LanguageKnowledgeStatus {
         freshness: "unavailable".to_owned(),
         source_path: None,
         content_identity: None,
+        compiler_inventory_identity: None,
         current_profile: None,
         module_count: 0,
         intrinsic_count: 0,
         provenance_count: 0,
+        language_delta_history_available: false,
         stale_paths: Vec::new(),
         error: Some(message.to_owned()),
     }
