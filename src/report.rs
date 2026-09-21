@@ -72,6 +72,12 @@ pub struct Report {
     pub file_diagnostics: BTreeMap<String, Vec<Diagnostic>>,
     #[serde(default)]
     pub planned_diffs: Vec<DiffSummary>,
+    /// Stable Doctor fix-provider identities present in the selected plan.
+    #[serde(default)]
+    pub fix_identities: Vec<String>,
+    /// Language-owned migration identities addressed by the selected plan.
+    #[serde(default)]
+    pub migration_rule_identities: Vec<String>,
     #[serde(default)]
     pub convergence: Vec<Convergence>,
     #[serde(default)]
@@ -100,6 +106,8 @@ impl Report {
             checks: Vec::new(),
             file_diagnostics: BTreeMap::new(),
             planned_diffs: Vec::new(),
+            fix_identities: Vec::new(),
+            migration_rule_identities: Vec::new(),
             convergence: Vec::new(),
             migrations: Vec::new(),
             verification: None,
