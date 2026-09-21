@@ -774,6 +774,14 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     report.file_diagnostics = diags.clone();
     report.toolchain = Some(probe_toolchain());
     for (file, plan) in &plans {
+        for fix in &plan.fixes {
+            report.fix_identities.push(fix.provider.clone());
+            for address in &fix.addresses {
+                if let Some(identity) = address.strip_prefix("MNCS-MIGRATION-") {
+                    report.migration_rule_identities.push(identity.to_owned());
+                }
+            }
+        }
         let base = file.text.as_deref().unwrap_or("");
         let next = union_apply_with_mncs(plan, base).map_err(|error| {
             format!(
@@ -785,6 +793,10 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
             .planned_diffs
             .push(summarize_diff(&file.relative, base, &next));
     }
+    report.fix_identities.sort();
+    report.fix_identities.dedup();
+    report.migration_rule_identities.sort();
+    report.migration_rule_identities.dedup();
 
     if dry_run {
         report.notes.push(format!(
