@@ -9,6 +9,138 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const SCHEMA: &str = "mncs.language-capabilities/1";
+const MIGRATION_SCHEMA: &str = "mncs.language-migrations/1";
+
+/// Machine-readable source migration metadata published by `mncs-language`.
+/// The language owns the semantic identity and safety claim; Doctor only
+/// applies the explicitly described textual transformation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageMigrationManifest {
+    pub schema_version: String,
+    pub language: String,
+    pub canonicalization_revision: String,
+    pub rewrites: Vec<CanonicalModuleRewrite>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalModuleRewrite {
+    pub id: String,
+    pub kind: String,
+    pub obsolete: String,
+    pub canonical: String,
+    pub mechanically_safe: bool,
+    pub semantic_caveats: String,
+    pub minimum_profile: String,
+    pub source_transformation: String,
+    pub verification: MigrationVerification,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationVerification {
+    pub command: String,
+    pub obligation: String,
+}
+
+/// Locate the language-owned migration manifest without making consumers
+/// remember a repository-specific path.
+pub fn discover_migrations(root: Option<&Path>) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("MNCS_LANGUAGE_MIGRATIONS") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("MNCS_LANGUAGE_ROOT") {
+        candidates.push(PathBuf::from(path).join("docs/language-migrations.json"));
+    }
+    if let Some(root) = root {
+        candidates.push(root.join("docs/language-migrations.json"));
+        if let Some(parent) = root.parent() {
+            candidates.push(parent.join("mncs-language/docs/language-migrations.json"));
+        }
+    }
+    if let Ok(current) = env::current_dir() {
+        candidates.push(current.join("docs/language-migrations.json"));
+        if let Some(parent) = current.parent() {
+            candidates.push(parent.join("mncs-language/docs/language-migrations.json"));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    candidates
+        .into_iter()
+        .find(|path| seen.insert(path.clone()) && path.is_file())
+}
+
+/// Load and validate language-owned migration knowledge. A missing manifest
+/// is ordinary for non-MNCS repositories; malformed present knowledge is a
+/// hard error so Doctor never silently guesses a rewrite.
+pub fn load_migrations(
+    root: Option<&Path>,
+) -> Result<Option<(PathBuf, LanguageMigrationManifest)>, String> {
+    let Some(path) = discover_migrations(root) else {
+        return Ok(None);
+    };
+    let text = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "cannot read language migration manifest {}: {error}",
+            path.display()
+        )
+    })?;
+    let manifest: LanguageMigrationManifest = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "cannot decode language migration manifest {}: {error}",
+            path.display()
+        )
+    })?;
+    if manifest.schema_version != MIGRATION_SCHEMA || manifest.language != "MNCS" {
+        return Err(format!(
+            "unsupported language migration manifest {} (schema {}, language {})",
+            path.display(),
+            manifest.schema_version,
+            manifest.language
+        ));
+    }
+    if manifest.canonicalization_revision.trim().is_empty() || manifest.rewrites.is_empty() {
+        return Err(format!(
+            "language migration manifest {} has no canonicalization revision or rewrites",
+            path.display()
+        ));
+    }
+    let mut ids = BTreeSet::new();
+    let mut obsolete = BTreeSet::new();
+    for rewrite in &manifest.rewrites {
+        if rewrite.kind != "module_import"
+            || rewrite.id.trim().is_empty()
+            || rewrite.obsolete.trim().is_empty()
+            || rewrite.canonical.trim().is_empty()
+            || rewrite.obsolete == rewrite.canonical
+            || rewrite.semantic_caveats.trim().is_empty()
+            || rewrite.minimum_profile.trim().is_empty()
+            || rewrite.source_transformation.trim().is_empty()
+            || rewrite.verification.command.trim().is_empty()
+            || rewrite.verification.obligation.trim().is_empty()
+        {
+            return Err(format!(
+                "invalid language migration entry {:?} in {}",
+                rewrite.id,
+                path.display()
+            ));
+        }
+        if !ids.insert(rewrite.id.clone()) {
+            return Err(format!(
+                "duplicate language migration id {:?} in {}",
+                rewrite.id,
+                path.display()
+            ));
+        }
+        if !obsolete.insert(rewrite.obsolete.clone()) {
+            return Err(format!(
+                "duplicate obsolete module identity {:?} in {}",
+                rewrite.obsolete,
+                path.display()
+            ));
+        }
+    }
+    Ok(Some((path, manifest)))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageKnowledgeStatus {
@@ -25,6 +157,10 @@ pub struct LanguageKnowledgeStatus {
     pub provenance_count: usize,
     #[serde(default)]
     pub language_delta_history_available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_manifest_path: Option<String>,
+    #[serde(default)]
+    pub migration_count: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stale_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,6 +239,14 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
     let language_delta_history_available = path
         .with_file_name("language-capability-deltas.json")
         .is_file();
+    let (migration_manifest_path, migration_count) = match load_migrations(root) {
+        Ok(Some((migration_path, manifest))) => (
+            Some(migration_path.to_string_lossy().into_owned()),
+            manifest.rewrites.len(),
+        ),
+        Ok(None) => (None, 0),
+        Err(error) => return invalid(&path, error),
+    };
     let language_root = path.parent().and_then(Path::parent);
     let mut stale_paths = Vec::new();
     let mut unavailable = false;
@@ -165,6 +309,8 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
             .and_then(|v| v.as_array())
             .map_or(0, Vec::len),
         language_delta_history_available,
+        migration_manifest_path,
+        migration_count,
         stale_paths,
         error: None,
     }
@@ -215,6 +361,8 @@ fn missing(message: &str) -> LanguageKnowledgeStatus {
         intrinsic_count: 0,
         provenance_count: 0,
         language_delta_history_available: false,
+        migration_manifest_path: None,
+        migration_count: 0,
         stale_paths: Vec::new(),
         error: Some(message.to_owned()),
     }
