@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{Diagnostic, LanguageBackend};
 use crate::discovery::{fingerprint, SourceFile};
 use crate::edits::{EditSet, TextEdit};
+use crate::language_knowledge::{load_migrations, CanonicalModuleRewrite};
 
 /// Repair safety classification. Ordered by increasing risk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -69,6 +70,100 @@ pub trait FixProvider {
 
 fn fp(text: &str) -> String {
     fingerprint(text.as_bytes())
+}
+
+/// Applies language-owned canonical module identity rewrites. The provider
+/// deliberately recognizes only `module` and `use` declarations and ignores
+/// comments, so historical evidence and prose are not rewritten as if they
+/// were active source. Semantic ownership remains in the migration manifest
+/// published by `mncs-language`.
+pub struct CanonicalModuleIdentities {
+    rewrites: Vec<CanonicalModuleRewrite>,
+}
+
+impl CanonicalModuleIdentities {
+    pub fn new(rewrites: Vec<CanonicalModuleRewrite>) -> Self {
+        Self { rewrites }
+    }
+}
+
+impl FixProvider for CanonicalModuleIdentities {
+    fn provider_id(&self) -> &str {
+        "language.canonical-module-identities"
+    }
+
+    fn fixes_for(&self, relative: &str, text: &str, _diagnostics: &[Diagnostic]) -> Vec<Fix> {
+        let mut fixes = Vec::new();
+        for rewrite in &self.rewrites {
+            let spans = module_identity_spans(text, &rewrite.obsolete);
+            if spans.is_empty() {
+                continue;
+            }
+            let applicability = if rewrite.mechanically_safe {
+                Applicability::Safe
+            } else {
+                Applicability::Review
+            };
+            let mut edits = EditSet::new(relative, fp(text));
+            for (start, end) in spans {
+                edits.push(TextEdit::new(
+                    start,
+                    end,
+                    rewrite.canonical.clone(),
+                    format!(
+                        "{}: {} -> {}",
+                        rewrite.id, rewrite.obsolete, rewrite.canonical
+                    ),
+                    applicability,
+                ));
+            }
+            fixes.push(Fix {
+                provider: self.provider_id().to_owned(),
+                title: format!(
+                    "Canonicalize MNCS module identity {} -> {}",
+                    rewrite.obsolete, rewrite.canonical
+                ),
+                applicability,
+                addresses: vec![format!("MNCS-MIGRATION-{}", rewrite.id)],
+                edits,
+            });
+        }
+        fixes
+    }
+}
+
+fn is_module_identity_byte(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || value == b'_' || value == b'.'
+}
+
+fn module_identity_spans(text: &str, obsolete: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        // MNCS source currently has no string literal form. Restricting the
+        // scan to declaration text still keeps comments and historical prose
+        // outside the migration boundary.
+        let code = &line[..line.find("//").unwrap_or(line.len())];
+        let trimmed = code.trim_start();
+        if !(trimmed.starts_with("module ") || trimmed.starts_with("use ")) {
+            offset += line.len();
+            continue;
+        }
+        for (position, _) in code.match_indices(obsolete) {
+            let before = position
+                .checked_sub(1)
+                .and_then(|index| code.as_bytes().get(index).copied());
+            let after = code.as_bytes().get(position + obsolete.len()).copied();
+            if before.is_some_and(is_module_identity_byte)
+                || after.is_some_and(is_module_identity_byte)
+            {
+                continue;
+            }
+            spans.push((offset + position, offset + position + obsolete.len()));
+        }
+        offset += line.len();
+    }
+    spans
 }
 
 /// Removes trailing horizontal whitespace at line ends (SAFE).
@@ -230,6 +325,19 @@ pub fn default_providers() -> Vec<Box<dyn FixProvider>> {
         Box::new(CrlfToLf),
         Box::new(RemoveBom),
     ]
+}
+
+/// Build the default provider set plus language-owned canonicalization rules.
+/// A missing manifest is normal; a malformed present manifest fails closed.
+pub fn providers_for_root(root: &std::path::Path) -> Result<Vec<Box<dyn FixProvider>>, String> {
+    let mut providers = default_providers();
+    if let Some((_path, manifest)) = load_migrations(Some(root))? {
+        providers.insert(
+            0,
+            Box::new(CanonicalModuleIdentities::new(manifest.rewrites)) as Box<dyn FixProvider>,
+        );
+    }
+    Ok(providers)
 }
 
 /// Which applicability levels an operation may apply.
@@ -974,6 +1082,32 @@ mod tests {
         assert_eq!(text, "mncs 0.16;\nmodule a;\n");
         assert_eq!(conv.stopped, StopReason::Fixpoint);
         assert!(conv.applied.is_empty());
+    }
+
+    #[test]
+    fn canonical_module_fix_rewrites_declarations_but_not_history() {
+        let rewrite = CanonicalModuleRewrite {
+            id: "test.digest-v2".to_owned(),
+            kind: "module_import".to_owned(),
+            obsolete: "mncs.index.digest.v2".to_owned(),
+            canonical: "mncs.index.digest".to_owned(),
+            mechanically_safe: true,
+            semantic_caveats: "same implementation".to_owned(),
+            minimum_profile: "0.10".to_owned(),
+            source_transformation: "declaration only".to_owned(),
+            verification: crate::language_knowledge::MigrationVerification {
+                command: "pytest".to_owned(),
+                obligation: "kernel tests".to_owned(),
+            },
+        };
+        let provider = CanonicalModuleIdentities::new(vec![rewrite]);
+        let text = "mncs 0.10;\n// module mncs.index.digest.v2 is historical\nmodule mncs.index.digest.v2;\nuse mncs.index.digest.v2 as digest;\n";
+        let fixes = provider.fixes_for("src/digest.mncs", text, &[]);
+        assert_eq!(fixes.len(), 1);
+        let result = fixes[0].edits.apply(text).unwrap();
+        assert!(result.contains("// module mncs.index.digest.v2 is historical"));
+        assert!(result.contains("module mncs.index.digest;"));
+        assert!(result.contains("use mncs.index.digest as digest;"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ use mncs_doctor::discovery::{
     DiscoveryOptions, Inventory, SourceFile, TopologySnapshot,
 };
 use mncs_doctor::fix::{
-    default_providers, plan_workspace_with_mncs_policy, repair_to_fixpoint_with_diagnose,
+    plan_workspace_with_mncs_policy, providers_for_root, repair_to_fixpoint_with_diagnose,
     union_apply_with_mncs, Eligibility,
 };
 use mncs_doctor::health::{run_all_checks, CheckResult, HealthContext, Status};
@@ -755,7 +755,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
-    let providers = default_providers();
+    let providers = providers_for_root(&root)?;
     let workspace = plan_workspace_with_mncs_policy(&sources, &diags, &providers, eligibility)
         .map_err(|error| format!("MNCS fix planning failed (fail-closed): {error}"))?;
     let plans = workspace.plans;
@@ -871,7 +871,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     // Convergence evidence: re-running the full repair loop over the
     // committed tree must reach an immediate fixpoint with nothing applied.
     let mut idempotent = true;
-    let converged_providers = default_providers();
+    let converged_providers = providers_for_root(&root)?;
     for file in &fresh_sources {
         if file.text.is_some() {
             let (_, conv) = repair_to_fixpoint_with_diagnose(

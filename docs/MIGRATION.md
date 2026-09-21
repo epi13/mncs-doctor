@@ -48,3 +48,14 @@ Every applied step records transition, kind, before/after SHA-256,
 replacement count, and knowledge source (`AppliedStep`); per-file records
 (`MigrationRecord`) ship in the JSON report for audit or future
 Ravel equivalence checks.
+
+## Language-owned canonicalization
+
+Source-level implementation canonicalization is a separate safe-fix surface,
+not a permanent compatibility edge. Doctor discovers
+`mncs-language/docs/language-migrations.json` through the consumer's sibling
+checkout or `MNCS_LANGUAGE_ROOT` / `MNCS_LANGUAGE_MIGRATIONS`, validates the
+manifest, and applies only mechanically safe rewrites in `module` and `use`
+declarations. Comments and historical evidence are left unchanged. The
+manifest carries the obsolete identity, canonical replacement, caveats,
+minimum profile, source transformation, and verification obligation.

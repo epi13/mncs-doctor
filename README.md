@@ -135,7 +135,10 @@ removal conditions.
 
 - `doctor`: inspect only, never mutates. Health checks + explanations.
 - `fix`: safe repairs within the current version (whitespace, newlines,
-  BOM today). Dry-run default-off flag; convergence + verification.
+  BOM, and language-owned canonical module identities). Dry-run default-off
+  flag; convergence + verification. Canonical module rules come from
+  `mncs-language/docs/language-migrations.json` when the language checkout is
+  available.
 - `migrate`: cross-version movement. Plan is always safe to run; apply is
   fail-closed across unknown/review edges.
 
