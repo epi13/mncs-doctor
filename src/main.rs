@@ -1287,14 +1287,25 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
         external,
     );
     let external_pass = verification.external.iter().all(|check| check.success);
-    verification.passed = policy
-        .verify_compose(
-            verification.errors_before,
-            verification.errors_after,
-            verification.idempotent.unwrap_or(true),
-            external_pass,
-        )
-        .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
+    if dry_run {
+        // A dry run mutates nothing, so there is no mutation to verify.
+        // Mark the outcome vacuous rather than failing it for fixes that
+        // were deliberately left unapplied.
+        verification.idempotent = None;
+        verification.passed = true;
+        verification
+            .notes
+            .push("dry-run: no mutation performed; verification vacuous".to_owned());
+    } else {
+        verification.passed = policy
+            .verify_compose(
+                verification.errors_before,
+                verification.errors_after,
+                verification.idempotent.unwrap_or(true),
+                external_pass,
+            )
+            .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
+    }
     if !verification.passed {
         escalations.push(Escalation {
             id: "verification-failed".to_owned(),

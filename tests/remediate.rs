@@ -67,7 +67,10 @@ fn remediate_escalates_unrepairable_files_with_minimal_ids() {
     let before = std::fs::read(root.join("src/unbalanced.mncs")).unwrap();
     let after = run(&root, &["remediate", "--root", ".", "--json"]);
     let _ = stdout_json(&after);
-    assert_eq!(std::fs::read(root.join("src/unbalanced.mncs")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(root.join("src/unbalanced.mncs")).unwrap(),
+        before
+    );
 }
 
 #[test]
@@ -87,24 +90,42 @@ fn remediate_dry_run_predicts_without_mutating() {
 }
 
 #[test]
+fn remediate_dry_run_verification_is_vacuous_not_failed() {
+    // A dry run deliberately leaves fixes unapplied; that must not read
+    // as a verification failure.
+    let root = stage("repos/outdated");
+    let out = run(&root, &["remediate", "--root", ".", "--dry-run", "--json"]);
+    let report = stdout_json(&out);
+    let remaining = report["remaining"].as_array().unwrap();
+    assert!(
+        !remaining.iter().any(|id| id == "verification-failed"),
+        "{remaining:?}"
+    );
+    assert_ne!(report["exit_code"], 3);
+    let evidence_path = report["evidence"].as_str().unwrap().to_owned();
+    let evidence: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&evidence_path).unwrap()).unwrap();
+    assert_eq!(evidence["verification"]["passed"], true);
+    assert!(evidence["verification"]["idempotent"].is_null());
+}
+
+#[test]
 fn remediate_budget_exhaustion_repairs_prefix_and_escalates_rest() {
     let root = stage("repos/outdated");
     // A second dirty file so the budget binds.
-    std::fs::copy(
-        root.join("src/messy.mncs"),
-        root.join("src/messy2.mncs"),
-    )
-    .unwrap();
-    let out = run(&root, &["remediate", "--root", ".", "--budget", "1", "--json"]);
+    std::fs::copy(root.join("src/messy.mncs"), root.join("src/messy2.mncs")).unwrap();
+    let out = run(
+        &root,
+        &["remediate", "--root", ".", "--budget", "1", "--json"],
+    );
     let report = stdout_json(&out);
     assert_eq!(report["summary"]["repaired"], 1);
     assert_eq!(report["budget"]["exhausted"], true);
     let remaining = report["remaining"].as_array().unwrap();
     assert!(
-        remaining.iter().any(|id| id
-            .as_str()
-            .unwrap()
-            .starts_with("budget-exhausted:")),
+        remaining
+            .iter()
+            .any(|id| id.as_str().unwrap().starts_with("budget-exhausted:")),
         "{remaining:?}"
     );
     // A re-run with budget continues where the first stopped.
@@ -122,7 +143,14 @@ fn remediate_regenerates_a_corrupt_cache_as_reconciliation() {
     std::fs::write(root.join(".mncs/doctor/inventory.json"), "corrupt").unwrap();
     let out = run(
         &root,
-        &["remediate", "--root", ".", "--changed-path", "src/main.mncs", "--json"],
+        &[
+            "remediate",
+            "--root",
+            ".",
+            "--changed-path",
+            "src/main.mncs",
+            "--json",
+        ],
     );
     let report = stdout_json(&out);
     assert_eq!(report["summary"]["reconciled"], 1);
@@ -173,6 +201,9 @@ fn remediate_evidence_defaults_to_ignored_doctor_dir() {
         ],
     );
     let report = stdout_json(&out);
-    assert!(report["evidence"].as_str().unwrap().ends_with("custom/evidence.json"));
+    assert!(report["evidence"]
+        .as_str()
+        .unwrap()
+        .ends_with("custom/evidence.json"));
     assert!(root.join("custom/evidence.json").is_file());
 }
