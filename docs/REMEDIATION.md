@@ -6,7 +6,7 @@ inspect result), `remediate` absorbs that loop: detect, classify, repair,
 validate, record, and stay quiet.
 
 ```text
-$ mncs-doctor remediate --root .
+$ mncs-doctor remediate --target .
 remediation: repaired=2 reconciled=1 degraded=0 blockers=0
 remaining: none
 evidence: .mncs/doctor/remediation-evidence.json
@@ -15,10 +15,12 @@ evidence: .mncs/doctor/remediation-evidence.json
 ## Command
 
 ```text
-mncs-doctor remediate [--root <dir>] [--dry-run] [--budget <n>]
+mncs-doctor remediate [--target <dir>] [--dry-run] [--budget <n>]
                       [--evidence-path <file>] [--verify-cmd "<cmd>"]
                       [--changed-path <file> ...] [--json] [--quiet]
 ```
+
+`--root` stays accepted as the historical alias for `--target`.
 
 ## Remediation classes
 
@@ -34,12 +36,14 @@ review/manual classes are never applied by `remediate`.
 
 ## Output contract
 
-Stdout is always terse (`mncs.doctor.remediation/1`): counts, repair
-records with before/after fingerprints, reconciliation records,
-escalation ids, one evidence pointer, and budget accounting. Full detail
-(per-file diagnostics, diffs, convergence traces, verification outcome,
-MNCS policy provenance) goes to the evidence artifact
-(`mncs.doctor.remediation-evidence/1`), never to the working context.
+Stdout is always terse (`mncs.remediation/1`, the family contract owned
+by MNCS-Commons): provider identity, scope echo, counts, repair records
+with before/after fingerprints, reconciliation records, escalation ids
+(capped at 64 inline with `remaining_truncated`), one evidence pointer,
+budget accounting, and the verification verdict. Full detail (per-file
+diagnostics, diffs, convergence traces, verification outcome, MNCS
+policy provenance) goes to the evidence artifact
+(`mncs.remediation-evidence/1`), never to the working context.
 
 Evidence routing, in order:
 

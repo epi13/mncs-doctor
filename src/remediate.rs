@@ -31,10 +31,24 @@ use crate::verify::VerificationOutcome;
 use crate::DOCTOR_VERSION;
 
 /// Schema of the terse remediation envelope on stdout.
-pub const REMEDIATION_SCHEMA_VERSION: &str = "mncs.doctor.remediation/1";
+///
+/// Family-standard contract owned by MNCS-Commons
+/// (`mncs.commons.family.remediation.v1`); this binary is the reference
+/// repository-domain provider.
+pub const REMEDIATION_SCHEMA_VERSION: &str = "mncs.remediation/1";
 
 /// Schema of the full evidence artifact.
-pub const REMEDIATION_EVIDENCE_SCHEMA_VERSION: &str = "mncs.doctor.remediation-evidence/1";
+pub const REMEDIATION_EVIDENCE_SCHEMA_VERSION: &str = "mncs.remediation-evidence/1";
+
+/// Provider identity carried on every envelope.
+pub const REMEDIATION_PROVIDER: &str = "mncs-doctor";
+
+/// Repository-domain scope marker (`mncs.remediation/1` v1 vocabulary).
+pub const REMEDIATION_REPOSITORY_DOMAIN: &str = "repository";
+
+/// Maximum escalation ids carried inline on stdout; overflow stays in
+/// evidence and flips `remaining_truncated`.
+pub const MAX_REMAINING_INLINE: usize = 64;
 
 /// Session artifact directory exported by `mncs-environment` invocation.
 /// When present, evidence lands here so the calling session owns the trail.
@@ -74,12 +88,12 @@ impl std::fmt::Display for RemediationClass {
 /// One validated repair or reconciliation action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairRecord {
-    /// Stable record id (`<provider>:<relative>` or a reconciliation key).
+    /// Stable record id (`<provider>:<target>` or a reconciliation key).
     pub id: String,
     pub class: RemediationClass,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub relative: Option<String>,
+    pub target: Option<String>,
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_fingerprint: Option<String>,
@@ -92,11 +106,11 @@ pub struct RepairRecord {
 /// One escalation: the smallest sufficient evidence package.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Escalation {
-    /// Stable escalation id (`<code>:<path>` or a bare `<code>`).
+    /// Stable escalation id (`<code>:<target>` or a bare `<code>`).
     pub id: String,
     pub code: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub target: Option<String>,
     pub severity: Severity,
     pub action: String,
 }
@@ -111,20 +125,41 @@ pub struct RemediationSummary {
     pub blockers: usize,
 }
 
+/// Remediation scope echo: the domain and target this run addressed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemediationScope {
+    pub domain: String,
+    pub target: String,
+}
+
+/// Post-mutation verification verdict on stdout.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RemediationValidation {
+    pub passed: bool,
+    pub errors_before: usize,
+    pub errors_after: usize,
+    pub idempotent_known: bool,
+    pub idempotent: bool,
+}
+
 /// Terse stdout envelope. Bounded by construction: only counts, escalation
-/// ids, and one evidence pointer.
+/// ids, and one evidence pointer. Field vocabulary follows
+/// `mncs.remediation/1`; `exit_code`/`exit_meaning` are tolerated
+/// transport extras the orchestrator records in history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemediationReport {
     pub schema_version: String,
-    pub doctor_version: String,
-    pub command: String,
-    pub root: String,
+    pub provider: String,
+    pub provider_version: String,
+    pub scope: RemediationScope,
     #[serde(default)]
     pub dry_run: bool,
     pub summary: RemediationSummary,
     /// Escalation ids only; full records live in the evidence artifact.
     #[serde(default)]
     pub remaining: Vec<String>,
+    #[serde(default)]
+    pub remaining_truncated: bool,
     #[serde(default)]
     pub repairs: Vec<RepairRecord>,
     #[serde(default)]
@@ -134,6 +169,8 @@ pub struct RemediationReport {
     #[serde(default)]
     pub budget: RemediationBudget,
     #[serde(default)]
+    pub validation: RemediationValidation,
+    #[serde(default)]
     pub notes: Vec<String>,
     pub exit_code: i32,
     pub exit_meaning: String,
@@ -142,9 +179,9 @@ pub struct RemediationReport {
 /// Budget accounting for one run.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RemediationBudget {
-    pub max_files: usize,
-    pub files_repaired: usize,
-    pub apply_rounds: u32,
+    pub max_items: usize,
+    pub items_done: usize,
+    pub rounds: u32,
     #[serde(default)]
     pub exhausted: bool,
 }
@@ -179,19 +216,24 @@ pub struct RemediationEvidence {
 }
 
 impl RemediationReport {
-    pub fn new(root: impl Into<String>) -> Self {
+    pub fn new(target: impl Into<String>) -> Self {
         Self {
             schema_version: REMEDIATION_SCHEMA_VERSION.to_owned(),
-            doctor_version: DOCTOR_VERSION.to_owned(),
-            command: "remediate".to_owned(),
-            root: root.into(),
+            provider: REMEDIATION_PROVIDER.to_owned(),
+            provider_version: DOCTOR_VERSION.to_owned(),
+            scope: RemediationScope {
+                domain: REMEDIATION_REPOSITORY_DOMAIN.to_owned(),
+                target: target.into(),
+            },
             dry_run: false,
             summary: RemediationSummary::default(),
             remaining: Vec::new(),
+            remaining_truncated: false,
             repairs: Vec::new(),
             reconciliations: Vec::new(),
             evidence: None,
             budget: RemediationBudget::default(),
+            validation: RemediationValidation::default(),
             notes: Vec::new(),
             exit_code: 0,
             exit_meaning: String::new(),
@@ -203,6 +245,8 @@ impl RemediationReport {
     }
 
     /// Recompute summary counts and the remaining id list from records.
+    /// Inline ids cap at [`MAX_REMAINING_INLINE`]; overflow stays in
+    /// evidence and flips `remaining_truncated`.
     pub fn refresh_summary(&mut self, escalations: &[Escalation], degraded_files: usize) {
         self.summary.repaired = self.repairs.len();
         self.summary.reconciled = self.reconciliations.len();
@@ -214,6 +258,12 @@ impl RemediationReport {
         let mut remaining: Vec<String> = escalations.iter().map(|item| item.id.clone()).collect();
         remaining.sort();
         remaining.dedup();
+        if remaining.len() > MAX_REMAINING_INLINE {
+            remaining.truncate(MAX_REMAINING_INLINE);
+            self.remaining_truncated = true;
+        } else {
+            self.remaining_truncated = false;
+        }
         self.remaining = remaining;
     }
 }
@@ -241,7 +291,7 @@ pub fn escalation_for_blocked(
     Escalation {
         id: format!("{code}:{relative}"),
         code: code.to_owned(),
-        path: Some(relative.to_owned()),
+        target: Some(relative.to_owned()),
         severity: Severity::Warning,
         action: format!("{provider_id}: {action}"),
     }
@@ -258,21 +308,21 @@ pub fn escalation_for_stop(
         StopReason::BudgetExhausted => Some(Escalation {
             id: format!("budget-exhausted:{relative}"),
             code: "budget-exhausted".to_owned(),
-            path: Some(relative.to_owned()),
+            target: Some(relative.to_owned()),
             severity: Severity::Warning,
             action: "The convergence budget expired with eligible fixes left; re-run remediate.".to_owned(),
         }),
         StopReason::Oscillation => Some(Escalation {
             id: format!("oscillation:{relative}"),
             code: "oscillation".to_owned(),
-            path: Some(relative.to_owned()),
+            target: Some(relative.to_owned()),
             severity: if validated { Severity::Warning } else { Severity::Error },
             action: "A fix became applicable again after applying; inspect the provider pair before retrying.".to_owned(),
         }),
         StopReason::EditConflict => Some(Escalation {
             id: format!("edit-conflict:{relative}"),
             code: "edit-conflict".to_owned(),
-            path: Some(relative.to_owned()),
+            target: Some(relative.to_owned()),
             severity: Severity::Error,
             action: "An edit set failed validation against a changed base; re-diagnose before retrying.".to_owned(),
         }),
@@ -284,7 +334,7 @@ pub fn escalation_for_diagnostic(relative: &str, diagnostic: &Diagnostic) -> Esc
     Escalation {
         id: format!("{}:{relative}", diagnostic.code),
         code: diagnostic.code.clone(),
-        path: Some(relative.to_owned()),
+        target: Some(relative.to_owned()),
         severity: diagnostic.severity,
         action: if diagnostic.suggested_action.is_empty() {
             "No safe transformation exists; see the evidence artifact for detail.".to_owned()
@@ -384,7 +434,7 @@ mod tests {
             id: "hygiene.trailing-whitespace:a.mncs".to_owned(),
             class: RemediationClass::SafeAutomatic,
             provider: "hygiene.trailing-whitespace".to_owned(),
-            relative: Some("a.mncs".to_owned()),
+            target: Some("a.mncs".to_owned()),
             detail: "applied".to_owned(),
             before_fingerprint: None,
             after_fingerprint: None,
@@ -394,7 +444,7 @@ mod tests {
             id: "inventory-cache:regenerated".to_owned(),
             class: RemediationClass::BoundedReconciliation,
             provider: "doctor.inventory-cache".to_owned(),
-            relative: None,
+            target: None,
             detail: "regenerated".to_owned(),
             before_fingerprint: None,
             after_fingerprint: None,
@@ -403,7 +453,7 @@ mod tests {
         let escalations = vec![Escalation {
             id: "DOC108:b.mncs".to_owned(),
             code: "DOC108".to_owned(),
-            path: Some("b.mncs".to_owned()),
+            target: Some("b.mncs".to_owned()),
             severity: Severity::Error,
             action: "fix".to_owned(),
         }];
@@ -440,10 +490,10 @@ mod tests {
 
     #[test]
     fn evidence_schema_versions_are_pinned() {
-        assert_eq!(REMEDIATION_SCHEMA_VERSION, "mncs.doctor.remediation/1");
+        assert_eq!(REMEDIATION_SCHEMA_VERSION, "mncs.remediation/1");
         assert_eq!(
             REMEDIATION_EVIDENCE_SCHEMA_VERSION,
-            "mncs.doctor.remediation-evidence/1"
+            "mncs.remediation-evidence/1"
         );
         let report = RemediationReport::new("/repo");
         assert!(report.to_json().contains(REMEDIATION_SCHEMA_VERSION));

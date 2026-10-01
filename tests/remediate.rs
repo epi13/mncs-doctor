@@ -15,7 +15,7 @@ fn remediate_repairs_safe_hygiene_and_reports_terse_counts() {
         String::from_utf8_lossy(&out.stderr)
     );
     let report = stdout_json(&out);
-    assert_eq!(report["schema_version"], "mncs.doctor.remediation/1");
+    assert_eq!(report["schema_version"], "mncs.remediation/1");
     assert_eq!(report["summary"]["repaired"], 1);
     assert_eq!(report["summary"]["blockers"], 0);
     assert_eq!(report["repairs"][0]["class"], "safe_automatic");
@@ -179,7 +179,7 @@ fn remediate_routes_evidence_to_session_artifact_dir() {
         serde_json::from_slice(&std::fs::read(&evidence_path).unwrap()).unwrap();
     assert_eq!(
         evidence["schema_version"],
-        "mncs.doctor.remediation-evidence/1"
+        "mncs.remediation-evidence/1"
     );
     assert_eq!(evidence["repairs"].as_array().unwrap().len(), 1);
     assert_eq!(evidence["policy"]["engine"], "mncs");
