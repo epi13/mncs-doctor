@@ -41,8 +41,8 @@ use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
 use mncs_doctor::remediate::{
     degraded_files, escalation_for_blocked, escalation_for_diagnostic, escalation_for_stop,
     render_human as render_remediation_human, resolve_evidence_path, write_evidence, Escalation,
-    RemediationClass, RemediationEvidence, RemediationReport, RepairRecord, DEFAULT_BUDGET_FILES,
-    MAX_APPLY_ROUNDS, REMEDIATION_EVIDENCE_SCHEMA_VERSION,
+    RemediationClass, RemediationEvidence, RemediationReport, RemediationValidation, RepairRecord,
+    DEFAULT_BUDGET_FILES, MAX_APPLY_ROUNDS, REMEDIATION_EVIDENCE_SCHEMA_VERSION,
 };
 use mncs_doctor::report::{render_human, ExitCode, Report};
 use mncs_doctor::toolchain::{find_rust_cli, probe_toolchain, probe_toolchain_at, RustCliBackend};
@@ -131,9 +131,11 @@ fn parse_globals(
     let mut i = start;
     while i < args.len() {
         match args[i].as_str() {
-            "--root" => {
+            "--root" | "--target" => {
+                // `--target` is the `mncs.remediation/1` request spelling;
+                // `--root` stays accepted as the historical alias.
                 i += 1;
-                flags.root = Some(PathBuf::from(args.get(i).ok_or("--root requires a value")?));
+                flags.root = Some(PathBuf::from(args.get(i).ok_or("--target requires a value")?));
             }
             "--json" => flags.json = true,
             "--explain" => flags.explain = true,
@@ -1015,7 +1017,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
     let root = workspace_root(&flags.root)?;
     let mut report = RemediationReport::new(root.to_string_lossy());
     report.dry_run = dry_run;
-    report.budget.max_files = budget_files;
+    report.budget.max_items = budget_files;
 
     let inventory = discover_incremental_with_mncs_policy(
         &root,
@@ -1032,7 +1034,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                 id: "inventory-cache:regenerated".to_owned(),
                 class: RemediationClass::BoundedReconciliation,
                 provider: "doctor.inventory-cache".to_owned(),
-                relative: None,
+                target: None,
                 detail: format!("stale inventory cache discarded and regenerated ({reason})"),
                 before_fingerprint: None,
                 after_fingerprint: inventory.metrics.cache_identity.clone(),
@@ -1087,7 +1089,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                             .map(|fix| fix.provider.clone())
                             .collect::<Vec<_>>()
                             .join(","),
-                        relative: Some(file.relative.clone()),
+                        target: Some(file.relative.clone()),
                         detail: "would apply safe repairs (dry-run: no mutation)".to_owned(),
                         before_fingerprint: Some(plan.base_fingerprint.clone()),
                         after_fingerprint: Some(plan.result_fingerprint.clone()),
@@ -1107,7 +1109,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                 budget_escalations.push(Escalation {
                     id: format!("round-budget-exhausted:{}", file.relative),
                     code: "round-budget-exhausted".to_owned(),
-                    path: Some(file.relative.clone()),
+                    target: Some(file.relative.clone()),
                     severity: mncs_doctor::diagnostics::Severity::Warning,
                     action: format!(
                         "Repair rounds exposed further fixes past the {MAX_APPLY_ROUNDS}-round bound; re-run remediate."
@@ -1147,7 +1149,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                 budget_escalations.push(Escalation {
                     id: format!("budget-exhausted:{}", file.relative),
                     code: "budget-exhausted".to_owned(),
-                    path: Some(file.relative.clone()),
+                    target: Some(file.relative.clone()),
                     severity: mncs_doctor::diagnostics::Severity::Warning,
                     action: format!(
                         "The {budget_files}-file repair budget was reached; re-run remediate to continue."
@@ -1178,7 +1180,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                         .map(|fix| fix.provider.clone())
                         .collect::<Vec<_>>()
                         .join(","),
-                    relative: Some(file.relative.clone()),
+                    target: Some(file.relative.clone()),
                     detail: format!("applied {} safe fix(es)", plan.fixes.len()),
                     before_fingerprint: Some(plan.base_fingerprint.clone()),
                     after_fingerprint: Some(plan.result_fingerprint.clone()),
@@ -1190,7 +1192,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
                 id: format!("converge:round-{apply_rounds}"),
                 class: RemediationClass::BoundedReconciliation,
                 provider: "doctor.converge".to_owned(),
-                relative: None,
+                target: None,
                 detail: format!(
                     "round {apply_rounds} applied {} further file(s) exposed by earlier repairs",
                     round_files.len()
@@ -1214,8 +1216,8 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
             break;
         }
     }
-    report.budget.files_repaired = repaired.len();
-    report.budget.apply_rounds = apply_rounds;
+    report.budget.items_done = repaired.len();
+    report.budget.rounds = apply_rounds;
     report.budget.exhausted = exhausted;
 
     // Validate: every repaired file must sit at an immediate fixpoint, and
@@ -1310,7 +1312,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
         escalations.push(Escalation {
             id: "verification-failed".to_owned(),
             code: "verification-failed".to_owned(),
-            path: None,
+            target: None,
             severity: mncs_doctor::diagnostics::Severity::Error,
             action:
                 "Post-repair verification failed; inspect the evidence artifact before retrying."
@@ -1330,6 +1332,13 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
     escalations.extend(budget_escalations);
     report.repairs = repaired.into_values().collect();
     report.repairs.sort_by(|a, b| a.id.cmp(&b.id));
+    report.validation = RemediationValidation {
+        passed: verification.passed,
+        errors_before: verification.errors_before,
+        errors_after: verification.errors_after,
+        idempotent_known: verification.idempotent.is_some(),
+        idempotent: verification.idempotent.unwrap_or(false),
+    };
 
     let toolchain = probe_toolchain_at(Some(&root));
     let scoped_inventory = make_scoped_inventory(&current_inventory, &sources);
