@@ -55,6 +55,8 @@ stays host-side, and the exact removal condition per subsystem.
 ```text
 mncs-doctor doctor [--check] [--explain] [--json] [--changed-path <file> ...]
 mncs-doctor fix [--dry-run] [--safe-only] [--proven] [--changed-path <file> ...]
+mncs-doctor remediate [--dry-run] [--budget <n>] [--evidence-path <file>]
+                   [--verify-cmd "<cmd>"] [--changed-path <file> ...]
 mncs-doctor migrate --to <version|latest> [--plan] [--dry-run] [--apply]
                    [--allow-review] [--registry <file>] [--changed-path <file> ...]
                    [--verify-cmd "<cmd>"]
@@ -131,7 +133,7 @@ removal conditions.
 - **Ravel**: migration records carry fingerprints + provenance shaped for
   future equivalence evidence (nothing linked).
 
-## doctor vs fix vs migrate
+## doctor vs fix vs remediate vs migrate
 
 - `doctor`: inspect only, never mutates. Health checks + explanations.
 - `fix`: safe repairs within the current version (whitespace, newlines,
@@ -139,6 +141,11 @@ removal conditions.
   flag; convergence + verification. Canonical module rules come from
   `mncs-language/docs/language-migrations.json` when the language checkout is
   available.
+- `remediate`: ambient machine-native repair. Safe-only detect → classify →
+  repair → validate → record with a terse summary (`repaired/reconciled/
+  degraded/blockers`) and a full evidence artifact. Idempotent; a second
+  run over repaired state is quiet. See `docs/REMEDIATION.md`. Exposed to
+  `mncs-environment` as the `repository-remediation` provider capability.
 - `migrate`: cross-version movement. Plan is always safe to run; apply is
   fail-closed across unknown/review edges.
 

@@ -22,6 +22,7 @@ pub mod health;
 pub mod language_knowledge;
 pub mod migration;
 pub mod mncs_runtime;
+pub mod remediate;
 pub mod report;
 pub mod toolchain;
 pub mod transaction;
