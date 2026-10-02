@@ -1,0 +1,22 @@
+{
+  "bundle_identity": "mncs:stdlib-bundle:ac252b8ead9771372ba572b047e5c54e1502b33846e1df8499549a2632624ce9",
+  "generator": "fixture",
+  "modules": [
+    {
+      "content_sha256": "444bdba86865c6411e7c82c4df6a90acb80ef9d85dbe0c999a7795a3b4160626",
+      "name": "mncs.core.status.v1",
+      "path": "core/status.mncs",
+      "profile": "0.5",
+      "text": "mncs 0.5;\n\nmodule mncs.core.status.v1;\n\nenum Status { PASS, FAIL, UNKNOWN }\n\nfn dominate(left: Status, right: Status) -> (result: Status) {\n    return match left {\n        Status::FAIL => Status::FAIL,\n        _ => right,\n    };\n}\n"
+    },
+    {
+      "content_sha256": "88fac65aa8e8405e8c98a197a81526a346e987ea952803791aab7a234120836b",
+      "name": "mncs.core.logic.v1",
+      "path": "core/logic.mncs",
+      "profile": "0.5",
+      "text": "mncs 0.5;\n\nmodule mncs.core.logic.v1;\n\nuse mncs.core.status.v1;\n\nfn require(left: Status, right: Status) -> (result: Status) {\n    return dominate(left, right);\n}\n"
+    }
+  ],
+  "schema_version": "mncs.stdlib-bundle/1",
+  "source_commit": "fixture"
+}

@@ -1,0 +1,9 @@
+mncs 0.6;
+
+module fixture.consumer;
+
+use mncs.core.status.v1;
+
+fn soften(left: Status, right: Status) -> (result: Status) {
+    return dominate(left, right);
+}

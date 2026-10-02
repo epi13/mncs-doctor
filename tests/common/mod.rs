@@ -45,7 +45,7 @@ pub fn run(cwd: &Path, args: &[&str]) -> std::process::Output {
     run_env(cwd, args, &[])
 }
 
-/// Run with extra environment overrides (hermetic toolchain tests).
+/// Run with extra environment overrides (hermetic discovery and toolchain tests).
 pub fn run_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mncs-doctor"));
     command.args(args).current_dir(cwd);

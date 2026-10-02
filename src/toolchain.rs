@@ -71,6 +71,9 @@ pub struct ToolchainStatus {
     /// Content-addressed Commons architecture facts and optional project drift checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture_knowledge: Option<ArchitectureKnowledgeStatus>,
+    /// Verified view of the selected mncs-stdlib checkout (Stage F).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdlib: Option<crate::stdlib::StdlibStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,10 +110,14 @@ pub fn probe_toolchain_at(root: Option<&std::path::Path>) -> ToolchainStatus {
             version: "workspace".to_owned(),
         });
     let language_knowledge = Some(crate::language_knowledge::probe(root));
+    let language_source = language_knowledge
+        .as_ref()
+        .and_then(|status| status.source_path.as_deref());
     let architecture_knowledge = Some(crate::architecture_knowledge::probe(
         root,
         language_knowledge.as_ref(),
     ));
+    let stdlib = Some(crate::stdlib::probe(root, language_source));
     let current_profile = language_knowledge
         .as_ref()
         .and_then(|status| status.current_profile.clone())
@@ -128,6 +135,7 @@ pub fn probe_toolchain_at(root: Option<&std::path::Path>) -> ToolchainStatus {
         current_profile,
         language_knowledge,
         architecture_knowledge,
+        stdlib,
     }
 }
 

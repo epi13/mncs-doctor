@@ -25,6 +25,7 @@ pub mod migration;
 pub mod mncs_runtime;
 pub mod remediate;
 pub mod report;
+pub mod stdlib;
 pub mod toolchain;
 pub mod transaction;
 pub mod verify;

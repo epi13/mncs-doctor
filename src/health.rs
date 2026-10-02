@@ -786,6 +786,10 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
         }
     }
     findings.extend(check_architecture_knowledge(ctx).findings);
+    // Stage F: stdlib composition findings ride the toolchain check. The
+    // MNCS policy window is fixed at 8 checks (see DOC-P-023); a dedicated
+    // stdlib-health check id waits on widening that window.
+    findings.extend(stdlib_composition_findings(ctx));
     let status = if findings.iter().any(|f| f.severity == Severity::Error) {
         Status::Fail
     } else if findings.iter().any(|f| f.severity == Severity::Warning) {
@@ -902,6 +906,139 @@ fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
         status,
         findings,
     }
+}
+
+/// Standard-library composition findings (Stage F): a usable stdlib is
+/// present, its manifest/bundle/tree agree, the selected language can
+/// satisfy its required profiles, and project `use mncs.*` targets
+/// resolve to manifest modules. Inspect-only: regeneration belongs to
+/// the stdlib repository, so findings carry actions, never edits.
+fn stdlib_composition_findings(ctx: &HealthContext<'_>) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    // A project needs the stdlib only when it imports from it; anything
+    // else gets silence, not a warning about a missing checkout.
+    let needs_stdlib = ctx.inventory.sources.iter().any(|source| {
+        source
+            .text
+            .as_ref()
+            .is_some_and(|text| !crate::stdlib::mncs_use_targets(text).is_empty())
+    });
+    let stdlib = match ctx.toolchain.stdlib.as_ref() {
+        None => {
+            findings.push(Finding {
+                severity: Severity::Info,
+                message: "standard library was not probed".to_owned(),
+                path: None,
+                explanation: "Doctor cannot validate stdlib composition without a probe."
+                    .to_owned(),
+                suggested_action: "Rerun Doctor with toolchain probing enabled.".to_owned(),
+            });
+            return findings;
+        }
+        Some(stdlib) if stdlib.state == "missing" => {
+            if needs_stdlib {
+                findings.push(Finding {
+                    severity: Severity::Warning,
+                    message: "no usable standard library found".to_owned(),
+                    path: None,
+                    explanation: stdlib
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "No mncs-stdlib checkout was discovered.".to_owned()),
+                    suggested_action:
+                        "Check out mncs-stdlib as a family sibling or set MNCS_STDLIB_ROOT."
+                            .to_owned(),
+                });
+            }
+            return findings;
+        }
+        Some(stdlib) => stdlib,
+    };
+    if let Some(error) = stdlib.error.as_ref() {
+        findings.push(Finding {
+            severity: Severity::Error,
+            message: "standard-library pin is invalid".to_owned(),
+            path: stdlib.manifest_path.clone(),
+            explanation: error.clone(),
+            suggested_action: "Regenerate the pin and manifest in mncs-stdlib (./tools/regen.sh)."
+                .to_owned(),
+        });
+    }
+    for stale in &stdlib.stale_paths {
+        findings.push(Finding {
+            severity: Severity::Error,
+            message: format!("stdlib module disagrees with its manifest: {stale}"),
+            path: stdlib.manifest_path.clone(),
+            explanation:
+                "Tree bytes, manifest digests, or bundle entries diverged; the pin is stale."
+                    .to_owned(),
+            suggested_action: "Regenerate the pin and manifest in mncs-stdlib (./tools/regen.sh)."
+                .to_owned(),
+        });
+    }
+    for unresolved in &stdlib.unresolved_imports {
+        findings.push(Finding {
+            severity: Severity::Error,
+            message: format!("stdlib manifest imports an unknown module: {unresolved}"),
+            path: stdlib.manifest_path.clone(),
+            explanation: "A manifest import names a module absent from the manifest.".to_owned(),
+            suggested_action:
+                "Fix the manifest in mncs-stdlib (tools/gen_manifest.py derives it from the tree)."
+                    .to_owned(),
+        });
+    }
+    for cycle in &stdlib.cycles {
+        findings.push(Finding {
+            severity: Severity::Error,
+            message: format!("stdlib import cycle: {cycle}"),
+            path: stdlib.manifest_path.clone(),
+            explanation: "Library imports must be acyclic.".to_owned(),
+            suggested_action: "Break the cycle in mncs-stdlib/library/.".to_owned(),
+        });
+    }
+    if let (Some(required), Some(supported)) = (
+        stdlib.requires_profile_max.as_ref(),
+        ctx.toolchain.current_profile.as_ref(),
+    ) {
+        if !crate::stdlib::profile_satisfied(required, supported) {
+            findings.push(Finding {
+                        severity: Severity::Error,
+                        message: format!(
+                            "incompatible composition: stdlib requires profiles <= {required}, toolchain offers {supported}"
+                        ),
+                        path: stdlib.manifest_path.clone(),
+                        explanation: "The selected toolchain cannot elaborate every stdlib module.".to_owned(),
+                        suggested_action: "Select a toolchain at the required profile or an older stdlib pin.".to_owned(),
+                    });
+        }
+    }
+    // Project imports resolve against the manifest module set.
+    let provided: std::collections::BTreeSet<&str> =
+        stdlib.modules.iter().map(|m| m.name.as_str()).collect();
+    for source in &ctx.inventory.sources {
+        let Some(text) = source.text.as_ref() else {
+            continue;
+        };
+        for target in crate::stdlib::mncs_use_targets(text) {
+            let resolved = provided.contains(target.as_str())
+                || provided.iter().any(|name| {
+                    name.strip_suffix(".v1") == Some(target.as_str())
+                        || name.strip_suffix(".v2") == Some(target.as_str())
+                });
+            if !resolved {
+                findings.push(Finding {
+                    severity: Severity::Error,
+                    message: format!("unresolved stdlib import: {target}"),
+                    path: Some(source.relative.clone()),
+                    explanation: "The import names no module in the selected stdlib manifest."
+                        .to_owned(),
+                    suggested_action:
+                        "Fix the import or select the stdlib revision that provides it.".to_owned(),
+                });
+            }
+        }
+    }
+    findings
 }
 
 fn check_migration_availability(ctx: &HealthContext<'_>) -> CheckResult {
