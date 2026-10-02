@@ -1,0 +1,9 @@
+mncs 0.5;
+
+module mncs.core.logic.v1;
+
+use mncs.core.status.v1;
+
+fn require(left: Status, right: Status) -> (result: Status) {
+    return dominate(left, right);
+}

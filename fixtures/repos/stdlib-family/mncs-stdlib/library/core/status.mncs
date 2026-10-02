@@ -1,0 +1,12 @@
+mncs 0.5;
+
+module mncs.core.status.v1;
+
+enum Status { PASS, FAIL, UNKNOWN }
+
+fn dominate(left: Status, right: Status) -> (result: Status) {
+    return match left {
+        Status::FAIL => Status::FAIL,
+        _ => right,
+    };
+}

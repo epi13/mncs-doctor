@@ -135,7 +135,9 @@ fn parse_globals(
                 // `--target` is the `mncs.remediation/1` request spelling;
                 // `--root` stays accepted as the historical alias.
                 i += 1;
-                flags.root = Some(PathBuf::from(args.get(i).ok_or("--target requires a value")?));
+                flags.root = Some(PathBuf::from(
+                    args.get(i).ok_or("--target requires a value")?,
+                ));
             }
             "--json" => flags.json = true,
             "--explain" => flags.explain = true,
