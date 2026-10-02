@@ -1,0 +1,15 @@
+mncs 0.18;
+module doctor.provider.v1;
+
+// Targeted provider remediation. No source discovery or owner build semantics.
+// current=0, reconcile=1, blocked=2, unknown=3. Repairs write only a
+// declared, confined artifact cache; publishing and source edits are absent.
+fn repair_artifact(state: u64, owner_declared: u64, confined: u64,
+                   authority: u64, attempts: u64) -> (decision: u64) {
+    if state == 1 { return 0; }
+    if state != 2 { return 3; }
+    if owner_declared != 1 || confined != 1 || authority != 1 || attempts >= 1 {
+        return 2;
+    }
+    return 1;
+}
