@@ -106,6 +106,7 @@
       ],
       "fingerprint_sources": [
         "mncs/doctor/projection.mncs",
+        "mncs/doctor/projection_provider.mncs",
         "tools/projections.py",
         ".mncs/projection-artifact.json"
       ],
@@ -154,7 +155,7 @@
   "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
   "repository": "mncs-doctor",
   "schema_version": "mncs.project-view/1",
-  "source_identity": "sha256:6441f85c0ff88d6e6d0e27f7d9e3360d93c90a44ff0367de1a6e2af793669697",
+  "source_identity": "sha256:b03f3ea51203a8c2a51deb53e7b8839ebe4141cae691ce2c278d9bf1d0993f61",
   "structure": {
     "layout": "mncs.repository-layout/1",
     "surfaces": [

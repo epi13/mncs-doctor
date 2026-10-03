@@ -142,7 +142,8 @@
           "path": "schemas/project-view-1.schema.json",
           "identity": "mncs.project-view/1"
         }
-      }
+      },
+      "bootstrap_digest": "sha256:03f68c071e0ed3a063663cbb1238fc3520602b43807ce1d053063784039dee4d"
     },
     {
       "schema_version": "mncs.semantic-projection/1",
