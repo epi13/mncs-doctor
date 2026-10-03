@@ -1,0 +1,277 @@
+{
+  "capabilities": [
+    {
+      "contract": "repository-diagnostics",
+      "effects": [
+        "read"
+      ],
+      "fingerprint_sources": [
+        "src/",
+        "mncs/",
+        "README.md"
+      ],
+      "invocation": {
+        "fixed_argv": [
+          "doctor"
+        ],
+        "kind": "executable",
+        "path": "target/release/mncs-doctor"
+      },
+      "kind": "health-and-drift-tool",
+      "stability": "experimental",
+      "version": "1"
+    },
+    {
+      "contract": "repository-remediation",
+      "effects": [
+        "write"
+      ],
+      "fingerprint_sources": [
+        "src/remediate.rs",
+        "src/main.rs",
+        "src/fix.rs",
+        "src/transaction.rs",
+        "src/verify.rs"
+      ],
+      "invocation": {
+        "fixed_argv": [
+          "remediate"
+        ],
+        "kind": "executable",
+        "path": "target/release/mncs-doctor"
+      },
+      "kind": "remediation-tool",
+      "stability": "experimental",
+      "version": "1"
+    },
+    {
+      "contract": "repository-validation",
+      "effects": [
+        "write"
+      ],
+      "fingerprint_sources": [
+        "src/health.rs",
+        "src/architecture_knowledge.rs",
+        "src/language_knowledge.rs",
+        "src/verify.rs"
+      ],
+      "invocation": {
+        "fixed_argv": [
+          "verify"
+        ],
+        "kind": "executable",
+        "path": "target/release/mncs-doctor"
+      },
+      "kind": "validation-surface",
+      "stability": "experimental",
+      "version": "1"
+    },
+    {
+      "contract": "mncs-doctor.provider-artifact-remediation",
+      "effects": [
+        "read",
+        "execute"
+      ],
+      "fingerprint_sources": [
+        "mncs/doctor/provider.mncs"
+      ],
+      "kind": "native-targeted-provider-remediation",
+      "stability": "experimental",
+      "version": "1"
+    },
+    {
+      "contract": "family-remediation-plan",
+      "effects": [
+        "read"
+      ],
+      "fingerprint_sources": [
+        "mncs/doctor/family_change.mncs"
+      ],
+      "kind": "native-family-remediation-plan",
+      "native_policy": {
+        "functions": [
+          "gate_repair",
+          "transform_admit"
+        ],
+        "module": "doctor.family_change.v1",
+        "source": "mncs/doctor/family_change.mncs"
+      },
+      "stability": "experimental",
+      "version": "1"
+    },
+    {
+      "contract": "projection-health",
+      "effects": [
+        "read"
+      ],
+      "fingerprint_sources": [
+        "mncs/doctor/projection.mncs",
+        "tools/projections.py",
+        ".mncs/projection-artifact.json"
+      ],
+      "invocation": {
+        "kind": "python",
+        "path": "tools/projections.py",
+        "toolchain": {
+          "path": "target/release/mncs",
+          "repository": "mncs-language"
+        },
+        "toolchain_env": "MNCS_BIN"
+      },
+      "kind": "semantic-projection-health-and-targeted-repair",
+      "stability": "experimental",
+      "version": "1"
+    }
+  ],
+  "dependencies": [
+    {
+      "contract": "mncs-language.capability-index",
+      "envelope": {
+        "op": "any"
+      },
+      "required": false
+    },
+    {
+      "contract": "mncs-commons.family-architecture",
+      "envelope": {
+        "op": "any"
+      },
+      "required": false
+    },
+    {
+      "contract": "mncs-commons.family-change",
+      "envelope": {
+        "op": "any"
+      },
+      "evidence": {
+        "kind": "native-import",
+        "source": "mncs/doctor/family_change.mncs"
+      },
+      "required": false
+    }
+  ],
+  "entry": [],
+  "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
+  "repository": "mncs-doctor",
+  "schema_version": "mncs.project-view/1",
+  "source_identity": "sha256:6441f85c0ff88d6e6d0e27f7d9e3360d93c90a44ff0367de1a6e2af793669697",
+  "structure": {
+    "layout": "mncs.repository-layout/1",
+    "surfaces": [
+      {
+        "artifact_class": "authoritative",
+        "class": "canonical",
+        "classification": {
+          "authority": "canonical",
+          "boundary_kind": "none",
+          "lifecycle": "active",
+          "semantic_role": "canonical-semantic"
+        },
+        "note": "Native diagnostic and policy kernels.",
+        "path": "mncs/"
+      },
+      {
+        "class": "host-boundary",
+        "classification": {
+          "authority": "none",
+          "boundary_kind": "filesystem",
+          "lifecycle": "active",
+          "semantic_role": "platform-adapter"
+        },
+        "note": "Filesystem/repository discovery boundary.",
+        "path": "src/discovery.rs"
+      },
+      {
+        "class": "host-boundary",
+        "classification": {
+          "authority": "none",
+          "boundary_kind": "compiler-bootstrap",
+          "lifecycle": "active",
+          "semantic_role": "host-bootstrap"
+        },
+        "note": "Compiler/process bootstrap and tool discovery boundary.",
+        "path": "src/toolchain.rs"
+      },
+      {
+        "class": "host-boundary",
+        "classification": {
+          "authority": "none",
+          "boundary_kind": "filesystem",
+          "lifecycle": "active",
+          "semantic_role": "platform-adapter"
+        },
+        "note": "Transactional filesystem repair boundary.",
+        "path": "src/transaction.rs"
+      },
+      {
+        "artifact_class": "authoritative",
+        "authority": "mncs-doctor",
+        "class": "canonical",
+        "classification": {
+          "authority": "canonical",
+          "boundary_kind": "none",
+          "lifecycle": "temporary",
+          "semantic_role": "temporary-host-semantic"
+        },
+        "note": "Current host health/validation policy pending bounded native parity; Standard schema authority is external.",
+        "path": "src/health.rs"
+      },
+      {
+        "artifact_class": "authoritative",
+        "authority": "mncs-doctor",
+        "class": "canonical",
+        "classification": {
+          "authority": "canonical",
+          "boundary_kind": "none",
+          "lifecycle": "temporary",
+          "semantic_role": "temporary-host-semantic"
+        },
+        "note": "Doctor-specific validation projection; does not replace Commons architecture validation.",
+        "path": "src/architecture_knowledge.rs"
+      },
+      {
+        "class": "reference",
+        "classification": {
+          "authority": "reference",
+          "boundary_kind": "none",
+          "lifecycle": "active",
+          "semantic_role": "reference"
+        },
+        "note": "Local observations route to Commons; not a second pressure authority.",
+        "path": "pressure/"
+      },
+      {
+        "artifact_class": "authoritative",
+        "authority": "mncs-doctor",
+        "class": "canonical",
+        "note": "Authored project intent; execution state is evidence-derived.",
+        "path": ".mncs/project-state.json"
+      },
+      {
+        "artifact_class": "authoritative",
+        "authority": "mncs-doctor",
+        "class": "canonical",
+        "note": "Explicit semantic projection ownership and dependencies.",
+        "path": ".mncs/projections.json"
+      },
+      {
+        "artifact_class": "mixed",
+        "class": "generated",
+        "note": "Mixed: only delimited semantic region is projection-owned; surrounding authored bytes are protected.",
+        "path": "README.md"
+      },
+      {
+        "artifact_class": "mixed",
+        "class": "generated",
+        "note": "Mixed: projected evidence board beside preserved authored intent.",
+        "path": "ROADMAP.md"
+      },
+      {
+        "artifact_class": "derived",
+        "class": "generated",
+        "note": "Derived machine-facing interpretation; never an execution input.",
+        "path": ".mncs/project-view.json"
+      }
+    ]
+  }
+}

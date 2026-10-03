@@ -1,5 +1,22 @@
 # mncs-doctor
 
+<!-- MNCS:generated:begin -->
+## Project entry
+
+Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.
+
+Declared capabilities (declarations do not establish execution health):
+
+- `family-remediation-plan/1` — native-family-remediation-plan (experimental)
+- `mncs-doctor.provider-artifact-remediation/1` — native-targeted-provider-remediation (experimental)
+- `projection-health/1` — semantic-projection-health-and-targeted-repair (experimental)
+- `repository-diagnostics/1` — health-and-drift-tool (experimental)
+- `repository-remediation/1` — remediation-tool (experimental)
+- `repository-validation/1` — validation-surface (experimental)
+
+Semantic sources and ownership: `.mncs/projections.json`.
+<!-- MNCS:generated:end -->
+
 MNCS repository diagnostics, automated repair, and version-aware source
 migration tooling.
 

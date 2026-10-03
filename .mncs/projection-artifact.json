@@ -1,0 +1,79 @@
+{
+  "schema_version": "mncs.provider-artifact-declaration/1",
+  "provider": {
+    "repository": "mncs-doctor",
+    "contract": "projection-health",
+    "version": "1"
+  },
+  "build_capability": "mncs-doctor:projection-artifact-reconcile",
+  "configuration": {
+    "target": "mncs-research-bytecode",
+    "profile": "retained-bounded",
+    "effects": []
+  },
+  "abi": {
+    "backend_schema": "0.6",
+    "runtime": "mncs-embed retained session C ABI",
+    "wire": "canonical MNCS value ABI"
+  },
+  "stdlib": {
+    "applicability": "not-consumed",
+    "evidence": "declared module closure contains only Automation, Commons provenance and Doctor provider modules"
+  },
+  "source": {
+    "repository": "mncs-doctor",
+    "path": "mncs/doctor/projection_provider.mncs"
+  },
+  "admission": {
+    "repository": "MNCS-Commons",
+    "path": "src/mncs_commons/mesh/mncs/commons/family/provenance/v1.mncs",
+    "module": "mncs.commons.family.provenance.v1"
+  },
+  "remediation": {
+    "repository": "mncs-doctor",
+    "path": "mncs/doctor/provider.mncs",
+    "module": "doctor.provider.v1"
+  },
+  "dependency_roots": [
+    {
+      "repository": "mncs-doctor",
+      "path": "mncs"
+    },
+    {
+      "repository": "MNCS-Commons",
+      "path": "src/mncs_commons/mesh"
+    }
+  ],
+  "modules": [
+    "doctor.projection.provider.v1",
+    "doctor.projection.v1",
+    "mncs.commons.family.provenance.v1",
+    "doctor.provider.v1"
+  ],
+  "inputs": [
+    {
+      "repository": "mncs-doctor",
+      "path": "mncs/doctor/projection_provider.mncs"
+    },
+    {
+      "repository": "mncs-doctor",
+      "path": "mncs/doctor/projection.mncs"
+    },
+    {
+      "repository": "mncs-doctor",
+      "path": "tools/projections.py"
+    },
+    {
+      "repository": "mncs-doctor",
+      "path": ".mncs/projection-artifact.json"
+    },
+    {
+      "repository": "mncs-doctor",
+      "path": "mncs/doctor/provider.mncs"
+    },
+    {
+      "repository": "MNCS-Commons",
+      "path": "src/mncs_commons/mesh/mncs/commons/family/provenance/v1.mncs"
+    }
+  ]
+}

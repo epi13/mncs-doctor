@@ -1,0 +1,36 @@
+mncs 0.18;
+module doctor.projection.v1;
+
+// Profile/manifest validation belongs to their authorities; Doctor aggregates
+// the observed conformance facts, keeping unavailable authority UNKNOWN.
+fn structure_conformance(known: u64, missing: u64, ambiguous: u64) -> (verdict: u64) {
+    if missing > 0 || ambiguous > 0 { return 0; }
+    if known != 1 { return 2; }
+    return 1;
+}
+
+// Health codes are a protocol, not arbitrary diagnosis prose.
+// current=0 stale=1 missing=2 renderer-outdated=3 source-unavailable=4
+// target-occupied=5 manual-divergence=6 malformed-region=7
+// failed-validation=8 blocked-repair=9.
+fn health(source: u64, present: u64, owned: u64, boundaries: u64,
+          unchanged: u64, renderer_current: u64, epoch_current: u64,
+          validated: u64, blocked: u64) -> (status: u64) {
+    if source != 1 { return 4; }
+    if present != 1 { return 2; }
+    if boundaries != 1 { return 7; }
+    if owned != 1 { return 5; }
+    if unchanged != 1 { return 6; }
+    if validated != 1 { return 8; }
+    if blocked == 1 { return 9; }
+    if renderer_current != 1 { return 3; }
+    if epoch_current != 1 { return 1; }
+    return 0;
+}
+
+fn repair(status: u64, owner: u64, claim: u64, confined: u64) -> (decision: u64) {
+    if status == 0 { return 0; }
+    if owner != 1 || claim != 1 || confined != 1 { return 2; }
+    if status == 1 || status == 2 || status == 3 { return 1; }
+    return 2;
+}

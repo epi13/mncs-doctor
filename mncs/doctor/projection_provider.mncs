@@ -1,0 +1,15 @@
+mncs 0.18;
+module doctor.projection.provider.v1;
+use doctor.projection.v1 as projection;
+use mncs.commons.family.provenance.v1 as provenance;
+use doctor.provider.v1 as provider;
+fn health(source: u64, present: u64, owned: u64, boundaries: u64,
+          unchanged: u64, renderer: u64, epoch: u64, validated: u64, blocked: u64) -> (status: u64) {
+    return projection.health(source, present, owned, boundaries, unchanged, renderer, epoch, validated, blocked);
+}
+fn state(expected: [byte; 32], built: [byte; 32], known: u64, present: u64, intact: u64) -> (result: u64) {
+    return provenance.artifact_state(expected, built, known, present, intact);
+}
+fn repair(state: u64, owner: u64, confined: u64, authority: u64, attempts: u64) -> (result: u64) {
+    return provider.repair_artifact(state, owner, confined, authority, attempts);
+}

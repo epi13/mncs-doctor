@@ -1,0 +1,15 @@
+{
+  "schema_version": "mncs.project-intent/1",
+  "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
+  "entry": [],
+  "milestones": [
+    {
+      "id": "mncs-doctor:projection-conformance",
+      "title": "Declared ambient projection surfaces satisfy their contract",
+      "subject_slot": "declarations",
+      "evidence": "projection-conformance",
+      "dependencies": [],
+      "blockers": []
+    }
+  ]
+}
