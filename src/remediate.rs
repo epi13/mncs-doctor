@@ -344,6 +344,52 @@ pub fn escalation_for_diagnostic(relative: &str, diagnostic: &Diagnostic) -> Esc
     }
 }
 
+/// Build residual escalations over one validated state plus the fixpoint
+/// verdict: per-file blocked providers and non-fixpoint stops, then one
+/// escalation per residual error diagnostic. The `validated` flag carried
+/// into stop classification tracks the running fixpoint verdict in file
+/// order (a later break does not rewrite an earlier file's severity),
+/// exactly as the remediation validation loop observes it.
+/// Returns the escalations and whether every file sits at an immediate
+/// Safe fixpoint with nothing applicable.
+pub fn escalations_for_post_state(
+    convergence: &[Convergence],
+    diagnostics: &BTreeMap<String, Vec<Diagnostic>>,
+) -> (Vec<Escalation>, bool) {
+    let mut escalations = Vec::new();
+    let mut idempotent = true;
+    for conv in convergence {
+        if !conv.applied.is_empty() || conv.stopped != StopReason::Fixpoint {
+            idempotent = false;
+        }
+        for provider_id in &conv.blocked_review {
+            escalations.push(escalation_for_blocked(
+                provider_id,
+                &conv.relative,
+                Applicability::Review,
+            ));
+        }
+        for provider_id in &conv.blocked_manual {
+            escalations.push(escalation_for_blocked(
+                provider_id,
+                &conv.relative,
+                Applicability::Manual,
+            ));
+        }
+        if let Some(escalation) = escalation_for_stop(&conv.relative, conv.stopped, idempotent) {
+            escalations.push(escalation);
+        }
+    }
+    for (relative, file_diags) in diagnostics {
+        for diag in file_diags {
+            if diag.severity == Severity::Error {
+                escalations.push(escalation_for_diagnostic(relative, diag));
+            }
+        }
+    }
+    (escalations, idempotent)
+}
+
 /// Count files carrying residual warning-severity diagnostics.
 pub fn degraded_files(diagnostics: &BTreeMap<String, Vec<Diagnostic>>) -> usize {
     diagnostics

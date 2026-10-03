@@ -138,6 +138,75 @@ fn component_path(env_name: &str, command: &str) -> Option<PathBuf> {
         .or_else(|| which(command))
 }
 
+/// Subprocess-free resolution of every external input a toolchain probe
+/// consumes: override variables, `PATH`, resolved binary paths, and the
+/// Actions directory. Health-epoch validation re-resolves these facts
+/// and compares content identities instead of re-executing `--version`
+/// probes; any difference forces the full path, which re-probes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolchainPresence {
+    pub path_value: Option<String>,
+    pub mncs_cli_override: Option<String>,
+    pub test_bin_override: Option<String>,
+    pub debug_bin_override: Option<String>,
+    pub actions_root_override: Option<String>,
+    pub rust_cli_path: Option<String>,
+    pub family_cli_path: Option<String>,
+    pub cargo_path: Option<String>,
+    pub forge_path: Option<String>,
+    pub ravel_path: Option<String>,
+    pub test_provider_path: Option<String>,
+    pub debug_provider_path: Option<String>,
+    pub actions_dir_present: bool,
+}
+
+/// Resolve toolchain presence facts without spawning any subprocess.
+/// Mirrors the resolution half of [`probe_toolchain_at`] exactly; the
+/// execution half (`--version`/`--help`/`capabilities` output) is what
+/// the epoch reuses as last-validated facts.
+pub fn presence_facts() -> ToolchainPresence {
+    let path_value = std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned());
+    let mncs_cli_override = std::env::var("MNCS_CLI")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let test_bin_override =
+        std::env::var_os("MNCS_TEST_BIN").map(|value| value.to_string_lossy().into_owned());
+    let debug_bin_override =
+        std::env::var_os("MNCS_DEBUG_BIN").map(|value| value.to_string_lossy().into_owned());
+    let actions_root_override =
+        std::env::var_os("MNCS_ACTIONS_ROOT").map(|value| value.to_string_lossy().into_owned());
+    // `find_rust_cli` trusts an explicit `MNCS_CLI` as-is; PATH entries
+    // resolve through `which` (the `--help` language-verb check is the
+    // execution half and stays on the full path).
+    let rust_cli_path = mncs_cli_override
+        .clone()
+        .map(PathBuf::from)
+        .or_else(|| which("mncs"))
+        .map(|path| path.to_string_lossy().into_owned());
+    let family_cli_path = which("mncs").map(|path| path.to_string_lossy().into_owned());
+    let actions_dir_present = actions_root_override
+        .as_ref()
+        .map(|root| PathBuf::from(root).is_dir())
+        .unwrap_or(false);
+    ToolchainPresence {
+        path_value,
+        mncs_cli_override,
+        test_bin_override,
+        debug_bin_override,
+        actions_root_override,
+        rust_cli_path,
+        family_cli_path,
+        cargo_path: which("cargo").map(|path| path.to_string_lossy().into_owned()),
+        forge_path: which("mncs-forge").map(|path| path.to_string_lossy().into_owned()),
+        ravel_path: which("ravel").map(|path| path.to_string_lossy().into_owned()),
+        test_provider_path: component_path("MNCS_TEST_BIN", "mncs-test")
+            .map(|path| path.to_string_lossy().into_owned()),
+        debug_provider_path: component_path("MNCS_DEBUG_BIN", "mncs-debug")
+            .map(|path| path.to_string_lossy().into_owned()),
+        actions_dir_present,
+    }
+}
+
 fn probe_component(env_name: &str, command: &str) -> Option<ToolInfo> {
     component_path(env_name, command).and_then(|path| probe_path(&path, command))
 }

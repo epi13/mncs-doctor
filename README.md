@@ -85,6 +85,19 @@ Global: `--root <dir>`, `--json`, `--explain`, `--quiet`, `--verbose`,
 `--changed-path <file>` (repeatable narrow source surface), `--no-color`.
 Exit codes in `docs/EXIT-CODES.md`.
 
+## Health epochs
+
+Repository-scope `doctor`, `fix`, and `remediate` record a validated
+health epoch (`.mncs/doctor/health-epoch.json`, ignored derived state):
+the proven outcome plus fingerprints of every input that produced it.
+A no-change rerun re-validates those fingerprints with plain host I/O
+and re-emits the verdict in milliseconds — no policy startup, no
+subprocesses — marked honestly with `epoch_reused: true`, empty
+entrypoints, and a reuse note. Any input change, and any doubt at all,
+runs the full path. Scoped (`--changed-path`), backend
+(`--with-language-backend`), and external-verify runs never reuse.
+See `docs/HEALTH-EPOCH.md` for the contract.
+
 ## Selective development scope
 
 Repository discovery remains the authoritative source of file identities, but
