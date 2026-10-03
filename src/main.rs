@@ -16,12 +16,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode as ProcExit;
-use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 
 use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
@@ -33,20 +29,28 @@ use mncs_doctor::fix::{
     union_apply_with_mncs, Eligibility,
 };
 use mncs_doctor::health::{run_all_checks, CheckResult, HealthContext, Status};
+use mncs_doctor::health_epoch::{
+    collect_migration_digest, collect_toolchain_digest, doctor_report_from_epoch,
+    inventory_source_metadata, knowledge_of, load_epoch, manifest_digests, project_manifest_digest,
+    record_epoch, remediation_from_epoch, source_metadata, store_epoch, validate_epoch,
+    HealthEpoch, SourceMetadata, ValidatedState,
+};
 use mncs_doctor::migration::{
     apply_plan, default_registry, plan as plan_migration, resolve_target, MigrationVerdict,
     TransitionKind,
 };
-use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
+use mncs_doctor::mncs_runtime::{static_policy_identity, DoctorMncsRuntime, PolicyProvenance};
 use mncs_doctor::remediate::{
-    degraded_files, escalation_for_blocked, escalation_for_diagnostic, escalation_for_stop,
-    render_human as render_remediation_human, resolve_evidence_path, write_evidence, Escalation,
-    RemediationClass, RemediationEvidence, RemediationReport, RemediationValidation, RepairRecord,
-    DEFAULT_BUDGET_FILES, MAX_APPLY_ROUNDS, REMEDIATION_EVIDENCE_SCHEMA_VERSION,
+    degraded_files, escalations_for_post_state, render_human as render_remediation_human,
+    resolve_evidence_path, write_evidence, Escalation, RemediationClass, RemediationEvidence,
+    RemediationReport, RemediationValidation, RepairRecord, DEFAULT_BUDGET_FILES, MAX_APPLY_ROUNDS,
+    REMEDIATION_EVIDENCE_SCHEMA_VERSION,
 };
 use mncs_doctor::report::{render_human, ExitCode, Report};
-use mncs_doctor::toolchain::{find_rust_cli, probe_toolchain, probe_toolchain_at, RustCliBackend};
-use mncs_doctor::transaction::{summarize_diff, CommitReport, FileOp, Transaction};
+use mncs_doctor::toolchain::{
+    find_rust_cli, probe_toolchain, probe_toolchain_at, RustCliBackend, ToolchainStatus,
+};
+use mncs_doctor::transaction::{summarize_diff, CommitReport, DiffSummary, FileOp, Transaction};
 use mncs_doctor::verify::{run_external, verify_after_with_diagnostics, ExternalCheck};
 use mncs_doctor::{DOCTOR_VERSION, REPORT_SCHEMA_VERSION};
 
@@ -93,22 +97,7 @@ struct GlobalFlags {
     changed_paths: Vec<PathBuf>,
 }
 
-const INVENTORY_CACHE_SCHEMA: &str = "mncs.doctor.inventory-cache/2";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SourceMetadata {
-    len: u64,
-    modified_seconds: Option<u64>,
-    modified_nanos: Option<u32>,
-    #[serde(default)]
-    device: Option<u64>,
-    #[serde(default)]
-    inode: Option<u64>,
-    #[serde(default)]
-    change_seconds: Option<i64>,
-    #[serde(default)]
-    change_nanos: Option<i64>,
-}
+const INVENTORY_CACHE_SCHEMA: &str = "mncs.doctor.inventory-cache/3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InventoryCache {
@@ -135,7 +124,9 @@ fn parse_globals(
                 // `--target` is the `mncs.remediation/1` request spelling;
                 // `--root` stays accepted as the historical alias.
                 i += 1;
-                flags.root = Some(PathBuf::from(args.get(i).ok_or("--target requires a value")?));
+                flags.root = Some(PathBuf::from(
+                    args.get(i).ok_or("--target requires a value")?,
+                ));
             }
             "--json" => flags.json = true,
             "--explain" => flags.explain = true,
@@ -286,17 +277,13 @@ fn cache_path(root: &std::path::Path) -> PathBuf {
     root.join(".mncs/doctor/inventory.json")
 }
 
-fn policy_identity(policy: &DoctorMncsRuntime) -> Result<String, String> {
-    let mut provenance = policy
-        .provenance()
-        .map_err(|error| format!("MNCS provenance unavailable: {error}"))?;
-    // Entrypoints are run-session observations, not discovery-policy
-    // semantics.  Excluding them keeps a cache reusable across processes
-    // while the report still records the complete dynamic provenance.
-    provenance.entrypoints.clear();
-    let bytes = serde_json::to_vec(&provenance)
-        .map_err(|error| format!("cannot encode policy provenance: {error}"))?;
-    Ok(mncs_doctor::discovery::fingerprint(&bytes))
+fn policy_identity(_policy: &DoctorMncsRuntime) -> Result<String, String> {
+    // The policy identity is a pure function of the embedded policy
+    // sources, computable without opening the runtime. The runtime
+    // argument stays so call sites keep proving they hold the verified
+    // session whose policy this names; health-epoch validation calls
+    // `static_policy_identity` directly, before any runtime exists.
+    Ok(static_policy_identity())
 }
 
 fn options_identity(options: &DiscoveryOptions) -> Result<String, String> {
@@ -309,48 +296,6 @@ fn inventory_identity(inventory: &Inventory) -> Result<String, String> {
     let bytes = serde_json::to_vec(inventory)
         .map_err(|error| format!("cannot encode inventory identity: {error}"))?;
     Ok(mncs_doctor::discovery::fingerprint(&bytes))
-}
-
-fn source_metadata(path: &std::path::Path) -> Result<SourceMetadata, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("cannot stat source {}: {error}", path.display()))?;
-    let modified = metadata.modified().ok().and_then(|value| {
-        value
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|duration| (duration.as_secs(), duration.subsec_nanos()))
-    });
-    Ok(SourceMetadata {
-        len: metadata.len(),
-        modified_seconds: modified.map(|value| value.0),
-        modified_nanos: modified.map(|value| value.1),
-        #[cfg(unix)]
-        device: Some(metadata.dev()),
-        #[cfg(not(unix))]
-        device: None,
-        #[cfg(unix)]
-        inode: Some(metadata.ino()),
-        #[cfg(not(unix))]
-        inode: None,
-        #[cfg(unix)]
-        change_seconds: Some(metadata.ctime()),
-        #[cfg(not(unix))]
-        change_seconds: None,
-        #[cfg(unix)]
-        change_nanos: Some(metadata.ctime_nsec()),
-        #[cfg(not(unix))]
-        change_nanos: None,
-    })
-}
-
-fn inventory_source_metadata(
-    inventory: &Inventory,
-) -> Result<BTreeMap<String, SourceMetadata>, String> {
-    inventory
-        .sources
-        .iter()
-        .map(|source| Ok((source.relative.clone(), source_metadata(&source.path)?)))
-        .collect()
 }
 
 fn write_inventory_cache(
@@ -634,6 +579,167 @@ fn report_print_explain(report: &Report) -> bool {
     report.notes.iter().any(|n| n == "explain")
 }
 
+/// Whether the current flags admit health-epoch reuse and recording:
+/// repository scope with scanner-only diagnosis. Scoped (`--changed-path`)
+/// state is not full state, and `--with-language-backend` adds per-file
+/// subprocess diagnosis the epoch does not fingerprint.
+fn epoch_eligible(flags: &GlobalFlags) -> bool {
+    flags.changed_paths.is_empty() && !flags.with_language_backend
+}
+
+/// Attempt the epoch fast path before starting the policy runtime.
+/// Returns the validated epoch on a hit, else the invalidation reason.
+fn attempt_epoch_hit(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+) -> Result<HealthEpoch, String> {
+    let epoch = load_epoch(root)?;
+    let now =
+        mncs_doctor::health_epoch::now_unix().ok_or_else(|| "clock is unusable".to_owned())?;
+    validate_epoch(&epoch, root, &options_identity(options)?, now)?;
+    Ok(epoch)
+}
+
+/// Record an epoch over a just-validated full run. All fingerprints
+/// describe the state the run leaves behind (post-mutation for
+/// `fix`/`remediate`, current for `doctor`).
+fn record_validated_epoch(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    inventory: &Inventory,
+    toolchain: &mncs_doctor::toolchain::ToolchainStatus,
+    state: ValidatedState,
+) -> Result<HealthEpoch, String> {
+    record_epoch(
+        root,
+        options_identity(options)?,
+        inventory_identity(inventory)?,
+        inventory.topology.identity(),
+        inventory.topology.directories.clone(),
+        inventory_source_metadata(inventory)?,
+        manifest_digests(&inventory.manifests),
+        project_manifest_digest(root),
+        collect_toolchain_digest(),
+        knowledge_of(toolchain),
+        collect_migration_digest(root),
+        state,
+    )
+}
+
+/// Persist an epoch; failure degrades to a note and never fails the
+/// validating command.
+fn persist_epoch(root: &std::path::Path, epoch: &HealthEpoch, notes: &mut Vec<String>) {
+    if let Err(error) = store_epoch(root, epoch) {
+        notes.push(format!("health epoch not recorded: {error}"));
+    }
+}
+
+/// Post-state repair proof: fixpoint validation records, residual
+/// escalations, post-state verification (what a no-change rerun would
+/// compute), and the remediation exit for this state. `clean` is true
+/// when no Safe fix remains applicable.
+struct FixpointProof {
+    convergence: Vec<mncs_doctor::fix::Convergence>,
+    escalations: Vec<Escalation>,
+    verification_post: mncs_doctor::verify::VerificationOutcome,
+    remediation_exit_code: i32,
+    remediation_exit_meaning: String,
+    clean: bool,
+}
+
+/// Prove (or disprove) the Safe repair fixpoint over one state, using
+/// exactly the Safe-only providers, eligibility, and diagnosis the
+/// remediation validation loop uses, so the proof matches what a full
+/// `remediate` over this state would observe. `dry` selects the vacuous
+/// dry-run verification twin. Infrastructure failure (unloadable
+/// providers, policy failure) is an `Err`; repairs pending is `Ok` with
+/// `clean == false`.
+fn prove_fixpoint_for_epoch(
+    root: &std::path::Path,
+    sources: &[SourceFile],
+    diags: &BTreeMap<String, Vec<Diagnostic>>,
+    checks: &[CheckResult],
+    dry: bool,
+    policy: &'static DoctorMncsRuntime,
+) -> Result<FixpointProof, String> {
+    let providers =
+        providers_for_root(root).map_err(|error| format!("fix providers unavailable: {error}"))?;
+    let mut convergence = Vec::new();
+    for file in sources {
+        if file.text.is_none() {
+            continue;
+        }
+        let (_, conv) = repair_to_fixpoint_with_diagnose(
+            file,
+            &providers,
+            Eligibility::safe_only(),
+            &|planned_empty, fired_before, iterations, budget| {
+                policy
+                    .fix_stop_rule(planned_empty, fired_before, iterations, budget)
+                    .map_err(|error| error.to_string())
+            },
+            &|fired, id| {
+                policy
+                    .fix_seen_before(fired, id)
+                    .map_err(|error| error.to_string())
+            },
+            &|current| diagnose_one_with_mncs_policy(current, policy),
+        )
+        .map_err(|error| format!("MNCS fix policy failed (fail-closed): {error}"))?;
+        convergence.push(conv);
+    }
+    convergence.sort_by(|a, b| a.relative.cmp(&b.relative));
+    let (mut escalations, clean) = escalations_for_post_state(&convergence, diags);
+    let mut verification_post =
+        verify_after_with_diagnostics(sources.len(), diags, diags, Some(clean), Vec::new());
+    if dry {
+        // A dry run mutates nothing: verification is vacuous, exactly as
+        // the dry-run remediation path reports it.
+        verification_post.idempotent = None;
+        verification_post.passed = true;
+        verification_post
+            .notes
+            .push("dry-run: no mutation performed; verification vacuous".to_owned());
+    } else {
+        verification_post.passed = policy
+            .verify_compose(
+                verification_post.errors_before,
+                verification_post.errors_after,
+                clean,
+                true,
+            )
+            .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
+    }
+    if !verification_post.passed {
+        escalations.push(Escalation {
+            id: "verification-failed".to_owned(),
+            code: "verification-failed".to_owned(),
+            target: None,
+            severity: mncs_doctor::diagnostics::Severity::Error,
+            action:
+                "Post-repair verification failed; inspect the evidence artifact before retrying."
+                    .to_owned(),
+        });
+    }
+    let review_blocked = escalations.iter().any(|item| {
+        item.code == "review-required"
+            || item.code == "manual-required"
+            || item.code == "budget-exhausted"
+            || item.code == "round-budget-exhausted"
+    });
+    let exit = policy
+        .exit_for(checks, review_blocked, Some(&verification_post))
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+    Ok(FixpointProof {
+        convergence,
+        escalations,
+        verification_post,
+        remediation_exit_code: exit.as_i32(),
+        remediation_exit_meaning: exit_meaning(exit).to_owned(),
+        clean,
+    })
+}
+
 fn migration_policy_check(unmigratable: &[String], fully_known: bool) -> CheckResult {
     let (status, title) = if !unmigratable.is_empty() {
         (Status::Fail, "Migration path has unplannable files")
@@ -661,10 +767,22 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
         }
     }
     let _ = check_only; // doctor never mutates; --check selects CI-oriented wording
-    let policy = DoctorMncsRuntime::production()
-        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
     let options = DiscoveryOptions::default();
+    // Fast path first: a validated epoch reuses the last proven verdict
+    // without starting the policy runtime or spawning anything. Any
+    // doubt falls through to the full path below.
+    if epoch_eligible(&flags) {
+        if let Ok(epoch) = attempt_epoch_hit(&root, &options) {
+            let now = mncs_doctor::health_epoch::now_unix().unwrap_or(epoch.recorded_at_unix);
+            let report = doctor_report_from_epoch(&epoch, flags.explain, flags.verbose, now);
+            let code = ExitCode::from_i32(report.exit_code);
+            emit(&report, flags.json, flags.quiet);
+            return Ok(code);
+        }
+    }
+    let policy = DoctorMncsRuntime::production()
+        .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let inventory =
         discover_incremental_with_mncs_policy(&root, &options, policy, &flags.changed_paths)
             .map_err(|error| format!("discovery failed: {error}"))?;
@@ -724,8 +842,223 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
             }
         ));
     }
+    if epoch_eligible(&flags) {
+        record_doctor_epoch(
+            &root,
+            &options,
+            &inventory,
+            &mut report,
+            review_blocked,
+            &sources,
+            policy,
+        );
+    }
     emit(&report, flags.json, flags.quiet);
     Ok(code)
+}
+
+/// Build the diagnostic half of a validated state over one inventory.
+/// Callers pass only complete full-run data; missing pieces skip
+/// recording at the call site rather than storing a partial state.
+#[allow(clippy::too_many_arguments)]
+fn doctor_state_half(
+    inventory: &Inventory,
+    checks: &[CheckResult],
+    diags: &BTreeMap<String, Vec<Diagnostic>>,
+    toolchain: &mncs_doctor::toolchain::ToolchainStatus,
+    policy_provenance: &mncs_doctor::mncs_runtime::PolicyProvenance,
+    exit_code: i32,
+    exit_meaning: &str,
+    review_blocked: bool,
+) -> ValidatedState {
+    ValidatedState {
+        checks: checks.to_vec(),
+        file_diagnostics: diags.clone(),
+        toolchain: toolchain.clone(),
+        inventory_summary: inventory.summary(),
+        policy: policy_provenance.clone(),
+        doctor_exit_code: exit_code,
+        doctor_exit_meaning: exit_meaning.to_owned(),
+        review_blocked_doctor: review_blocked,
+        scope_note: format!(
+            "scope: repository ({} source file(s))",
+            inventory.sources.len()
+        ),
+        clean_fixpoint: false,
+        dry_run: false,
+        convergence: Vec::new(),
+        escalations: Vec::new(),
+        verification_post: None,
+        remediation_exit_code: 0,
+        remediation_exit_meaning: String::new(),
+        dry_repairs: Vec::new(),
+        dry_diffs: Vec::new(),
+        dry_notes: Vec::new(),
+    }
+}
+
+/// Attach the remediation half to a validated state via the Safe
+/// fixpoint proof. A disproven fixpoint (repairs pending) simply leaves
+/// the diagnostic half; only infrastructure failure adds a note.
+#[allow(clippy::too_many_arguments)]
+fn attach_fixpoint_proof(
+    state: &mut ValidatedState,
+    root: &std::path::Path,
+    sources: &[SourceFile],
+    diags: &BTreeMap<String, Vec<Diagnostic>>,
+    checks: &[CheckResult],
+    dry: bool,
+    policy: &'static DoctorMncsRuntime,
+    notes: &mut Vec<String>,
+) {
+    match prove_fixpoint_for_epoch(root, sources, diags, checks, dry, policy) {
+        Ok(proof) => {
+            state.clean_fixpoint = proof.clean;
+            state.dry_run = dry;
+            if dry || proof.clean {
+                state.convergence = proof.convergence;
+                state.escalations = proof.escalations;
+                state.verification_post = Some(proof.verification_post);
+                state.remediation_exit_code = proof.remediation_exit_code;
+                state.remediation_exit_meaning = proof.remediation_exit_meaning;
+            }
+        }
+        Err(error) => {
+            notes.push(format!(
+                "remediation fast-path unavailable for this epoch: {error}"
+            ));
+        }
+    }
+}
+
+/// The exit a `doctor` run would report for one validated state: the
+/// diagnostics-predicate review gate with no verification. Repair
+/// commands must record this, not their own exit (which uses
+/// plan-count gates and post-mutation verification), so a later
+/// `doctor` hit re-emits exactly what a `doctor` full pass would.
+fn doctor_exit_for_state(
+    checks: &[CheckResult],
+    diags: &BTreeMap<String, Vec<Diagnostic>>,
+    policy: &DoctorMncsRuntime,
+) -> Result<(ExitCode, bool), String> {
+    let review_blocked = diags.values().flatten().any(|d| {
+        matches!(
+            d.applicability,
+            mncs_doctor::fix::Applicability::Review | mncs_doctor::fix::Applicability::Manual
+        ) && matches!(
+            d.severity,
+            mncs_doctor::diagnostics::Severity::Error | mncs_doctor::diagnostics::Severity::Warning
+        )
+    });
+    let code = policy
+        .exit_for(checks, review_blocked, None)
+        .map_err(|error| format!("MNCS report policy failed (fail-closed): {error}"))?;
+    Ok((code, review_blocked))
+}
+
+/// One epoch-recording request: a just-validated state plus the dry-run
+/// hypotheticals (populated only by dry-run remediation).
+struct EpochRecordRequest<'a> {
+    root: &'a std::path::Path,
+    options: &'a DiscoveryOptions,
+    inventory: &'a Inventory,
+    checks: &'a [CheckResult],
+    diags: &'a BTreeMap<String, Vec<Diagnostic>>,
+    toolchain: &'a ToolchainStatus,
+    policy_provenance: &'a PolicyProvenance,
+    exit_code: i32,
+    exit_meaning: &'a str,
+    review_blocked: bool,
+    sources: &'a [SourceFile],
+    dry: bool,
+    dry_repairs: Vec<RepairRecord>,
+    dry_diffs: Vec<DiffSummary>,
+    dry_notes: Vec<String>,
+    policy: &'static DoctorMncsRuntime,
+    notes: &'a mut Vec<String>,
+}
+
+/// Record a health epoch over one just-validated state: the diagnostic
+/// half always, the remediation half when the Safe fixpoint proof holds
+/// (`dry` selects the dry-run verification twin). Recording failure only
+/// adds a note. Shared by `doctor`, `fix`, and `remediate` so every full
+/// run leaves the same reusable epoch behind.
+fn record_repair_epoch(request: EpochRecordRequest<'_>) {
+    let mut state = doctor_state_half(
+        request.inventory,
+        request.checks,
+        request.diags,
+        request.toolchain,
+        request.policy_provenance,
+        request.exit_code,
+        request.exit_meaning,
+        request.review_blocked,
+    );
+    attach_fixpoint_proof(
+        &mut state,
+        request.root,
+        request.sources,
+        request.diags,
+        request.checks,
+        request.dry,
+        request.policy,
+        &mut *request.notes,
+    );
+    if request.dry {
+        state.dry_repairs = request.dry_repairs;
+        state.dry_diffs = request.dry_diffs;
+        state.dry_notes = request.dry_notes;
+    }
+    match record_validated_epoch(
+        request.root,
+        request.options,
+        request.inventory,
+        request.toolchain,
+        state,
+    ) {
+        Ok(epoch) => persist_epoch(request.root, &epoch, request.notes),
+        Err(error) => request
+            .notes
+            .push(format!("health epoch not recorded: {error}")),
+    }
+}
+
+/// Record a health epoch over a just-validated `doctor` run.
+#[allow(clippy::too_many_arguments)]
+fn record_doctor_epoch(
+    root: &std::path::Path,
+    options: &DiscoveryOptions,
+    inventory: &Inventory,
+    report: &mut Report,
+    review_blocked: bool,
+    sources: &[SourceFile],
+    policy: &'static DoctorMncsRuntime,
+) {
+    let (Some(toolchain), Some(policy_provenance)) =
+        (report.toolchain.clone(), report.policy.clone())
+    else {
+        return;
+    };
+    let exit_meaning = report.exit_meaning.clone();
+    record_repair_epoch(EpochRecordRequest {
+        root,
+        options,
+        inventory,
+        checks: &report.checks,
+        diags: &report.file_diagnostics,
+        toolchain: &toolchain,
+        policy_provenance: &policy_provenance,
+        exit_code: report.exit_code,
+        exit_meaning: &exit_meaning,
+        review_blocked,
+        sources,
+        dry: false,
+        dry_repairs: Vec::new(),
+        dry_diffs: Vec::new(),
+        dry_notes: Vec::new(),
+        policy,
+        notes: &mut report.notes,
+    });
 }
 
 fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
@@ -757,13 +1090,10 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     let policy = DoctorMncsRuntime::production()
         .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
     let root = workspace_root(&flags.root)?;
-    let inventory = discover_incremental_with_mncs_policy(
-        &root,
-        &DiscoveryOptions::default(),
-        policy,
-        &flags.changed_paths,
-    )
-    .map_err(|error| format!("discovery failed: {error}"))?;
+    let options = DiscoveryOptions::default();
+    let inventory =
+        discover_incremental_with_mncs_policy(&root, &options, policy, &flags.changed_paths)
+            .map_err(|error| format!("discovery failed: {error}"))?;
     let sources = scoped_sources(&root, &inventory, &flags.changed_paths)?;
     let scoped_inventory = make_scoped_inventory(&inventory, &sources);
     let diags = diagnose_all_with_mncs_policy(&sources, flags.with_language_backend, policy)?;
@@ -784,7 +1114,10 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         inventory.sources.len(),
     );
     report.file_diagnostics = diags.clone();
-    report.toolchain = Some(probe_toolchain());
+    // Root-explicit probing, matching `doctor`: knowledge indexes resolve
+    // from the repaired tree however the command was invoked, and the
+    // health epoch re-probes in exactly this context.
+    report.toolchain = Some(probe_toolchain_at(Some(&root)));
     for (file, plan) in &plans {
         for fix in &plan.fixes {
             report.fix_identities.push(fix.provider.clone());
@@ -818,7 +1151,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         if flags.explain {
             report.notes.push("explain".to_owned());
         }
-        let toolchain = probe_toolchain();
+        let toolchain = probe_toolchain_at(Some(&root));
         let ctx = HealthContext {
             inventory: &scoped_inventory,
             diagnostics: &report.file_diagnostics,
@@ -838,6 +1171,36 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         );
         report.exit_code = code.as_i32();
         report.exit_meaning = exit_meaning(code).to_owned();
+        if epoch_eligible(&flags) {
+            // A dry run mutates nothing: pre-state and post-state coincide,
+            // so the proof describes the live state exactly.
+            if let (Some(toolchain), Some(policy_provenance)) =
+                (report.toolchain.clone(), report.policy.clone())
+            {
+                let (doctor_code, doctor_review_blocked) =
+                    doctor_exit_for_state(&report.checks, &report.file_diagnostics, policy)?;
+                let doctor_exit_meaning = exit_meaning(doctor_code).to_owned();
+                record_repair_epoch(EpochRecordRequest {
+                    root: &root,
+                    options: &options,
+                    inventory: &inventory,
+                    checks: &report.checks,
+                    diags: &report.file_diagnostics,
+                    toolchain: &toolchain,
+                    policy_provenance: &policy_provenance,
+                    exit_code: doctor_code.as_i32(),
+                    exit_meaning: &doctor_exit_meaning,
+                    review_blocked: doctor_review_blocked,
+                    sources: &sources,
+                    dry: false,
+                    dry_repairs: Vec::new(),
+                    dry_diffs: Vec::new(),
+                    dry_notes: Vec::new(),
+                    policy,
+                    notes: &mut report.notes,
+                });
+            }
+        }
         emit(&report, flags.json, flags.quiet);
         return Ok(code);
     }
@@ -944,7 +1307,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         )
         .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
     report.verification = Some(verification);
-    let toolchain = probe_toolchain();
+    let toolchain = probe_toolchain_at(Some(&root));
     let ctx = HealthContext {
         inventory: &fresh_inventory,
         diagnostics: &fresh_diags,
@@ -969,6 +1332,36 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
     );
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
+    if epoch_eligible(&flags) {
+        // The epoch describes the post-mutation state a later `doctor`
+        // or `remediate` would observe.
+        if let (Some(toolchain), Some(policy_provenance)) =
+            (report.toolchain.clone(), report.policy.clone())
+        {
+            let (doctor_code, doctor_review_blocked) =
+                doctor_exit_for_state(&report.checks, &fresh_diags, policy)?;
+            let doctor_exit_meaning = exit_meaning(doctor_code).to_owned();
+            record_repair_epoch(EpochRecordRequest {
+                root: &root,
+                options: &options,
+                inventory: &fresh,
+                checks: &report.checks,
+                diags: &fresh_diags,
+                toolchain: &toolchain,
+                policy_provenance: &policy_provenance,
+                exit_code: doctor_code.as_i32(),
+                exit_meaning: &doctor_exit_meaning,
+                review_blocked: doctor_review_blocked,
+                sources: &fresh_sources,
+                dry: false,
+                dry_repairs: Vec::new(),
+                dry_diffs: Vec::new(),
+                dry_notes: Vec::new(),
+                policy,
+                notes: &mut report.notes,
+            });
+        }
+    }
     emit(&report, flags.json, flags.quiet);
     Ok(code)
 }
@@ -1012,20 +1405,40 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
     // Ambient remediation is always Safe-only: semantically-proven and
     // review/manual classes need explicit human direction via `fix`/`migrate`.
     let eligibility = Eligibility::safe_only();
+    let root = workspace_root(&flags.root)?;
+    let options = DiscoveryOptions::default();
+    // Fast path first: a validated fixpoint epoch re-emits the proven
+    // outcome without starting the policy runtime. External verify
+    // commands are never eligible (their results are unvalidated
+    // inputs); anything else falls through to the full path.
+    let has_verify_cmd = verify_cmd.is_some();
+    if epoch_eligible(&flags) && !has_verify_cmd {
+        if let Ok(epoch) = attempt_epoch_hit(&root, &options) {
+            let now = mncs_doctor::health_epoch::now_unix().unwrap_or(epoch.recorded_at_unix);
+            if let Ok(hit) = remediation_from_epoch(&epoch, dry_run, budget_files, now) {
+                let mut report = hit.report;
+                let evidence_path = resolve_evidence_path(&root, evidence_path.as_deref())?;
+                write_evidence(&evidence_path, &hit.evidence)?;
+                report.evidence = Some(evidence_path.to_string_lossy().into_owned());
+                let code = ExitCode::from_i32(report.exit_code);
+                if flags.json {
+                    println!("{}", report.to_json());
+                } else if !flags.quiet {
+                    print!("{}", render_remediation_human(&report));
+                }
+                return Ok(code);
+            }
+        }
+    }
     let policy = DoctorMncsRuntime::production()
         .map_err(|error| format!("MNCS policy runtime unavailable (fail-closed): {error}"))?;
-    let root = workspace_root(&flags.root)?;
     let mut report = RemediationReport::new(root.to_string_lossy());
     report.dry_run = dry_run;
     report.budget.max_items = budget_files;
 
-    let inventory = discover_incremental_with_mncs_policy(
-        &root,
-        &DiscoveryOptions::default(),
-        policy,
-        &flags.changed_paths,
-    )
-    .map_err(|error| format!("discovery failed: {error}"))?;
+    let inventory =
+        discover_incremental_with_mncs_policy(&root, &options, policy, &flags.changed_paths)
+            .map_err(|error| format!("discovery failed: {error}"))?;
     if let Some(reason) = inventory.metrics.invalidation_reason.as_deref() {
         if reason.starts_with("cache_invalid:") || reason.starts_with("topology_changed:") {
             // Bounded reconciliation: a stale or corrupt cache was discarded
@@ -1222,9 +1635,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
 
     // Validate: every repaired file must sit at an immediate fixpoint, and
     // the before/after diagnostic delta must compose through MNCS policy.
-    let mut escalations: Vec<Escalation> = Vec::new();
     let mut convergence = Vec::new();
-    let mut idempotent = true;
     let converged_providers = providers_for_root(&root)?;
     for file in &sources {
         if file.text.is_none() {
@@ -1247,36 +1658,10 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
             &|current| diagnose_one_with_mncs_policy(current, policy),
         )
         .map_err(|error| format!("MNCS fix policy failed (fail-closed): {error}"))?;
-        if !conv.applied.is_empty() || conv.stopped != mncs_doctor::fix::StopReason::Fixpoint {
-            idempotent = false;
-        }
-        for provider_id in &conv.blocked_review {
-            escalations.push(escalation_for_blocked(
-                provider_id,
-                &file.relative,
-                mncs_doctor::fix::Applicability::Review,
-            ));
-        }
-        for provider_id in &conv.blocked_manual {
-            escalations.push(escalation_for_blocked(
-                provider_id,
-                &file.relative,
-                mncs_doctor::fix::Applicability::Manual,
-            ));
-        }
-        if let Some(escalation) = escalation_for_stop(&file.relative, conv.stopped, idempotent) {
-            escalations.push(escalation);
-        }
         convergence.push(conv);
     }
     convergence.sort_by(|a, b| a.relative.cmp(&b.relative));
-    for (relative, file_diags) in &diags {
-        for diag in file_diags {
-            if diag.severity == mncs_doctor::diagnostics::Severity::Error {
-                escalations.push(escalation_for_diagnostic(relative, diag));
-            }
-        }
-    }
+    let (mut escalations, idempotent) = escalations_for_post_state(&convergence, &diags);
 
     let external: Vec<ExternalCheck> = verify_cmd
         .map(|cmd| vec![run_external(&cmd, &root)])
@@ -1368,6 +1753,47 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
     report.refresh_summary(&escalations, degraded);
     report.exit_code = code.as_i32();
     report.exit_meaning = exit_meaning(code).to_owned();
+
+    // Record the post-state epoch before the evidence goes out, so any
+    // recording note lands in both the envelope and the artifact. Dry
+    // runs record only without an external verify command (their
+    // evidence would otherwise carry unvalidated external results);
+    // non-dry runs always record (the proof is external-free).
+    if epoch_eligible(&flags) && (!has_verify_cmd || !dry_run) {
+        let (doctor_code, doctor_review_blocked) = doctor_exit_for_state(&checks, &diags, policy)?;
+        let (dry_repairs, dry_diffs, dry_notes) = if dry_run {
+            (
+                report.repairs.clone(),
+                diffs.clone(),
+                vec![format!(
+                    "dry-run: {} file(s) would change; no mutation performed",
+                    diffs.len()
+                )],
+            )
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
+        let doctor_exit_meaning = exit_meaning(doctor_code).to_owned();
+        record_repair_epoch(EpochRecordRequest {
+            root: &root,
+            options: &options,
+            inventory: &current_inventory,
+            checks: &checks,
+            diags: &diags,
+            toolchain: &toolchain,
+            policy_provenance: &policy_provenance,
+            exit_code: doctor_code.as_i32(),
+            exit_meaning: &doctor_exit_meaning,
+            review_blocked: doctor_review_blocked,
+            sources: &sources,
+            dry: dry_run,
+            dry_repairs,
+            dry_diffs,
+            dry_notes,
+            policy,
+            notes: &mut report.notes,
+        });
+    }
 
     let evidence = RemediationEvidence {
         schema_version: REMEDIATION_EVIDENCE_SCHEMA_VERSION.to_owned(),

@@ -34,6 +34,18 @@ impl ExitCode {
     pub fn as_i32(self) -> i32 {
         self as i32
     }
+
+    /// Decode a stored exit code. Health epochs only ever record the four
+    /// policy exits; anything else fails closed as a tool failure.
+    pub fn from_i32(code: i32) -> ExitCode {
+        match code {
+            0 => ExitCode::Healthy,
+            1 => ExitCode::Findings,
+            2 => ExitCode::ReviewRequired,
+            3 => ExitCode::VerificationFailed,
+            _ => ExitCode::ToolFailure,
+        }
+    }
 }
 
 /// Derive the exit code from a finished run.
@@ -321,6 +333,8 @@ mod tests {
             cache_identity: None,
             topology_identity: None,
             invalidation_reason: None,
+            epoch_reused: false,
+            epoch_digest: None,
         });
         let a = render_human(&report, false);
         let b = render_human(&report, false);

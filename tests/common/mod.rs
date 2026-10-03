@@ -42,11 +42,17 @@ fn copy_dir(src: &Path, dest: &Path) {
 
 /// Run the built `mncs-doctor` binary with `args` in `cwd`.
 pub fn run(cwd: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_mncs-doctor"))
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("run mncs-doctor binary")
+    run_env(cwd, args, &[])
+}
+
+/// Run with extra environment overrides (hermetic toolchain tests).
+pub fn run_env(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mncs-doctor"));
+    command.args(args).current_dir(cwd);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.output().expect("run mncs-doctor binary")
 }
 
 /// Parse stdout as JSON.

@@ -9,6 +9,7 @@ semantics, canonicalization, or transition knowledge.
 
 ```text
 repository
+  -> epoch       (validated-input fingerprints; hit re-emits, miss runs on)
   -> discovery   (root, walk, exclusions, deterministic inventory)
   -> inventory   (bytes, fingerprints, newline/BOM/mode facts)
   -> diagnosis   (host text diagnostics + MNCS scanner/version policy)
@@ -17,7 +18,15 @@ repository
   -> transaction (fingerprint-validated, temp+rename, rollback)
   -> verification(MNCS composition, rescan, idempotence, external commands)
   -> report      (MNCS exit policy; host human/JSON rendering)
+  -> epoch record(validated outcome + input fingerprints for the next run)
 ```
+
+A repository-scope `doctor`/`fix`/`remediate` without the language
+backend first attempts the health-epoch fast path
+(`docs/HEALTH-EPOCH.md`): when every fingerprinted input matches the
+last validated world, the proven verdict is re-emitted with no policy
+startup and no subprocesses. Any doubt runs the full path, which then
+records a fresh epoch over the state it leaves behind.
 
 The live command path enters `DoctorMncsRuntime` before discovery. It verifies
 and opens the checked-in ten-module family artifact once per process, retains
@@ -46,6 +55,7 @@ main.rs (CLI launcher and host-effect orchestration)
   +-- toolchain  (diagnostics [backend trait], discovery)
   +-- verify     (diagnostics, discovery, runtime policy)
   +-- report     (all of the above, host rendering)
+  +-- health_epoch (validated outcomes + input fingerprints; no runtime use)
 ```
 
 Rules:
@@ -65,7 +75,10 @@ Rules:
 
 - Determinism: sorted traversal, sorted plans, sorted reports. Two runs
   over unchanged input produce byte-identical JSON modulo environment
-  (toolchain paths/versions are reported, not hidden).
+  (toolchain paths/versions are reported, not hidden) and the epoch
+  marker: a no-change rerun re-emits the validated verdict with
+  `epoch_reused: true`, empty entrypoints, and a reuse note, and is
+  otherwise identical.
 - Fail-closed mutation: fingerprint validation before *and* during commit,
   symlink refusal, unknown-edge refusal, review-gating. See `SAFETY.md`.
 - Convergence: fix application iterates to a fixpoint with MNCS-backed

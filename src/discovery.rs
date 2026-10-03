@@ -345,6 +345,8 @@ impl Inventory {
             cache_identity: self.metrics.cache_identity.clone(),
             topology_identity: self.metrics.topology_identity.clone(),
             invalidation_reason: self.metrics.invalidation_reason.clone(),
+            epoch_reused: false,
+            epoch_digest: None,
         }
     }
 }
@@ -367,6 +369,15 @@ pub struct InventorySummary {
     pub topology_identity: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invalidation_reason: Option<String>,
+    /// True when this report re-emits a validated health epoch instead of
+    /// re-running discovery, diagnosis, and policy. The remaining counts
+    /// describe the validating acquisition, so human output stays stable
+    /// across the fast path; only this marker and `epoch_digest` differ.
+    #[serde(default)]
+    pub epoch_reused: bool,
+    /// Digest of the validated epoch inputs, present only on a reuse hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch_digest: Option<String>,
 }
 
 /// Locate the workspace root by walking up from `start` looking for marker
@@ -466,6 +477,70 @@ pub fn discover_topology_with_policy(
     Ok(topology)
 }
 
+/// Sorted directory listing with Doctor's own derived state excluded.
+///
+/// This is the single listing primitive behind both discovery and
+/// health-epoch validation: the `.mncs` bookkeeping directory at the
+/// workspace root never participates in topology, so writing caches or
+/// epochs cannot invalidate the world they describe.
+fn sorted_dir_entries(root: &Path, dir: &Path) -> Result<Vec<fs::DirEntry>, DiscoveryError> {
+    let read_dir = fs::read_dir(dir).map_err(|e| io_err(dir, e))?;
+    let mut entries: Vec<_> = read_dir
+        .collect::<Result<_, _>>()
+        .map_err(|e| io_err(dir, e))?;
+    entries.sort_by_key(|e| e.file_name());
+    if dir == root {
+        entries.retain(|entry| entry.file_name() != ".mncs");
+    }
+    Ok(entries)
+}
+
+/// Fingerprint one directory's entry set: names, entry kinds, and (for
+/// symlinks) the target metadata identity. Never reads file contents.
+fn entry_identity_for_entries(entries: &[fs::DirEntry]) -> Result<String, DiscoveryError> {
+    let entry_identities: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|e| io_err(&path, e))?;
+            let kind = if file_type.is_symlink() {
+                "symlink"
+            } else if file_type.is_dir() {
+                "directory"
+            } else if file_type.is_file() {
+                "file"
+            } else {
+                "other"
+            };
+            let target = if file_type.is_symlink() {
+                fs::metadata(&path)
+                    .ok()
+                    .map(|metadata| metadata_identity(&metadata))
+                    .unwrap_or_else(|| "unresolved".to_owned())
+            } else {
+                String::new()
+            };
+            Ok(format!(
+                "{}\0{}\0{}",
+                entry.file_name().to_string_lossy(),
+                kind,
+                target
+            ))
+        })
+        .collect::<Result<_, DiscoveryError>>()?;
+    Ok(fingerprint(entry_identities.join("\n").as_bytes()))
+}
+
+/// Recompute one recorded directory's entry identity without any policy
+/// callbacks. Health-epoch validation replays this over exactly the
+/// directories the validating run visited: identical listings plus
+/// unchanged policy/options identities imply an identical projection,
+/// so no runtime is needed to prove the topology still holds.
+pub fn directory_entry_identity(root: &Path, dir: &Path) -> Result<String, DiscoveryError> {
+    let entries = sorted_dir_entries(root, dir)?;
+    entry_identity_for_entries(&entries)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn visit_topology_dir(
     root: &Path,
@@ -500,47 +575,10 @@ fn visit_topology_dir(
         });
         return Ok(());
     }
-    let read_dir = fs::read_dir(dir).map_err(|e| io_err(dir, e))?;
-    let mut entries: Vec<_> = read_dir
-        .collect::<Result<_, _>>()
-        .map_err(|e| io_err(dir, e))?;
-    entries.sort_by_key(|e| e.file_name());
-    if dir == root {
-        entries.retain(|entry| entry.file_name() != ".mncs");
-    }
-    let entry_identities: Vec<String> = entries
-        .iter()
-        .map(|entry| {
-            let path = entry.path();
-            let file_type = entry.file_type().map_err(|e| io_err(&path, e))?;
-            let kind = if file_type.is_symlink() {
-                "symlink"
-            } else if file_type.is_dir() {
-                "directory"
-            } else if file_type.is_file() {
-                "file"
-            } else {
-                "other"
-            };
-            let target = if file_type.is_symlink() {
-                fs::metadata(&path)
-                    .ok()
-                    .map(|metadata| metadata_identity(&metadata))
-                    .unwrap_or_else(|| "unresolved".to_owned())
-            } else {
-                String::new()
-            };
-            Ok(format!(
-                "{}\0{}\0{}",
-                entry.file_name().to_string_lossy(),
-                kind,
-                target
-            ))
-        })
-        .collect::<Result<_, DiscoveryError>>()?;
+    let entries = sorted_dir_entries(root, dir)?;
     topology.directories.push(DirectoryTopology {
         relative: rel_string(root, dir),
-        identity: fingerprint(entry_identities.join("\n").as_bytes()),
+        identity: entry_identity_for_entries(&entries)?,
     });
     for entry in entries {
         let path = entry.path();

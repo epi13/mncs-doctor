@@ -743,6 +743,53 @@ fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Policy identity that is computable without opening the policy runtime.
+///
+/// This names the exact discovery/health policy a full run would execute:
+/// the policy coordinates (profile, backend, language revision), the
+/// pinned frozen-artifact digest, and the actual embedded family and
+/// per-module source bytes. Health-epoch validation compares this value
+/// before deciding that a cached verdict is still valid, so an epoch hit
+/// never needs the ~6s runtime startup it is trying to avoid.
+///
+/// The multi-megabyte frozen artifact contributes its pinned digest
+/// rather than re-hashed bytes: re-hashing it on every hit would cost
+/// ~1s in debug builds for no new information, because runtime startup
+/// already proves bytes match the pin (fail-closed) on every full path.
+/// Any policy source change (including an unrotated freeze, whose module
+/// bytes still differ) changes this identity and forces the full path.
+/// Post-build artifact corruption without a const change would serve
+/// still-true cached verdicts until the epoch TTL expires, then fail
+/// closed on the next full path; that deferred failure is the documented
+/// price of a millisecond hit.
+pub fn static_policy_identity() -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(POLICY_PROFILE.as_bytes());
+    hasher.update([0]);
+    hasher.update(POLICY_BACKEND.as_bytes());
+    hasher.update([0]);
+    hasher.update(MNCS_LANGUAGE_REV.as_bytes());
+    hasher.update([0]);
+    hasher.update(FAMILY_ARTIFACT_SHA256.as_bytes());
+    hasher.update([0]);
+    hasher.update(FAMILY_SOURCE.as_bytes());
+    hasher.update([0]);
+    for spec in MODULES {
+        hasher.update(spec.key.as_bytes());
+        hasher.update([0]);
+        hasher.update(spec.source.as_bytes());
+        hasher.update([0]);
+    }
+    use std::fmt::Write as _;
+    hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
 fn version_coordinate(version: LanguageVersion) -> i64 {
     i64::from(version.major) * 1_000 + i64::from(version.minor)
 }
@@ -847,6 +894,18 @@ mod tests {
             .entrypoints
             .iter()
             .any(|entrypoint| entrypoint == "doctor.fix.v1::seen_before"));
+    }
+
+    #[test]
+    fn static_policy_identity_is_deterministic_and_content_bound() {
+        let first = static_policy_identity();
+        let second = static_policy_identity();
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        // The identity covers more than the bare artifact digest: the
+        // profile, backend, revision, and module sources all participate.
+        assert_ne!(first, sha256_hex(FAMILY_ARTIFACT));
+        assert_ne!(first, FAMILY_ARTIFACT_SHA256);
     }
 
     #[test]

@@ -177,10 +177,7 @@ fn remediate_routes_evidence_to_session_artifact_dir() {
     assert!(evidence_path.starts_with(artifacts.to_str().unwrap()));
     let evidence: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&evidence_path).unwrap()).unwrap();
-    assert_eq!(
-        evidence["schema_version"],
-        "mncs.remediation-evidence/1"
-    );
+    assert_eq!(evidence["schema_version"], "mncs.remediation-evidence/1");
     assert_eq!(evidence["repairs"].as_array().unwrap().len(), 1);
     assert_eq!(evidence["policy"]["engine"], "mncs");
     assert_eq!(evidence["verification"]["passed"], true);
