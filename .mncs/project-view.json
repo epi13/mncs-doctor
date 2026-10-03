@@ -155,7 +155,7 @@
   "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
   "repository": "mncs-doctor",
   "schema_version": "mncs.project-view/1",
-  "source_identity": "sha256:b03f3ea51203a8c2a51deb53e7b8839ebe4141cae691ce2c278d9bf1d0993f61",
+  "source_identity": "sha256:74ea2cc7cf4b4a7868a9a3831573fd95e22acdad6af3819038de00e063913672",
   "structure": {
     "layout": "mncs.repository-layout/1",
     "surfaces": [
