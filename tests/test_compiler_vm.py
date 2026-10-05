@@ -10,6 +10,11 @@ COMPILER=WS/'mncs-compiler';EXE=COMPILER/'.bootstrap/target/release/mncs-compile
 
 @unittest.skipUnless(EXE.is_file() and VM.is_file() and LANGUAGE.is_file(),'exact providers not built')
 class CompositionHealthTests(unittest.TestCase):
+    def test_provider_build_failure_keeps_structured_stdout_detail(self):
+        result = type('Result', (), {'returncode': 2, 'stderr': '',
+                                     'stdout': '{"status":"error","reason":"dirty-checkout-identity"}'})()
+        self.assertIn('dirty-checkout-identity', doctor.provider_failure_detail(result))
+
     def test_compact_provenance_keeps_cross_boundary_identities(self):
         vm_receipt = {'identity': 'vm-build-1', 'receipt': {'source_inputs': {'a': 'sha256:a'}}}
         compiler_receipt = {'identity': 'compiler-build-1'}

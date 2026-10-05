@@ -15,6 +15,10 @@ import hashlib
 from pathlib import Path
 
 
+def provider_failure_detail(result, limit=2000):
+    return (result.stderr or result.stdout or f'provider exited with status {result.returncode}')[-limit:]
+
+
 def diagnose(*, compiler_checkout, compiler_executable, vm_checkout, vm_executable, stage0, product_path=None, request_path=None, language_checkout=None):
     report = {'schema_version':'mncs.doctor.compiler-vm/1','status':'unknown','components':{},
               'optional_backends':{'cranelift_project_session':'not_probed','portable_wasm':'not_probed'}}
@@ -97,7 +101,8 @@ def reconcile_selected_builds():
             cwd=language_checkout, capture_output=True, text=True, timeout=1800, check=False,
         )
         if result.returncode:
-            raise RuntimeError('selected Stage-0/reference provider build failed: ' + result.stderr[-2000:])
+            raise RuntimeError('selected Stage-0/reference provider build failed: '
+                               + provider_failure_detail(result))
         repairs.append({'provider': 'mncs-language', 'result': json.loads(result.stdout)})
     compiler_checkout = Path(os.environ['MNCS_COMPILER_CHECKOUT']).resolve()
     compiler_executable = Path(os.environ['MNCS_COMPILER_PROBE']).resolve()
@@ -114,7 +119,8 @@ def reconcile_selected_builds():
             cwd=compiler_checkout, capture_output=True, text=True, timeout=1800, check=False,
         )
         if result.returncode:
-            raise RuntimeError('selected compiler provider build failed: ' + result.stderr[-2000:])
+            raise RuntimeError('selected compiler provider build failed: '
+                               + provider_failure_detail(result))
         repairs.append({'provider': 'mncs-compiler', 'result': json.loads(result.stdout)})
 
     vm_provider_path = vm_checkout / 'tools/provider.py'
@@ -132,7 +138,8 @@ def reconcile_selected_builds():
             cwd=vm_checkout, capture_output=True, text=True, timeout=1800, check=False,
         )
         if result.returncode:
-            raise RuntimeError('selected VM provider build failed: ' + result.stderr[-2000:])
+            raise RuntimeError('selected VM provider build failed: '
+                               + provider_failure_detail(result))
         repairs.append({'provider': 'mncs-vm', 'result': json.loads(result.stdout)})
     return repairs
 
