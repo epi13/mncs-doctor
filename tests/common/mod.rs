@@ -41,6 +41,7 @@ fn copy_dir(src: &Path, dest: &Path) {
 }
 
 /// Run the built `mncs-doctor` binary with `args` in `cwd`.
+#[allow(dead_code)]
 pub fn run(cwd: &Path, args: &[&str]) -> std::process::Output {
     run_env(cwd, args, &[])
 }

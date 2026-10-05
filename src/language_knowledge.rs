@@ -152,6 +152,11 @@ pub struct LanguageKnowledgeStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compiler_inventory_identity: Option<String>,
     pub current_profile: Option<String>,
+    /// Namespaces owned by the language standard-library provider. This
+    /// distinguishes stdlib imports from similarly named imports supplied by
+    /// other selected MNCS providers.
+    #[serde(default)]
+    pub standard_library_namespaces: Vec<String>,
     pub module_count: usize,
     pub intrinsic_count: usize,
     pub provenance_count: usize,
@@ -205,6 +210,16 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
         .get("current_profile")
         .and_then(|v| v.as_str())
         .map(str::to_owned);
+    let mut standard_library_namespaces: Vec<String> = value
+        .get("capsule")
+        .and_then(|capsule| capsule.get("standard_library_namespaces"))
+        .and_then(|namespaces| namespaces.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|namespace| namespace.as_str().map(str::to_owned))
+        .collect();
+    standard_library_namespaces.sort();
+    standard_library_namespaces.dedup();
     let module_count = value
         .get("library_modules")
         .and_then(|v| v.as_array())
@@ -302,6 +317,7 @@ pub fn probe(root: Option<&Path>) -> LanguageKnowledgeStatus {
         content_identity,
         compiler_inventory_identity,
         current_profile,
+        standard_library_namespaces,
         module_count,
         intrinsic_count,
         provenance_count: value
@@ -357,6 +373,7 @@ fn missing(message: &str) -> LanguageKnowledgeStatus {
         content_identity: None,
         compiler_inventory_identity: None,
         current_profile: None,
+        standard_library_namespaces: Vec::new(),
         module_count: 0,
         intrinsic_count: 0,
         provenance_count: 0,

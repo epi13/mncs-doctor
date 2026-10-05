@@ -398,13 +398,14 @@ impl DoctorMncsRuntime {
     /// Run version classification through the production policy session.
     /// Registry data remains host-owned and is passed as the current profile.
     pub fn classify_version(&self, version: LanguageVersion) -> Result<VersionClass, RuntimeError> {
+        let current = crate::version::current_version();
         let class = doctor_version::classify(
             &self.session,
             doctor_version::VersionInput {
                 major: version.major as i64,
                 minor: version.minor as i64,
-                current_major: 0,
-                current_minor: 17,
+                current_major: current.major as i64,
+                current_minor: current.minor as i64,
             },
             mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
         )
@@ -875,9 +876,15 @@ mod tests {
         assert_eq!(runtime.check_status(1, 0).unwrap(), Status::Fail);
         assert_eq!(
             runtime
-                .classify_version(LanguageVersion::new(0, 17))
+                .classify_version(LanguageVersion::new(0, 18))
                 .unwrap(),
             VersionClass::Current
+        );
+        assert_eq!(
+            runtime
+                .classify_version(LanguageVersion::new(0, 17))
+                .unwrap(),
+            VersionClass::Sealed
         );
         assert!(!runtime.fix_seen_before(&[], 17).unwrap());
         assert!(runtime.fix_seen_before(&[17], 17).unwrap());

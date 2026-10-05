@@ -2,7 +2,7 @@ mncs 0.6;
 
 module fixture.consumer;
 
-use mncs.nope.v1;
+use mncs.core.missing.v1;
 
 fn soften(left: Status, right: Status) -> (result: Status) {
     return dominate(left, right);

@@ -214,7 +214,7 @@ fn unreported_source_mutation_invalidates_incremental_inventory() {
     assert!(initial.status.success());
     fs::write(
         root.join("src/lib.mncs"),
-        "mncs 0.17;\nmodule healthy.lib;\n\nfn answer() -> (result: i64) {\n    return 420;\n}\n",
+        "mncs 0.18;\nmodule healthy.lib;\n\nfn answer() -> (result: i64) {\n    return 420;\n}\n",
     )
     .unwrap();
 
@@ -248,7 +248,7 @@ fn unreported_new_source_invalidates_topology_without_rescanning_reused_sources(
     assert!(initial.status.success());
     fs::write(
         root.join("src/new.mncs"),
-        "mncs 0.17;\nmodule healthy.new;\n\nfn answer() -> (result: i64) {\n    return 42;\n}\n",
+        "mncs 0.18;\nmodule healthy.new;\n\nfn answer() -> (result: i64) {\n    return 42;\n}\n",
     )
     .unwrap();
 

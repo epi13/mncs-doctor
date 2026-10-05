@@ -245,12 +245,14 @@ fn parity_version_compare() {
 
 #[test]
 fn parity_version_classify() {
-    // Current profile (0,17) supplied by the host registry, as designed.
+    // Current profile (0,18) supplied by the host registry, as designed.
     let versions = [
         (0, 1),
         (0, 8),
         (0, 15),
         (0, 16),
+        (0, 17),
+        (0, 18),
         (0, 99),
         (1, 0),
         (2, 0),

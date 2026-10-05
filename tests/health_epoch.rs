@@ -70,7 +70,7 @@ fn doctor_source_mutation_invalidates_epoch() {
     assert!(first.status.success());
     fs::write(
         root.join("src/lib.mncs"),
-        "mncs 0.17;\nmodule healthy.lib;\n\nfn answer() -> (result: i64) {\n    return 42;\n",
+        "mncs 0.18;\nmodule healthy.lib;\n\nfn answer() -> (result: i64) {\n    return 42;\n",
     )
     .unwrap();
 
@@ -96,7 +96,7 @@ fn doctor_new_source_invalidates_epoch() {
     assert!(first.status.success());
     fs::write(
         root.join("src/new.mncs"),
-        "mncs 0.17;\nmodule healthy.new;\n",
+        "mncs 0.18;\nmodule healthy.new;\n",
     )
     .unwrap();
 

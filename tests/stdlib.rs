@@ -74,7 +74,7 @@ fn missing_stdlib_warns() {
 }
 
 #[test]
-fn unresolved_project_import_fails() {
+fn unresolved_import_in_stdlib_owned_namespace_fails() {
     let root = stage("repos/stdlib-family");
     let out = run_env(
         &root,
@@ -88,9 +88,31 @@ fn unresolved_project_import_fails() {
         f["message"]
             .as_str()
             .unwrap_or("")
-            .contains("unresolved stdlib import: mncs.nope.v1")
+            .contains("unresolved stdlib import: mncs.core.missing.v1")
     }));
     assert!(findings.iter().any(|f| f["severity"] == "error"));
+}
+
+#[test]
+fn imports_from_other_selected_providers_are_not_misclassified_as_stdlib() {
+    let root = stage("repos/stdlib-family");
+    let source = root.join("project/ok/consumer.mncs");
+    let mut text = fs::read_to_string(&source).unwrap();
+    text.push_str("\nuse mncs.commons.family.artifact.v1;\n");
+    fs::write(source, text).unwrap();
+
+    let out = run_env(
+        &root,
+        &["doctor", "--root", "project/ok", "--json"],
+        &HERMETIC,
+    );
+    let report = stdout_json(&out);
+    let check = toolchain_check(&report);
+    assert!(
+        stdlib_findings(&check).is_empty(),
+        "findings: {}",
+        check["findings"]
+    );
 }
 
 #[test]

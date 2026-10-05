@@ -910,18 +910,46 @@ fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
 
 /// Standard-library composition findings (Stage F): a usable stdlib is
 /// present, its manifest/bundle/tree agree, the selected language can
-/// satisfy its required profiles, and project `use mncs.*` targets
-/// resolve to manifest modules. Inspect-only: regeneration belongs to
-/// the stdlib repository, so findings carry actions, never edits.
+/// satisfy its required profiles, and imports in namespaces owned by the
+/// stdlib resolve to manifest modules. Other `mncs.*` namespaces belong to
+/// separately selected providers. Inspect-only: regeneration belongs to the
+/// stdlib repository, so findings carry actions, never edits.
 fn stdlib_composition_findings(ctx: &HealthContext<'_>) -> Vec<Finding> {
     let mut findings = Vec::new();
-    // A project needs the stdlib only when it imports from it; anything
-    // else gets silence, not a warning about a missing checkout.
+    let mut stdlib_namespaces: std::collections::BTreeSet<String> = ctx
+        .toolchain
+        .language_knowledge
+        .as_ref()
+        .into_iter()
+        .flat_map(|knowledge| knowledge.standard_library_namespaces.iter().cloned())
+        .collect();
+    if let Some(stdlib) = ctx.toolchain.stdlib.as_ref() {
+        for module in &stdlib.modules {
+            let mut components = module.name.split('.');
+            if let (Some(owner), Some(namespace)) = (components.next(), components.next()) {
+                stdlib_namespaces.insert(format!("{owner}.{namespace}"));
+            }
+        }
+    }
+    let namespace_ownership_known = !stdlib_namespaces.is_empty();
+    let is_stdlib_target = |target: &str| {
+        stdlib_namespaces.iter().any(|namespace| {
+            target == namespace.as_str()
+                || target
+                    .strip_prefix(namespace.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+        })
+    };
+    // A project needs the stdlib when it imports one of its declared
+    // namespaces. If the language projection is absent, conservatively treat
+    // MNCS imports as potentially stdlib-owned until provider ownership is
+    // known.
     let needs_stdlib = ctx.inventory.sources.iter().any(|source| {
-        source
-            .text
-            .as_ref()
-            .is_some_and(|text| !crate::stdlib::mncs_use_targets(text).is_empty())
+        source.text.as_ref().is_some_and(|text| {
+            crate::stdlib::mncs_use_targets(text)
+                .iter()
+                .any(|target| !namespace_ownership_known || is_stdlib_target(target))
+        })
     });
     let stdlib = match ctx.toolchain.stdlib.as_ref() {
         None => {
@@ -1012,7 +1040,11 @@ fn stdlib_composition_findings(ctx: &HealthContext<'_>) -> Vec<Finding> {
                     });
         }
     }
-    // Project imports resolve against the manifest module set.
+    // Resolve only imports in namespaces the authoritative Language
+    // capability index assigns to mncs-stdlib. A project can also import
+    // modules from Commons, Test, Debug, or another selected provider; those
+    // are not missing stdlib modules merely because their names start with
+    // `mncs.`.
     let provided: std::collections::BTreeSet<&str> =
         stdlib.modules.iter().map(|m| m.name.as_str()).collect();
     for source in &ctx.inventory.sources {
@@ -1020,6 +1052,9 @@ fn stdlib_composition_findings(ctx: &HealthContext<'_>) -> Vec<Finding> {
             continue;
         };
         for target in crate::stdlib::mncs_use_targets(text) {
+            if !is_stdlib_target(&target) {
+                continue;
+            }
             let resolved = provided.contains(target.as_str())
                 || provided.iter().any(|name| {
                     name.strip_suffix(".v1") == Some(target.as_str())
