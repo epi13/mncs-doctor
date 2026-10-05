@@ -15,6 +15,22 @@ class CompositionHealthTests(unittest.TestCase):
                                      'stdout': '{"status":"error","reason":"dirty-checkout-identity"}'})()
         self.assertIn('dirty-checkout-identity', doctor.provider_failure_detail(result))
 
+    def test_compact_build_repairs_keep_role_specific_identities(self):
+        rows = [
+            {'provider': 'mncs-language', 'result': {'status': 'built-and-verified-locally',
+             'runtime_identity': {'executable_sha256': 'lang-exe', 'build_origin': {
+                 'runtime_build_identity': 'lang-build', 'receipt_identity': 'lang-receipt'}}}},
+            {'provider': 'mncs-compiler', 'result': {'status': 'built-and-verified-locally',
+             'producer_identity': 'compiler-build', 'executable_sha256': 'compiler-exe'}},
+            {'provider': 'mncs-vm', 'result': {'status': 'built-and-verified-locally',
+             'runtime_identity': {'executable_sha256': 'vm-exe', 'build_origin': {
+                 'runtime_build_identity': 'vm-build', 'receipt_identity': 'vm-receipt'}}}},
+        ]
+        values = [doctor.compact_build_repair(item) for item in rows]
+        self.assertEqual([row['identity'] for row in values], ['lang-build', 'compiler-build', 'vm-build'])
+        self.assertEqual([row['receipt_identity'] for row in values], ['lang-receipt', None, 'vm-receipt'])
+        self.assertEqual([row['executable_sha256'] for row in values], ['lang-exe', 'compiler-exe', 'vm-exe'])
+
     def test_compact_provenance_keeps_cross_boundary_identities(self):
         vm_receipt = {'identity': 'vm-build-1', 'receipt': {'source_inputs': {'a': 'sha256:a'}}}
         compiler_receipt = {'identity': 'compiler-build-1'}

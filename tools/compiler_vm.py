@@ -19,6 +19,22 @@ def provider_failure_detail(result, limit=2000):
     return (result.stderr or result.stdout or f'provider exited with status {result.returncode}')[-limit:]
 
 
+def compact_build_repair(item):
+    result = item.get('result') if isinstance(item, dict) else {}
+    result = result if isinstance(result, dict) else {}
+    runtime = result.get('runtime_identity') if isinstance(result.get('runtime_identity'), dict) else {}
+    origin = runtime.get('build_origin') if isinstance(runtime.get('build_origin'), dict) else {}
+    identity = (result.get('producer_identity') or result.get('identity')
+                or origin.get('runtime_build_identity'))
+    return {
+        'provider': item.get('provider') if isinstance(item, dict) else None,
+        'status': result.get('status'),
+        'identity': identity,
+        'receipt_identity': origin.get('receipt_identity'),
+        'executable_sha256': result.get('executable_sha256') or runtime.get('executable_sha256'),
+    }
+
+
 def diagnose(*, compiler_checkout, compiler_executable, vm_checkout, vm_executable, stage0, product_path=None, request_path=None, language_checkout=None):
     report = {'schema_version':'mncs.doctor.compiler-vm/1','status':'unknown','components':{},
               'optional_backends':{'cranelift_project_session':'not_probed','portable_wasm':'not_probed'}}
@@ -246,15 +262,8 @@ def main(argv=None):
                 compatibility.get('execution_provenance')
             )
         if isinstance(report.get('build_repairs'), list):
-            report['build_repairs'] = [
-                {
-                    'provider': item.get('provider'),
-                    'status': (item.get('result') or {}).get('status'),
-                    'identity': (item.get('result') or {}).get('identity'),
-                    'executable_sha256': (item.get('result') or {}).get('executable_sha256'),
-                }
-                for item in report['build_repairs'] if isinstance(item, dict)
-            ]
+            report['build_repairs'] = [compact_build_repair(item)
+                                       for item in report['build_repairs'] if isinstance(item, dict)]
     print(json.dumps(report,sort_keys=True)); return 0 if report['status'] in ('pass','unknown') else 2
 
 
