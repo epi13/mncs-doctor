@@ -285,6 +285,53 @@
             "MNCS_REFERENCE_BIN": {
               "repository": "mncs-language",
               "path": "target/release/mncs"
+            },
+            "MNCS_LANGUAGE_ROOT": {
+              "repository": "mncs-language",
+              "path": "."
+            }
+          }
+        }
+      },
+      {
+        "contract": "compiler-vm-reconcile",
+        "version": "1",
+        "kind": "selected-compiler-runtime-reconciler",
+        "stability": "experimental",
+        "effects": [
+          "write"
+        ],
+        "fingerprint_sources": [
+          "tools/compiler_vm.py"
+        ],
+        "invocation": {
+          "kind": "python",
+          "path": "tools/compiler_vm.py",
+          "fixed_argv": [],
+          "toolchains": {
+            "MNCS_COMPILER_CHECKOUT": {
+              "repository": "mncs-compiler",
+              "path": "."
+            },
+            "MNCS_COMPILER_PROBE": {
+              "repository": "mncs-compiler",
+              "path": ".bootstrap/target/release/mncs-compiler-stage0-probe"
+            },
+            "MNCS_VM_CHECKOUT": {
+              "repository": "mncs-vm",
+              "path": "."
+            },
+            "MNCS_VM_BIN": {
+              "repository": "mncs-vm",
+              "path": "target/debug/mncs-vm"
+            },
+            "MNCS_REFERENCE_BIN": {
+              "repository": "mncs-language",
+              "path": "target/release/mncs"
+            },
+            "MNCS_LANGUAGE_ROOT": {
+              "repository": "mncs-language",
+              "path": "."
             }
           }
         }

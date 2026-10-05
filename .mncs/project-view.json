@@ -122,6 +122,45 @@
       "kind": "semantic-projection-health-and-targeted-repair",
       "stability": "experimental",
       "version": "1"
+    },
+    {
+      "contract": "compiler-vm-health",
+      "effects": [
+        "read"
+      ],
+      "fingerprint_sources": [
+        "tools/compiler_vm.py"
+      ],
+      "invocation": {
+        "fixed_argv": [],
+        "kind": "python",
+        "path": "tools/compiler_vm.py",
+        "toolchains": {
+          "MNCS_COMPILER_CHECKOUT": {
+            "path": ".",
+            "repository": "mncs-compiler"
+          },
+          "MNCS_COMPILER_PROBE": {
+            "path": ".bootstrap/target/release/mncs-compiler-stage0-probe",
+            "repository": "mncs-compiler"
+          },
+          "MNCS_REFERENCE_BIN": {
+            "path": "target/release/mncs",
+            "repository": "mncs-language"
+          },
+          "MNCS_VM_BIN": {
+            "path": "target/debug/mncs-vm",
+            "repository": "mncs-vm"
+          },
+          "MNCS_VM_CHECKOUT": {
+            "path": ".",
+            "repository": "mncs-vm"
+          }
+        }
+      },
+      "kind": "selected-compiler-runtime-consumer",
+      "stability": "experimental",
+      "version": "1"
     }
   ],
   "dependencies": [
@@ -149,13 +188,33 @@
         "source": "mncs/doctor/family_change.mncs"
       },
       "required": false
+    },
+    {
+      "contract": "canonical-vm-artifact",
+      "envelope": {
+        "op": "any"
+      },
+      "evidence_refs": [
+        "tools/compiler_vm.py"
+      ],
+      "required": false
+    },
+    {
+      "contract": "vm-runtime",
+      "envelope": {
+        "op": "any"
+      },
+      "evidence_refs": [
+        "tools/compiler_vm.py"
+      ],
+      "required": false
     }
   ],
   "entry": [],
   "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
   "repository": "mncs-doctor",
   "schema_version": "mncs.project-view/1",
-  "source_identity": "sha256:74ea2cc7cf4b4a7868a9a3831573fd95e22acdad6af3819038de00e063913672",
+  "source_identity": "sha256:f362361f5ebafcc360df51c6df973a27e5f1c7b218ce18b7b521f0ca19b3ace7",
   "structure": {
     "layout": "mncs.repository-layout/1",
     "surfaces": [

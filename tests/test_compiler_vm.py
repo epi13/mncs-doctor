@@ -10,6 +10,33 @@ COMPILER=WS/'mncs-compiler';EXE=COMPILER/'.bootstrap/target/release/mncs-compile
 
 @unittest.skipUnless(EXE.is_file() and VM.is_file() and LANGUAGE.is_file(),'exact providers not built')
 class CompositionHealthTests(unittest.TestCase):
+    def test_compact_provenance_keeps_cross_boundary_identities(self):
+        vm_receipt = {'identity': 'vm-build-1', 'receipt': {'source_inputs': {'a': 'sha256:a'}}}
+        compiler_receipt = {'identity': 'compiler-build-1'}
+        value = {
+            'schema_version': 'execution/1', 'identity': 'execution-1',
+            'core': {
+                'operation': 'call', 'provider': 'mncs-vm',
+                'artifact_identity': 'artifact-1', 'executor_sha256': 'vm-exe-1',
+                'build_receipt': 'call-receipt-1',
+                'abi': {'build_origin': compiler_receipt},
+                'runtime': {
+                    'build_origin': {'status': 'matches-embedded-inputs'},
+                    'contract': {'artifact_schema': 'mncs.vm.artifact/1',
+                                 'vm_contract': 'mncs.vm/0.1',
+                                 'build_origin': vm_receipt},
+                    'executable': '/selected/mncs-vm', 'executable_sha256': 'vm-exe-1',
+                    'schema_version': 'mncs.vm.selected-runtime/1',
+                },
+            },
+        }
+        compact = doctor.compact_execution_provenance(value)
+        self.assertEqual(compact['producer_identity'], 'compiler-build-1')
+        self.assertEqual(compact['runtime']['identity'], 'vm-build-1')
+        self.assertEqual(compact['runtime']['artifact_schema'], 'mncs.vm.artifact/1')
+        self.assertEqual(compact['core']['artifact_identity'], 'artifact-1')
+        self.assertLess(len(json.dumps(compact)), len(json.dumps(value)))
+
     def test_unknown_without_proof_pass_with_bounded_proof_stale_refused(self):
         args=dict(compiler_checkout=COMPILER,compiler_executable=EXE,vm_checkout=WS/'mncs-vm',vm_executable=VM,stage0=LANGUAGE)
         self.assertEqual(doctor.diagnose(**args)['status'],'unknown')

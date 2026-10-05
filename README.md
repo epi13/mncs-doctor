@@ -7,6 +7,7 @@ Doctor owns repository discovery, health, drift, migration, and validation; it v
 
 Declared capabilities (declarations do not establish execution health):
 
+- `compiler-vm-health/1` — selected-compiler-runtime-consumer (experimental)
 - `family-remediation-plan/1` — native-family-remediation-plan (experimental)
 - `mncs-doctor.provider-artifact-remediation/1` — native-targeted-provider-remediation (experimental)
 - `projection-health/1` — semantic-projection-health-and-targeted-repair (experimental)
