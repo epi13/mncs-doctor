@@ -1,0 +1,4 @@
+mncs 0.18;
+module mncs.doctor.compiler_vm_smoke.v1;
+fn nested(value: i64) -> (result: i64) { return value + 1; }
+fn proof() -> (result: i64) { return nested(6); }
