@@ -397,7 +397,8 @@
           "argv": [
             "cargo",
             "test"
-          ]
+          ],
+          "timeout_seconds": 360
         }
       }
     ]
