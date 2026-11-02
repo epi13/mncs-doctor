@@ -1,0 +1,16 @@
+{
+  "name": "mncs-doctor-local-development",
+  "working_checkout": "current",
+  "workspace_scope": {
+    "kind": "workspace",
+    "repositories": ["mncs-doctor"]
+  },
+  "intent": {
+    "goal": "Develop and verify Doctor repository diagnostics, health, drift, migration, and validation.",
+    "repositories": ["mncs-doctor"],
+    "constraints": [
+      "Preserve foreign work and use isolated registered checkouts for development.",
+      "Doctor validates sibling facts without becoming their semantic authority."
+    ]
+  }
+}

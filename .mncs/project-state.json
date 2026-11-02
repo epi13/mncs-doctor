@@ -1,7 +1,10 @@
 {
   "schema_version": "mncs.project-intent/1",
   "purpose": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority.",
-  "entry": [],
+  "entry": [
+    "../mncs-environment/scripts/mncs-env enter",
+    "cargo test"
+  ],
   "milestones": [
     {
       "id": "mncs-doctor:projection-conformance",
