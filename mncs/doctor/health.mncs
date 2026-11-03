@@ -9,6 +9,16 @@ module doctor.health.v1;
 
 enum Status { Pass, Warning, Fail, Skipped }
 enum Severity { Info, Warning, Error }
+enum HealthCheckKind {
+    SourceParseHealth,
+    HeaderHealth,
+    VersionDrift,
+    NewlineEncoding,
+    ManifestHealth,
+    ToolchainHealth,
+    LanguageKnowledge,
+    MigrationAvailability
+}
 
 record CheckStatusInput {
     error_count: u64,
@@ -16,10 +26,10 @@ record CheckStatusInput {
 }
 
 record CheckStatusWithSkipInput {
+    check: HealthCheckKind,
     error_count: u64,
     warning_count: u64,
     info_count: u64,
-    promote_info: bool,
     skipped: bool
 }
 
@@ -82,9 +92,24 @@ fn check_status(input: CheckStatusInput) -> (result: Status) {
     return Status.Pass;
 }
 
-// Check status with explicit advisory and skipped inputs. Findings still
-// dominate a skipped check; selected informational findings can be promoted
-// by a host-supplied policy fact (currently sealed-profile drift).
+// Version drift remains actionable even though its file diagnostics are
+// informational. The check identity and promotion rule stay native; the host
+// supplies only collected severity counts and whether the check was skipped.
+fn promotes_info(check: HealthCheckKind) -> (result: bool) {
+    return match check {
+        SourceParseHealth => false,
+        HeaderHealth => false,
+        VersionDrift => true,
+        NewlineEncoding => false,
+        ManifestHealth => false,
+        ToolchainHealth => false,
+        LanguageKnowledge => false,
+        MigrationAvailability => false,
+    };
+}
+
+// Findings still dominate a skipped check; only version-drift promotes
+// informational findings to a warning.
 fn check_status_with_skip(input: CheckStatusWithSkipInput) -> (result: Status) {
     if input.error_count > 0 {
         return Status.Fail;
@@ -92,7 +117,7 @@ fn check_status_with_skip(input: CheckStatusWithSkipInput) -> (result: Status) {
     if input.warning_count > 0 {
         return Status.Warning;
     }
-    if input.promote_info && input.info_count > 0 {
+    if promotes_info(input.check) && input.info_count > 0 {
         return Status.Warning;
     }
     if input.skipped {

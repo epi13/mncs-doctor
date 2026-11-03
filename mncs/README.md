@@ -38,6 +38,7 @@ strings render host-side.
 | compare | -1/0/1 structural relation used by version helpers |
 | severity | generated `Severity` finite value |
 | status | generated `Status` finite value |
+| health-check identity | generated `HealthCheckKind` finite value; native policy owns which check promotes informational findings |
 | applicability | generated `Applicability` finite value |
 | transition kind | generated `TransitionKind` finite value |
 | plan verdict | generated `MigrationVerdict` finite value |
@@ -73,7 +74,7 @@ parity test executes through them green.
 
 - `version.mncs` — compare, classify against supplied current, support
   verdict, linear-chain span.
-- `health.mncs` — combine, check_status, overall fold, severity rank.
+- `health.mncs` — check identity and advisory policy, check status, overall fold, severity rank.
 - `migration.mncs` — span verdict, edge count, edge enumeration,
   unknown-edge scan, full plan verdict.
 - `edits.mncs` — pairwise conflict, shape classification, kept-set scan.

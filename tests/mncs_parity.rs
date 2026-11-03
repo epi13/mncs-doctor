@@ -389,36 +389,55 @@ fn parity_health_overall() {
 
 #[test]
 fn parity_health_check_status_with_advisories() {
-    // (errors, warnings, infos, promote_info, skipped) -> status.
-    let cases = [
-        ((0, 0, 0, false, false), "Pass"),
-        ((0, 0, 2, false, false), "Pass"),
-        ((0, 0, 2, true, false), "Warning"),
-        ((0, 1, 2, false, false), "Warning"),
-        ((1, 0, 0, false, true), "Fail"),
-        ((0, 0, 0, false, true), "Skipped"),
+    // Expected statuses are independent of the native policy implementation.
+    // Only the version-drift check promotes informational findings.
+    let check_kinds = [
+        ("SourceParseHealth", "Pass"),
+        ("HeaderHealth", "Pass"),
+        ("VersionDrift", "Warning"),
+        ("NewlineEncoding", "Pass"),
+        ("ManifestHealth", "Pass"),
+        ("ToolchainHealth", "Pass"),
+        ("LanguageKnowledge", "Pass"),
+        ("MigrationAvailability", "Pass"),
     ];
-    for ((errors, warnings, infos, promote, skipped), expected) in cases {
-        let args = record_arg(
-            "CheckStatusWithSkipInput",
-            &[
-                ("error_count", u64_arg(errors)),
-                ("warning_count", u64_arg(warnings)),
-                ("info_count", u64_arg(infos)),
-                ("promote_info", bool_arg(promote)),
-                ("skipped", bool_arg(skipped)),
-            ],
-        );
-        let got = as_variant(&typed_call(
-            health_session(),
-            "doctor.health.v1",
-            "check_status_with_skip",
-            &args,
-        ));
-        assert_eq!(
-            got, expected,
-            "{errors} {warnings} {infos} {promote} {skipped}"
-        );
+    for (check, info_only_expected) in check_kinds {
+        let cases = [
+            ((1, 0, 2, false), "Fail"),
+            ((0, 1, 2, false), "Warning"),
+            ((0, 0, 2, false), info_only_expected),
+            ((0, 0, 0, true), "Skipped"),
+            (
+                (0, 0, 2, true),
+                if check == "VersionDrift" {
+                    "Warning"
+                } else {
+                    "Skipped"
+                },
+            ),
+        ];
+        for ((errors, warnings, infos, skipped), expected) in cases {
+            let args = record_arg(
+                "CheckStatusWithSkipInput",
+                &[
+                    ("check", finite_arg("HealthCheckKind", check)),
+                    ("error_count", u64_arg(errors)),
+                    ("warning_count", u64_arg(warnings)),
+                    ("info_count", u64_arg(infos)),
+                    ("skipped", bool_arg(skipped)),
+                ],
+            );
+            let got = as_variant(&typed_call(
+                health_session(),
+                "doctor.health.v1",
+                "check_status_with_skip",
+                &args,
+            ));
+            assert_eq!(
+                got, expected,
+                "check={check} errors={errors} warnings={warnings} infos={infos} skipped={skipped}"
+            );
+        }
     }
 }
 

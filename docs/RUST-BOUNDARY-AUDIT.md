@@ -31,12 +31,16 @@ knowledge (DOC-P-007), and MNCS takes `cur_major/cur_minor` as arguments
 so no current-version assumption is baked in. Rust retains only the registry
 data and host-facing version parsing; production classification is MNCS.
 
-### `health.rs` — A (policy)
+### `health.rs` — A (status policy) + D (fact collection and text)
 `combine`/`overall`/`check_status`/`rank` live in
 `mncs/doctor/health.mncs` with parity (`parity_health_*`, full 4×4
 combine matrix, 8 aggregation shapes incl. empty). Status and severity are
 nominal finite values in the generated binding; finding *collection*
-(byte scanning) stays host-side with the scanner (see diagnostics).
+(byte scanning) stays host-side with the scanner (see diagnostics). The
+health-check identity is also a native finite value: Doctor no longer decides
+in Rust which check promotes informational findings; `version-drift` promotion
+is selected inside `doctor.health.v1`. Rust maps its report check identifier
+to the finite value, collects counts, and renders finding text.
 
 ### `migration.rs` — A (planning) + D (knowledge, execution)
 `span_verdict`/`span_edges`/`enumerate`/`scan_kinds`/`plan_verdict` live

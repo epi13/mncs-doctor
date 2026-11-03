@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.2";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "1af5a86bad2a5cf60cdb6ab541f2c11454797c0ec5a47e3c695f58a92eb6e523";
+    "3658402860ed436e50e198b6137fb0389d776a1f5470ec97e068151b583f310d";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "079190a6e04fee08b29c7f04a34e8658ab760e1103343c8b52d41586132628ed";
+    "b33c256499f7da5a27bb149bff41a867d916942aaec8782f3dc4907a88c1391a";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -491,6 +491,53 @@ impl FileName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthCheckKind {
+    SourceParseHealth,
+    HeaderHealth,
+    VersionDrift,
+    NewlineEncoding,
+    ManifestHealth,
+    ToolchainHealth,
+    LanguageKnowledge,
+    MigrationAvailability,
+}
+
+impl HostValue for HealthCheckKind {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::SourceParseHealth => "SourceParseHealth",
+            Self::HeaderHealth => "HeaderHealth",
+            Self::VersionDrift => "VersionDrift",
+            Self::NewlineEncoding => "NewlineEncoding",
+            Self::ManifestHealth => "ManifestHealth",
+            Self::ToolchainHealth => "ToolchainHealth",
+            Self::LanguageKnowledge => "LanguageKnowledge",
+            Self::MigrationAvailability => "MigrationAvailability",
+        };
+        json!({"finite": {"type": "HealthCheckKind", "variant": variant}})
+    }
+}
+
+impl HealthCheckKind {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "SourceParseHealth" => Ok(Self::SourceParseHealth),
+            "HeaderHealth" => Ok(Self::HeaderHealth),
+            "VersionDrift" => Ok(Self::VersionDrift),
+            "NewlineEncoding" => Ok(Self::NewlineEncoding),
+            "ManifestHealth" => Ok(Self::ManifestHealth),
+            "ToolchainHealth" => Ok(Self::ToolchainHealth),
+            "LanguageKnowledge" => Ok(Self::LanguageKnowledge),
+            "MigrationAvailability" => Ok(Self::MigrationAvailability),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown HealthCheckKind variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeVerdict {
     Keep,
     Skip,
@@ -862,9 +909,9 @@ impl CheckStatusInput {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckStatusWithSkipInput {
+    pub check: HealthCheckKind,
     pub error_count: u64,
     pub info_count: u64,
-    pub promote_info: bool,
     pub skipped: bool,
     pub warning_count: u64,
 }
@@ -872,9 +919,9 @@ pub struct CheckStatusWithSkipInput {
 impl HostValue for CheckStatusWithSkipInput {
     fn host_value(&self) -> Value {
         json!({"record": {"type": "CheckStatusWithSkipInput", "fields": {
+            "check": self.check.host_value(),
             "error_count": json!({"integer": {"value": self.error_count, "type": {"bits": 64, "signed": false}}}),
             "info_count": json!({"integer": {"value": self.info_count, "type": {"bits": 64, "signed": false}}}),
-            "promote_info": json!({"boolean": {"value": self.promote_info}}),
             "skipped": json!({"boolean": {"value": self.skipped}}),
             "warning_count": json!({"integer": {"value": self.warning_count, "type": {"bits": 64, "signed": false}}}),
         }}})
@@ -884,6 +931,11 @@ impl HostValue for CheckStatusWithSkipInput {
 impl CheckStatusWithSkipInput {
     fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
         let fields = record_fields(value)?;
+        let check = HealthCheckKind::from_host_value(
+            fields
+                .get("check")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
         let error_count = decode_u64(
             fields
                 .get("error_count")
@@ -892,11 +944,6 @@ impl CheckStatusWithSkipInput {
         let info_count = decode_u64(
             fields
                 .get("info_count")
-                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
-        )?;
-        let promote_info = decode_bool(
-            fields
-                .get("promote_info")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
         let skipped = decode_bool(
@@ -910,9 +957,9 @@ impl CheckStatusWithSkipInput {
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
         Ok(Self {
+            check,
             error_count,
             info_count,
-            promote_info,
             skipped,
             warning_count,
         })
@@ -2217,6 +2264,24 @@ pub fn plan_verdict(
     )?;
     let value = returned_value(&output)?;
     Ok(MigrationVerdict::from_host_value(&value)?)
+}
+
+pub fn promotes_info(
+    session: &Session,
+    input: HealthCheckKind,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.health.v1",
+        "promotes_info",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
 }
 
 pub fn rank(

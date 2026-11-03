@@ -41,7 +41,7 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "76df3a58253ee677f4d2d721b9d1453b95f4ba2f5224315be1a96df9d8059845";
+    "3b0b24760049cec4f52e6b9b39d5fba88bd1811e339b937534a54dc9a3bdd935";
 
 struct ModuleSpec {
     key: &'static str,
@@ -307,17 +307,14 @@ impl DoctorMncsRuntime {
                 .iter()
                 .filter(|finding| finding.severity == Severity::Info)
                 .count() as u64;
-            // The check registry deliberately treats sealed-profile drift as
-            // actionable even though its file diagnostics are informational.
-            // This is a policy input, not a Rust-computed verdict.
-            let promote_info = check.id == "version-drift";
+            let check_kind = native_health_check_kind(&check.id)?;
             let status = doctor_version::check_status_with_skip(
                 &self.session,
                 doctor_version::CheckStatusWithSkipInput {
+                    check: check_kind,
                     error_count: errors,
                     warning_count: warnings,
                     info_count: infos,
-                    promote_info,
                     skipped: check.status == Status::Skipped,
                 },
                 mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
@@ -816,6 +813,24 @@ fn native_status(status: Status) -> doctor_version::Status {
     }
 }
 
+fn native_health_check_kind(id: &str) -> Result<doctor_version::HealthCheckKind, RuntimeError> {
+    use doctor_version::HealthCheckKind as Kind;
+    match id {
+        "source-parse-health" => Ok(Kind::SourceParseHealth),
+        "header-health" => Ok(Kind::HeaderHealth),
+        "version-drift" => Ok(Kind::VersionDrift),
+        "newline-encoding" => Ok(Kind::NewlineEncoding),
+        "manifest-health" => Ok(Kind::ManifestHealth),
+        "toolchain-health" => Ok(Kind::ToolchainHealth),
+        "language-knowledge" => Ok(Kind::LanguageKnowledge),
+        "migration-availability" => Ok(Kind::MigrationAvailability),
+        _ => Err(RuntimeError::new(
+            "mncs_value_contract",
+            format!("unknown native health-check identity: {id}"),
+        )),
+    }
+}
+
 fn host_status(status: doctor_version::Status) -> Status {
     match status {
         doctor_version::Status::Pass => Status::Pass,
@@ -901,6 +916,56 @@ mod tests {
             .entrypoints
             .iter()
             .any(|entrypoint| entrypoint == "doctor.fix.v1::seen_before"));
+    }
+
+    #[test]
+    fn production_health_check_kind_controls_info_promotion() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let cases = [
+            ("source-parse-health", Status::Pass),
+            ("header-health", Status::Pass),
+            ("version-drift", Status::Warning),
+            ("newline-encoding", Status::Pass),
+            ("manifest-health", Status::Pass),
+            ("toolchain-health", Status::Pass),
+            ("language-knowledge", Status::Pass),
+            ("migration-availability", Status::Pass),
+        ];
+        for (id, expected) in cases {
+            let mut checks = [CheckResult {
+                id: id.to_owned(),
+                title: id.to_owned(),
+                status: Status::Pass,
+                findings: vec![crate::health::Finding {
+                    severity: Severity::Info,
+                    message: "independent expected advisory".to_owned(),
+                    path: None,
+                    explanation: String::new(),
+                    suggested_action: String::new(),
+                }],
+            }];
+            runtime
+                .apply_health_policy(&mut checks)
+                .expect("native health policy");
+            assert_eq!(checks[0].status, expected, "{id}");
+        }
+    }
+
+    #[test]
+    fn production_health_policy_rejects_unknown_check_identity() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let mut checks = [CheckResult {
+            id: "unknown-health-check".to_owned(),
+            title: "unknown".to_owned(),
+            status: Status::Pass,
+            findings: Vec::new(),
+        }];
+        let error = runtime
+            .apply_health_policy(&mut checks)
+            .expect_err("unknown health checks must fail closed");
+        assert!(error
+            .to_string()
+            .contains("unknown native health-check identity"));
     }
 
     #[test]
