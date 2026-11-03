@@ -25,9 +25,12 @@ finite/record contract are consumed through the generated Rust binding
 `src/generated/doctor_version.rs`. The generator records the module,
 callable, interface identity, schema revision, and binding content identity;
 each wrapper submits the expected interface identity to the runtime. The
-scanner's bounded byte/state calls are generated as a multi-argument wrapper,
-so the remaining numeric boundaries below are natural facts or deliberately narrow
-structural compatibility surfaces, not a second semantic ABI. Discovery
+scanner's bounded byte/state calls are generated from the same typed ABI. Its
+native streaming policy owns comment and string exclusion, delimiter matching,
+mismatch offsets, and the final unclosed-opener decision. The fixed stack holds
+1,016 unmatched openers and reports `DOC109` on capacity exhaustion instead of
+treating an incomplete scan as balanced. Rust retains byte acquisition, Unicode
+span projection, and diagnostic rendering. Discovery
 directory names, file names, and file extensions are nominal generated finite
 values as well.
 
@@ -91,5 +94,5 @@ parity test executes through them green.
 - `transaction.mncs` — target presence, symlink, stale-base, and identical
   target validation policy.
 - `discovery.mncs` — directory traversal and file classification policy.
-- `scanner.mncs` — stateful 64-byte BOM/newline scanner ingress.
+- `scanner.mncs` — stateful 64-byte BOM/newline and delimiter scanning.
 - `remediate.mncs` — thin Doctor-facing adapter for the shared Commons 0.18 remediation policy.

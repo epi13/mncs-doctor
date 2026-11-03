@@ -18,7 +18,7 @@ use std::sync::{Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::diagnostics::Severity;
+use crate::diagnostics::{DelimiterScanResult, DelimiterScanStatus, Severity};
 use crate::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts, NewlineStyle};
 use crate::fix::Applicability;
 use crate::fix::StopReason;
@@ -42,10 +42,12 @@ pub const POLICY_PROFILE: &str = "0.16";
 pub const POLICY_BACKEND: &str = "mncs-research-bytecode";
 
 const POLICY_STEP_BUDGET: u64 = 32_768;
+const DELIMITER_STATE_WIDTH: usize = 1_024;
+const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "bf8d36d83aea2d5ce9c3f2201f75c7c033999a1ab0f9788f19d386b6f9e9d32f";
+    "56873d51bdaddf0e79c5c65d70e8f5b2d6856d5031e49958943a1935845d9fdc";
 
 struct ModuleSpec {
     key: &'static str,
@@ -707,6 +709,58 @@ impl DoctorMncsRuntime {
         })
     }
 
+    /// Scan delimiter balance through the MNCS streaming state machine.
+    /// The host supplies bounded byte windows and carries the fixed state
+    /// between calls; lexical mode, delimiter matching, mismatch detection,
+    /// and the final unclosed-opener decision stay in MNCS.
+    pub fn scan_delimiters(&self, bytes: &[u8]) -> Result<DelimiterScanResult, RuntimeError> {
+        let mut state = vec![0_u64; DELIMITER_STATE_WIDTH];
+        for chunk in bytes.chunks(DELIMITER_WINDOW_WIDTH) {
+            state = doctor_version::delimiter_feed(
+                &self.session,
+                chunk.to_vec(),
+                state,
+                mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+            )
+            .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+            self.record_entrypoint("doctor.scanner.v1", "delimiter_feed")?;
+            if state.len() != DELIMITER_STATE_WIDTH {
+                return Err(RuntimeError::new(
+                    "mncs_value_contract",
+                    format!(
+                        "expected delimiter scanner state width {DELIMITER_STATE_WIDTH}, returned {}",
+                        state.len()
+                    ),
+                ));
+            }
+            if state[5] != 0 {
+                break;
+            }
+        }
+
+        let result = doctor_version::delimiter_finish(
+            &self.session,
+            state,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.scanner.v1", "delimiter_finish")?;
+        let offset = usize::try_from(result.offset).map_err(|_| {
+            RuntimeError::new(
+                "mncs_value_contract",
+                "delimiter scanner offset does not fit the host span domain",
+            )
+        })?;
+        let status = match result.status {
+            doctor_version::DelimiterStatus::Balanced => DelimiterScanStatus::Balanced,
+            doctor_version::DelimiterStatus::Unbalanced => DelimiterScanStatus::Unbalanced,
+            doctor_version::DelimiterStatus::CapacityExceeded => {
+                DelimiterScanStatus::CapacityExceeded
+            }
+        };
+        Ok(DelimiterScanResult { status, offset })
+    }
+
     fn scan_feed(&self, bytes: &[u8], state: [u64; 6]) -> Result<[u64; 6], RuntimeError> {
         let values = doctor_version::feed(
             &self.session,
@@ -955,14 +1009,17 @@ fn version_coordinate(version: LanguageVersion) -> i64 {
     i64::from(version.major) * 1_000 + i64::from(version.minor)
 }
 
-fn state_array(values: Vec<u64>) -> Result<[u64; 6], RuntimeError> {
-    if values.len() != 6 {
+fn state_array<const N: usize>(values: Vec<u64>) -> Result<[u64; N], RuntimeError> {
+    if values.len() != N {
         return Err(RuntimeError::new(
             "mncs_value_contract",
-            format!("expected scanner state width 6, returned {}", values.len()),
+            format!(
+                "expected scanner state width {N}, returned {}",
+                values.len()
+            ),
         ));
     }
-    let mut output = [0_u64; 6];
+    let mut output = [0_u64; N];
     output.copy_from_slice(&values);
     Ok(output)
 }

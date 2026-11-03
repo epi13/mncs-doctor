@@ -44,6 +44,12 @@ fn healthy_repo_reports_two_files() {
     assert!(entrypoints
         .iter()
         .any(|entrypoint| entrypoint == "doctor.scanner.v1::finish"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::delimiter_feed"));
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::delimiter_finish"));
     let modules = report["policy"]["modules"].as_object().unwrap();
     assert_eq!(modules.len(), 11);
     assert!(modules.contains_key("remediate"));
@@ -101,8 +107,25 @@ fn malformed_repo_fails_with_spans() {
         .as_array()
         .unwrap();
     let d106 = diags.iter().find(|d| d["code"] == "DOC106").unwrap();
-    assert!(d106["span"]["start"].as_u64().unwrap() > 0);
+    let source = fs::read_to_string(root.join("src/unbalanced.mncs")).unwrap();
+    let expected_offset = source.rfind('{').unwrap();
+    assert_eq!(d106["span"]["start"].as_u64(), Some(expected_offset as u64));
     assert_eq!(d106["span"]["start_line"], d106["span"]["end_line"]);
+}
+
+#[test]
+fn delimiter_scan_capacity_is_reported_instead_of_passing() {
+    let root = stage("repos/empty");
+    fs::write(root.join("deep.mncs"), "(".repeat(1_017)).unwrap();
+    let out = run(&root, &["doctor", "--root", ".", "--json"]);
+    let report = stdout_json(&out);
+    let diags = report["file_diagnostics"]["deep.mncs"].as_array().unwrap();
+    assert!(diags
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "DOC109"));
+    assert!(!diags
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == "DOC106"));
 }
 
 #[test]

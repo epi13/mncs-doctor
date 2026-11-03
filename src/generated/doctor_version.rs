@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "613dcaa9153a1c150396e2560d41593972f13f94800d6b19955c06776c07c091";
+    "0e9bcd847710f752c0c01a28f5737caf2d4289e970f4144807e0a5671cd0f025";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "c4e369bead9d0bdfb611acea650a51bf9a8d1e6d6a675b482afd359ee79d8f51";
+    "7aa2975c774fe9a30e1dc3158bb78ec0f08734502d21a53e40338c36bd6750c1";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -225,6 +225,38 @@ impl ConflictVerdict {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown ConflictVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelimiterStatus {
+    Balanced,
+    Unbalanced,
+    CapacityExceeded,
+}
+
+impl HostValue for DelimiterStatus {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Balanced => "Balanced",
+            Self::Unbalanced => "Unbalanced",
+            Self::CapacityExceeded => "CapacityExceeded",
+        };
+        json!({"finite": {"type": "DelimiterStatus", "variant": variant}})
+    }
+}
+
+impl DelimiterStatus {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Balanced" => Ok(Self::Balanced),
+            "Unbalanced" => Ok(Self::Unbalanced),
+            "CapacityExceeded" => Ok(Self::CapacityExceeded),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown DelimiterStatus variant {other}"),
             )),
         }
     }
@@ -1245,6 +1277,38 @@ impl ConflictsWithKeptInput {
             kept_starts,
             start,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelimiterResult {
+    pub offset: u64,
+    pub status: DelimiterStatus,
+}
+
+impl HostValue for DelimiterResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "DelimiterResult", "fields": {
+            "offset": json!({"integer": {"value": self.offset, "type": {"bits": 64, "signed": false}}}),
+            "status": self.status.host_value(),
+        }}})
+    }
+}
+
+impl DelimiterResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let offset = decode_u64(
+            fields
+                .get("offset")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let status = DelimiterStatus::from_host_value(
+            fields
+                .get("status")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { offset, status })
     }
 }
 
@@ -2922,6 +2986,173 @@ pub fn conflicts_with_kept(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_u64(&value)?)
+}
+
+pub fn delimiter_block_comment_byte(
+    session: &Session,
+    state: Vec<u64>,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), value]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_block_comment_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_byte(
+    session: &Session,
+    state: Vec<u64>,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), value]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_close(
+    session: &Session,
+    state: Vec<u64>,
+    kind: u64,
+    offset: u64,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), json!({"integer": {"value": kind, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": offset, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_close",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_feed(
+    session: &Session,
+    bytes: Vec<u8>,
+    state: Vec<u64>,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_feed",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_finish(
+    session: &Session,
+    input: Vec<u64>,
+    options: CallOptions,
+) -> Result<DelimiterResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_finish",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(DelimiterResult::from_host_value(&value)?)
+}
+
+pub fn delimiter_normal_byte(
+    session: &Session,
+    state: Vec<u64>,
+    value: serde_json::Value,
+    offset: u64,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), value, json!({"integer": {"value": offset, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_normal_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_push(
+    session: &Session,
+    state: Vec<u64>,
+    kind: u64,
+    offset: u64,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), json!({"integer": {"value": kind, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": offset, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_push",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn delimiter_string_byte(
+    session: &Session,
+    state: Vec<u64>,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Vec<u64>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}), value]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "delimiter_string_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn delta_ok(

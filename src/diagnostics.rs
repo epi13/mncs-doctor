@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::discovery::SourceFile;
 use crate::fix::Applicability;
-use crate::version::{classify, LanguageVersion, VersionClass};
+use crate::mncs_runtime::DoctorMncsRuntime;
+use crate::version::{LanguageVersion, VersionClass};
 
 /// Diagnostic severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -69,6 +70,22 @@ pub struct Span {
     pub start_col: u32,
     pub end_line: u32,
     pub end_col: u32,
+}
+
+/// Outcome of the native bounded delimiter scan. Capacity exhaustion is
+/// explicit so a file beyond the scanner's fixed stack cannot pass as
+/// balanced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelimiterScanStatus {
+    Balanced,
+    Unbalanced,
+    CapacityExceeded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DelimiterScanResult {
+    pub status: DelimiterScanStatus,
+    pub offset: usize,
 }
 
 impl Span {
@@ -253,18 +270,18 @@ impl ScannerBackend {
         "scanner"
     }
 
-    /// Run the hygiene scan with an injected version-policy classifier.
-    ///
-    /// The scanner still owns byte-level facts and diagnostic construction,
-    /// but callers can route the version decision through the production
-    /// MNCS policy runtime instead of silently using the Rust oracle.
-    pub fn diagnose_with_version_classifier<F>(
+    /// Run the hygiene scan with native version and delimiter policies.
+    /// Host code retains byte acquisition, Unicode span projection, and
+    /// diagnostic rendering; the semantic scan decisions come from MNCS.
+    pub fn diagnose_with_policy<F, G>(
         &self,
         file: &SourceFile,
         classifier: F,
+        delimiter_scanner: G,
     ) -> Result<Vec<Diagnostic>, String>
     where
         F: Fn(LanguageVersion) -> Result<VersionClass, String>,
+        G: Fn(&[u8]) -> Result<DelimiterScanResult, String>,
     {
         let mut out = Vec::new();
         let Some(text) = file.text.as_deref() else {
@@ -427,14 +444,20 @@ impl ScannerBackend {
                 backend: self.name().to_owned(),
             });
         }
-        if let Some(span) = unbalanced_delimiter(text) {
-            out.push(Diagnostic {
+        let delimiter_result = delimiter_scanner(&file.bytes)?;
+        match delimiter_result.status {
+            DelimiterScanStatus::Balanced => {}
+            DelimiterScanStatus::Unbalanced => out.push(Diagnostic {
                 code: "DOC106".to_owned(),
                 severity: Severity::Error,
                 source: DiagnosticSource::Hygiene,
-                span,
+                span: span_of(
+                    text,
+                    delimiter_result.offset,
+                    delimiter_result.offset.saturating_add(1).min(text.len()),
+                ),
                 message: "unbalanced delimiter".to_owned(),
-                explanation: "A coarse byte-level scan (strings and comments \
+                explanation: "The native bounded byte scan (strings and comments \
                     excluded) found a closing delimiter without its opener, or \
                     input ended with delimiters still open. This is a hygiene \
                     heuristic, not a parse: the authoritative error comes from \
@@ -447,9 +470,58 @@ impl ScannerBackend {
                 language_version: facts.declared,
                 migration_transition: None,
                 backend: self.name().to_owned(),
-            });
+            }),
+            DelimiterScanStatus::CapacityExceeded => out.push(Diagnostic {
+                code: "DOC109".to_owned(),
+                severity: Severity::Error,
+                source: DiagnosticSource::Hygiene,
+                span: span_of(
+                    text,
+                    delimiter_result.offset,
+                    delimiter_result.offset.saturating_add(1).min(text.len()),
+                ),
+                message: "delimiter scan capacity exceeded".to_owned(),
+                explanation: "The native delimiter scanner reached its bounded \
+                    nesting or byte-offset limit. It cannot establish balance for \
+                    this file, so Doctor reports the limit instead of treating the \
+                    file as balanced. The language backend remains authoritative."
+                    .to_owned(),
+                applicability: Applicability::Manual,
+                suggested_action: "Reduce nesting or use the language backend for \
+                    an authoritative syntax result."
+                    .to_owned(),
+                language_version: facts.declared,
+                migration_transition: None,
+                backend: self.name().to_owned(),
+            }),
         }
         Ok(out)
+    }
+
+    /// Independent host reference used only by unit tests and parity checks.
+    #[cfg(test)]
+    pub fn diagnose_with_version_classifier<F>(
+        &self,
+        file: &SourceFile,
+        classifier: F,
+    ) -> Result<Vec<Diagnostic>, String>
+    where
+        F: Fn(LanguageVersion) -> Result<VersionClass, String>,
+    {
+        self.diagnose_with_policy(file, classifier, |bytes| {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|error| format!("reference scanner received invalid UTF-8: {error}"))?;
+            Ok(match unbalanced_delimiter(text) {
+                Some(span) => DelimiterScanResult {
+                    status: DelimiterScanStatus::Unbalanced,
+                    offset: span.start,
+                },
+                None => DelimiterScanResult {
+                    status: DelimiterScanStatus::Balanced,
+                    offset: 0,
+                },
+            })
+        })
     }
 }
 
@@ -459,13 +531,56 @@ impl LanguageBackend for ScannerBackend {
     }
 
     fn diagnose(&self, file: &SourceFile) -> Vec<Diagnostic> {
-        self.diagnose_with_version_classifier(file, |version| Ok(classify(Some(version))))
-            .expect("the Rust reference version classifier is infallible")
+        if file.text.is_none() {
+            return self
+                .diagnose_with_policy(
+                    file,
+                    |_| unreachable!("invalid UTF-8 has no version"),
+                    |_| unreachable!("invalid UTF-8 has no delimiter scan"),
+                )
+                .unwrap_or_else(|error| vec![native_policy_failure(file, error)]);
+        }
+        let result = (|| {
+            let policy = DoctorMncsRuntime::production().map_err(|error| error.to_string())?;
+            self.diagnose_with_policy(
+                file,
+                |version| {
+                    policy
+                        .classify_version(version)
+                        .map_err(|error| error.to_string())
+                },
+                |bytes| {
+                    policy
+                        .scan_delimiters(bytes)
+                        .map_err(|error| error.to_string())
+                },
+            )
+        })();
+        result.unwrap_or_else(|error| vec![native_policy_failure(file, error)])
+    }
+}
+
+fn native_policy_failure(file: &SourceFile, error: String) -> Diagnostic {
+    Diagnostic {
+        code: "DOC110".to_owned(),
+        severity: Severity::Error,
+        source: DiagnosticSource::Hygiene,
+        span: Span::whole_file(file.bytes.len(), 1),
+        message: "native Doctor policy could not complete".to_owned(),
+        explanation: format!(
+            "The native scanner or version policy failed closed: {error}. No host semantic fallback was used."
+        ),
+        applicability: Applicability::Manual,
+        suggested_action: "Repair the MNCS policy runtime and re-run Doctor.".to_owned(),
+        language_version: None,
+        migration_transition: None,
+        backend: "mncs-policy".to_owned(),
     }
 }
 
 /// Coarse delimiter-balance scan skipping strings and comments. Returns the
 /// span of the first offending delimiter, if any.
+#[cfg(test)]
 fn unbalanced_delimiter(text: &str) -> Option<Span> {
     let bytes = text.as_bytes();
     let mut stack: Vec<(u8, usize)> = Vec::new();
@@ -635,6 +750,74 @@ mod tests {
         let ok = "mncs 0.16;\nmodule a;\nfn f() {} // }\n/* { */\nlet s = \"{\";\n";
         let diags = ScannerBackend.diagnose(&file_with(ok));
         assert!(!codes(&diags).contains(&"DOC106"), "{diags:?}");
+    }
+
+    #[test]
+    fn native_delimiter_scan_matches_independent_reference() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let mut cases = vec![
+            (String::new(), None),
+            ("({[]})".to_owned(), None),
+            ("}".to_owned(), Some(0)),
+            ("([)]".to_owned(), Some(2)),
+            ("([{ ".to_owned(), Some(2)),
+            ("a // }\n()".to_owned(), None),
+            ("/* [ */ \"{[\"{}".to_owned(), None),
+            ("é )".to_owned(), Some(3)),
+            ("/* open {".to_owned(), None),
+            ("\"open {".to_owned(), None),
+        ];
+
+        let mut cross_chunk_comment = "x".repeat(63);
+        cross_chunk_comment.push_str("/* { */]");
+        let close_offset = cross_chunk_comment.find(']').expect("test close offset");
+        cases.push((cross_chunk_comment, Some(close_offset)));
+
+        let mut cross_chunk_line_comment = "x".repeat(63);
+        cross_chunk_line_comment.push_str("// }\n{}");
+        cases.push((cross_chunk_line_comment, None));
+
+        let mut cross_chunk_string = vec![b'x'; 63];
+        cross_chunk_string.extend_from_slice(b"\"\\\"{");
+        cross_chunk_string.push(b'\"');
+        cases.push((
+            String::from_utf8(cross_chunk_string).expect("valid scanner fixture"),
+            None,
+        ));
+
+        for (text, expected_offset) in cases {
+            let reference = unbalanced_delimiter(&text).map(|span| span.start);
+            assert_eq!(reference, expected_offset, "reference fixture: {text:?}");
+            let native = runtime
+                .scan_delimiters(text.as_bytes())
+                .expect("native delimiter scan");
+            match expected_offset {
+                Some(offset) => {
+                    assert_eq!(native.status, DelimiterScanStatus::Unbalanced, "{text:?}");
+                    assert_eq!(native.offset, offset, "{text:?}");
+                }
+                None => assert_eq!(native.status, DelimiterScanStatus::Balanced, "{text:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn native_delimiter_scan_reports_capacity_exhaustion_explicitly() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let text = "(".repeat(1_017);
+        let native = runtime
+            .scan_delimiters(text.as_bytes())
+            .expect("native delimiter scan");
+        assert_eq!(native.status, DelimiterScanStatus::CapacityExceeded);
+        assert_eq!(native.offset, 1_016);
+
+        let diagnostics = ScannerBackend.diagnose(&file_with(&text));
+        let finding = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "DOC109")
+            .expect("explicit scan-capacity diagnostic");
+        assert_eq!(finding.span.start, 1_016);
+        assert!(!codes(&diagnostics).contains(&"DOC106"));
     }
 
     #[test]

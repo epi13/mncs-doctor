@@ -48,3 +48,142 @@ fn finish(state: [u64; 6]) -> (result: [u64; 6]) {
     let with_cr: [u64; 6] = replace(state, 4, state[4] + (state[5] == 1) as u64);
     return replace(with_cr, 5, 0);
 }
+
+// Delimiter balance is also part of the streaming scanner contract. The
+// state carries lexical mode, absolute byte position, and a bounded stack of
+// packed (offset * 4 + opener-kind) entries. Capacity exhaustion is a
+// separate result: callers must report that the heuristic could not finish,
+// never silently treat the file as balanced.
+enum DelimiterStatus { Balanced, Unbalanced, CapacityExceeded }
+
+record DelimiterResult { status: DelimiterStatus, offset: u64 }
+
+// State slots 0..7 are mode, string escape, pending slash, pending block
+// comment star, stack depth, verdict (0 clear, 1 unbalanced, 2 hard capacity,
+// 3 reserved, verdict offset, and absolute byte offset. Slots 8..1,023 hold
+// unmatched openers, for a hard bound of 1,016 nested delimiters.
+// Kinds are '{' = 1, '(' = 2, '[' = 3.
+fn delimiter_push(state: [u64; 1024], kind: u64, offset: u64) -> (result: [u64; 1024]) {
+    if offset > 4611686018427387903 {
+        let marked: [u64; 1024] = replace(state, 5, 2);
+        let positioned: [u64; 1024] = replace(marked, 6, offset);
+        return replace(positioned, 7, offset);
+    }
+    if state[4] >= 1016 {
+        let marked: [u64; 1024] = replace(state, 5, 2);
+        let positioned: [u64; 1024] = replace(marked, 6, offset);
+        return replace(positioned, 7, offset);
+    }
+    let slot: u64 = 8 + state[4];
+    let packed: u64 = offset *% 4 +% kind;
+    let stored: [u64; 1024] = replace(state, slot, packed);
+    return replace(stored, 4, state[4] + 1);
+}
+
+fn delimiter_close(state: [u64; 1024], kind: u64, offset: u64) -> (result: [u64; 1024]) {
+    if state[4] == 0 {
+        let marked: [u64; 1024] = replace(state, 5, 1);
+        return replace(marked, 6, offset);
+    }
+    let slot: u64 = 8 + state[4] - 1;
+    let packed: u64 = state[slot];
+    let opener_kind: u64 = packed % 4;
+    if opener_kind != kind {
+        let marked: [u64; 1024] = replace(state, 5, 1);
+        return replace(marked, 6, offset);
+    }
+    return replace(state, 4, state[4] - 1);
+}
+
+fn delimiter_normal_byte(state: [u64; 1024], value: byte, offset: u64) -> (result: [u64; 1024]) {
+    if value == 34 {
+        return replace(state, 0, 1);
+    }
+    if value == 47 {
+        return replace(state, 2, 1);
+    }
+    if value == 123 { return delimiter_push(state, 1, offset); }
+    if value == 40 { return delimiter_push(state, 2, offset); }
+    if value == 91 { return delimiter_push(state, 3, offset); }
+    if value == 125 { return delimiter_close(state, 1, offset); }
+    if value == 41 { return delimiter_close(state, 2, offset); }
+    if value == 93 { return delimiter_close(state, 3, offset); }
+    return state;
+}
+
+fn delimiter_string_byte(state: [u64; 1024], value: byte) -> (result: [u64; 1024]) {
+    if state[1] == 1 {
+        return replace(state, 1, 0);
+    }
+    if value == 92 {
+        return replace(state, 1, 1);
+    }
+    if value == 34 {
+        return replace(state, 0, 0);
+    }
+    return state;
+}
+
+fn delimiter_block_comment_byte(state: [u64; 1024], value: byte) -> (result: [u64; 1024]) {
+    if state[3] == 1 {
+        if value == 47 {
+            let clear_star: [u64; 1024] = replace(state, 3, 0);
+            return replace(clear_star, 0, 0);
+        }
+        if value == 42 {
+            return state;
+        }
+        return replace(state, 3, 0);
+    }
+    if value == 42 {
+        return replace(state, 3, 1);
+    }
+    return state;
+}
+
+fn delimiter_byte(state: [u64; 1024], value: byte) -> (result: [u64; 1024]) {
+    if state[5] != 0 {
+        return state;
+    }
+    let offset: u64 = state[7];
+    let advanced: [u64; 1024] = replace(state, 7, offset +% 1);
+    if advanced[0] == 1 {
+        return delimiter_string_byte(advanced, value);
+    }
+    if advanced[0] == 2 {
+        if value == 10 { return replace(advanced, 0, 0); }
+        return advanced;
+    }
+    if advanced[0] == 3 {
+        return delimiter_block_comment_byte(advanced, value);
+    }
+    if advanced[2] == 1 {
+        let clear_slash: [u64; 1024] = replace(advanced, 2, 0);
+        if value == 47 { return replace(clear_slash, 0, 2); }
+        if value == 42 { return replace(clear_slash, 0, 3); }
+        return delimiter_normal_byte(clear_slash, value, offset);
+    }
+    return delimiter_normal_byte(advanced, value, offset);
+}
+
+fn delimiter_feed(bytes: [byte; up_to 64], state: [u64; 1024]) -> (result: [u64; 1024]) {
+    iterate i over bytes carrying next_state: [u64; 1024] = state {
+        next next_state = delimiter_byte(next_state, bytes[i]);
+    }
+    return next_state;
+}
+
+fn delimiter_finish(state: [u64; 1024]) -> (result: DelimiterResult) {
+    if state[5] == 2 {
+        return DelimiterResult { status: DelimiterStatus.CapacityExceeded, offset: state[6] };
+    }
+    if state[5] == 1 {
+        return DelimiterResult { status: DelimiterStatus.Unbalanced, offset: state[6] };
+    }
+    if state[4] == 0 {
+        return DelimiterResult { status: DelimiterStatus.Balanced, offset: 0 };
+    }
+    let slot: u64 = 8 + state[4] - 1;
+    let packed: u64 = state[slot];
+    return DelimiterResult { status: DelimiterStatus.Unbalanced, offset: packed / 4 };
+}

@@ -548,15 +548,25 @@ fn diagnose_one_with_mncs_policy(
     let scan = policy
         .scan_bytes(&file.bytes)
         .map_err(|error| format!("MNCS byte scanner failed for {}: {error}", file.relative))?;
+    let delimiters = policy.scan_delimiters(&file.bytes).map_err(|error| {
+        format!(
+            "MNCS delimiter scanner failed for {}: {error}",
+            file.relative
+        )
+    })?;
     let mut scanned_file = file.clone();
     scanned_file.has_bom = scan.has_bom;
     scanned_file.newline = scan.newline;
     scanner
-        .diagnose_with_version_classifier(&scanned_file, |version| {
-            policy
-                .classify_version(version)
-                .map_err(|error| error.to_string())
-        })
+        .diagnose_with_policy(
+            &scanned_file,
+            |version| {
+                policy
+                    .classify_version(version)
+                    .map_err(|error| error.to_string())
+            },
+            |_| Ok(delimiters),
+        )
         .map_err(|error| {
             format!(
                 "MNCS diagnostic policy failed for {}: {error}",

@@ -58,7 +58,9 @@ Doctor policy increasingly lives in MNCS, not just fixtures:
 fix, report, verify, transaction, discovery, scanner policy) running on the
 research bytecode backend via the production `mncs-embed` runtime. Natural
 numeric facts such as version coordinates, byte counts, offsets, and scanner
-windows remain numeric. Semantic finite values and records cross through the
+windows remain numeric. The scanner now owns delimiter matching and comment
+or string exclusion; it reports `DOC109` when its bounded nesting capacity is
+exhausted. Semantic finite values and records cross through the
 generated Rust binding `src/generated/doctor_version.rs`; strings render
 host-side. The binding is content-addressed and submits the expected MNCS
 interface identity on every call, so a stale generated binding fails closed.

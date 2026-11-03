@@ -14,7 +14,7 @@ Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
 imported policy modules, and uses the generated Rust binding for nominal
 records and finite values. The binding submits the expected interface
 identity on every call. The generated binding now also covers the
-multi-argument bounded-byte scanner calls, so production has no generic
+multi-argument bounded-byte and delimiter-state scanner calls, so production has no generic
 `call_json` transport path. Fail-closed transport is pinned:
 length/signedness mismatches refuse as `invalid_request`
 (`MNCS_VALUE_CONTRACT`), never silently. Reports include source/artifact
@@ -35,8 +35,9 @@ data and host-facing version parsing; production classification is MNCS.
 `combine`/`overall`/`check_status`/`rank` live in
 `mncs/doctor/health.mncs` with parity (`parity_health_*`, full 4×4
 combine matrix, 8 aggregation shapes incl. empty). Status and severity are
-nominal finite values in the generated binding; finding *collection*
-(byte scanning) stays host-side with the scanner (see diagnostics). The
+nominal finite values in the generated binding; host code still collects
+findings and renders their text, while the scanner owns byte-level decisions
+(see diagnostics). The
 health-check identity is also a native finite value: Doctor no longer decides
 in Rust which check promotes informational findings; `version-drift` promotion
 is selected inside `doctor.health.v1`. Rust maps its report check identifier
@@ -65,17 +66,19 @@ byte-string ingress is the gap). Span application stays host-side (D).
 stopping-rule precedences (`parity_fix_*`). Applicability, merge, and seen
 results are nominal finite values in the generated binding. Production planning, edit
 conflict validation, and loop decisions use MNCS; providers still acquire
-text and construct candidate edits in Rust. Chunk-fed BOM/newline scanning
-is also MNCS-backed, while full delimiter/hygiene diagnostic construction
-remains host-side. The missing safe Rust batch API is DOC-P-020.
+text and construct candidate edits in Rust. Chunk-fed BOM/newline and
+delimiter scans are MNCS-backed. Rust maps the native mismatch offset to a
+Unicode-aware span and constructs `DOC106` or the explicit `DOC109` capacity
+finding. The missing safe Rust batch API is DOC-P-020.
 
 ### `diagnostics.rs` — D (model) + E (semantic scanner)
 The `Diagnostic` envelope is the shared-contract proposal (D: it *is*
-the boundary). A real stateful chunk-fed scanner now crosses 64-byte views
-and produces BOM/newline counts in production. Full-file delimiter scanning,
-diagnostic text, and semantic language diagnostics remain Rust until the
-upstream structured diagnostics contract and richer ingress land
-(DOC-P-001/020).
+the boundary). A stateful chunk-fed scanner crosses 64-byte views and produces
+BOM/newline counts, delimiter balance, and byte offsets in production. Its
+1,016-entry opener stack reports capacity exhaustion as `DOC109`, never a
+balanced result. Rust retains Unicode span projection, diagnostic text, and
+semantic language diagnostics; the independent host delimiter implementation
+is compiled only for tests and parity checks (DOC-P-001/020).
 
 ### `report.rs` — A (policy) + D (rendering)
 `exit_for` lives in `mncs/doctor/report.mncs` with parity over 8
