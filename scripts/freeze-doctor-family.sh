@@ -7,10 +7,11 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 mncs_bin="${MNCS_BIN:-mncs}"
 language_root="${MNCS_LANGUAGE_ROOT:-$repo_root/../mncs-language}"
+commons_root="${MNCS_COMMONS_ROOT:-$repo_root/../MNCS-Commons}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mncs-doctor-freeze.XXXXXX")"
 trap 'rm -rf -- "$tmp_dir"' EXIT
 
-MNCS_LIBRARY_PATH="$repo_root/mncs:$language_root/library" \
+MNCS_LIBRARY_PATH="$repo_root/mncs:$language_root/library:$commons_root/src/mncs_commons/mesh" \
   "$mncs_bin" compile "$repo_root/mncs/doctor_family.mncs" \
   --emit backend \
   --target mncs-research-bytecode \

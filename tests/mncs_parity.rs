@@ -936,7 +936,7 @@ fn transport_mismatches_refuse_fail_closed() {
         .failure_reason
         .as_deref()
         .unwrap_or("")
-        .contains("type_identity"));
+        .contains("record identity mismatch"));
     // A compiler-produced record can make the round trip through the host
     // ABI when its canonical identity is preserved. This is the concrete
     // typed-transport case Doctor would eventually use for health/version

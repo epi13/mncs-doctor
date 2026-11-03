@@ -1,7 +1,7 @@
 {
   "schema_version": "mncs-family.repository-manifest/v0alpha1",
   "repository": "mncs-doctor",
-  "revision": 7,
+  "revision": 8,
   "manifest_location": "in-repository",
   "authority": {
     "note": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority."
@@ -161,7 +161,12 @@
           "src/main.rs",
           "src/fix.rs",
           "src/transaction.rs",
-          "src/verify.rs"
+          "src/verify.rs",
+          "mncs/doctor/remediate.mncs",
+          "mncs/doctor_family.mncs",
+          "mncs/doctor/family.backend.json",
+          "src/generated/doctor_version.rs",
+          "src/mncs_runtime.rs"
         ],
         "invocation": {
           "kind": "executable",
@@ -360,6 +365,17 @@
         "required": false,
         "evidence": {
           "source": "mncs/doctor/family_change.mncs",
+          "kind": "native-import"
+        }
+      },
+      {
+        "contract": "mncs-commons.family-remediation",
+        "envelope": {
+          "op": "any"
+        },
+        "required": true,
+        "evidence": {
+          "source": "mncs/doctor/remediate.mncs",
           "kind": "native-import"
         }
       },

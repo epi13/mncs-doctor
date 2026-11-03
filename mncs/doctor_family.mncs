@@ -10,6 +10,7 @@ use doctor.fix.v1 as fix;
 use doctor.health.v1 as health;
 use doctor.migration.v1 as migration;
 use doctor.report.v1 as report;
+use doctor.remediate.v1 as remediate;
 use doctor.scanner.v1 as scanner;
 use doctor.transaction.v1 as transaction;
 use doctor.verify.v1 as verify;
@@ -56,6 +57,18 @@ fn report_code() -> (result: report.ExitDecision) {
         verified: false,
         verify_passed: true,
     });
+}
+
+fn remediation_repair_code() -> (result: remediate.RemediationClass) {
+    return remediate.classify_repair(0, true);
+}
+
+fn remediation_stop_code() -> (result: remediate.StopDisposition) {
+    return remediate.classify_stop(0, true);
+}
+
+fn remediation_residual_code() -> (result: remediate.ResidualDisposition) {
+    return remediate.classify_residual(0);
 }
 
 fn scanner_code() -> (result: [u64; 6]) {

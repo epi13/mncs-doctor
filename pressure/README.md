@@ -42,6 +42,7 @@ split (see its file); DOC-P-006's index line was stale and is corrected below.
 | [DOC-P-019](DOC-P-019.md) | Typed record/enum host-call ergonomics | low | workaround |
 | [DOC-P-020](DOC-P-020.md) | No Rust session batch-call API | medium | open |
 | [DOC-P-021](DOC-P-021.md) | Pure backend values pass with unresolved obligations | medium | open |
+| [DOC-P-022](DOC-P-022.md) | No native remediation-classification policy module | low | fixed-upstream |
 
 Covered by Profile 0.16, therefore **not** pressure (verified, not
 assumed): file creation, positioned writes, appends, mkdir, same-dir

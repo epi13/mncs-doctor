@@ -1,6 +1,6 @@
 # DOC-P-022 — No native remediation-classification policy module
 
-Status: open
+Status: fixed-upstream (2026-11-03)
 
 Category: tooling | compiler
 
@@ -10,11 +10,10 @@ Frequency: every `remediate` run
 
 ## Doctor workload
 
-`remediate` classifies each outcome as safe-automatic, bounded
-reconciliation, or escalation (`src/remediate.rs`). The classification is a
-pure policy over finite inputs (applicability level, stop reason, severity,
-budget state) and belongs in MNCS beside the existing fix/health/report
-policy modules. It is currently implemented in Rust.
+`remediate` classifies repair applicability, convergence stops, and residual
+diagnostic severity. This pure policy belongs in MNCS beside the existing
+fix/health/report modules, with the shared classification law owned by
+Commons.
 
 ## Minimal reproducer
 
@@ -25,24 +24,21 @@ let class = policy.remediate_classify(applicability, stop, severity, budget)?;
 
 ## Current behavior
 
-Rust computes the class in `src/remediate.rs` (`escalation_for_blocked`,
-`escalation_for_stop`, round/budget accounting in `cmd_remediate`) while
-the substantive repair, convergence, verification, and exit policies it
-orchestrates already execute as MNCS (`doctor.fix`, `doctor.verify`,
-`doctor.health`, `doctor.report` entrypoints, proven by
-`tests/mncs_parity.rs`).
+The original Rust class and severity matches are retired. Doctor now calls
+the imported Commons policy through the embedded family session for repair
+classes, stop dispositions, residual escalation, degraded-file counts, and
+blocker counts. Rust retains Doctor-specific code/action strings, report
+projection, and the bounded work loop. The current `mncs-embed` revision
+executes the 0.18 cross-root import, and the generated binding uses the
+family artifact's aggregate interface identity.
 
 ## Removal condition
 
-Add `mncs/doctor/remediate.mncs` with a `classify` callable over the
-finite input tuple, regenerate the frozen family
-(`scripts/freeze-doctor-family.sh`), extend the backend corpus
-(`fixtures/backend/family-corpus.json`) with classification vectors, add
-generated Rust bindings plus parity tests, and delete the Rust
-classification paths once parity holds. Blocked on compiler headroom for
-a family freeze cycle, not on language expressiveness.
+Resolved by consuming the existing Commons classifier through a thin
+Doctor MNCS adapter, freezing the module into the production family, and
+retiring the matching Rust classification paths.
 
-## 2026-10-01 re-evaluation (close-out run; stays open)
+## 2026-10-01 re-evaluation (historical status: blocked)
 
 The policy half is done: the classification law now exists natively in
 Commons (`mncs.commons.family.remediation.v1`: `classify_repair`,
@@ -65,7 +61,7 @@ run:
 - All family-import changes were therefore reverted; doctor stays green
   on its frozen 0.16 family with the tested Rust classification paths.
 
-Precise removal condition now: re-pin mncs-embed to a compiler revision
+The removal condition at that time was to re-pin mncs-embed to a compiler revision
 whose runtime executes 0.18 cross-root imports (blocked on the active
 compiler agent's finite/enum work settling — do not force), then
 re-freeze with the Commons import plus thin wrappers, regenerate
@@ -76,3 +72,21 @@ from doctor's hot path (~100ms each plus a toolchain runtime dependency
 in a batch repair tool), and vendor-duplicating the law into a 0.16
 doctor module (a parallel standard, forbidden by Commons ownership of
 `mncs.remediation/1`).
+
+
+## 2026-11-03 resolution
+
+Doctor added `mncs/doctor/remediate.mncs` as an adapter to the existing
+`mncs.commons.family.remediation.v1` law, froze it into the production family,
+and declared the Commons dependency in its project manifest. Runtime
+integration tests compare native results against independent vectors for
+granted/blocked repairs, all stop classes (including unknown codes), and
+residual error/warning/info behavior. `tests/remediate.rs` and
+`tests/health_epoch.rs` cover the real command and cached re-emission.
+
+The previous block came from a stale `mncs-embed` pin and a generated Rust
+binding decoder that rejected the pair-array record shape returned by typed
+native calls. Language revision `2317e629` repairs that decoder; Doctor pins
+it and checks the generated root binding against the frozen aggregate interface
+identity. Evidence is recorded in
+`evidence/native-remediation-classification-20261103.json`.

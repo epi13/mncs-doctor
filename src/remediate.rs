@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::fix::{Applicability, Convergence, StopReason};
+use crate::mncs_runtime::{DoctorMncsRuntime, RuntimeError};
 use crate::transaction::DiffSummary;
 use crate::verify::VerificationOutcome;
 use crate::DOCTOR_VERSION;
@@ -247,14 +248,16 @@ impl RemediationReport {
     /// Recompute summary counts and the remaining id list from records.
     /// Inline ids cap at [`MAX_REMAINING_INLINE`]; overflow stays in
     /// evidence and flips `remaining_truncated`.
-    pub fn refresh_summary(&mut self, escalations: &[Escalation], degraded_files: usize) {
+    pub fn refresh_summary(
+        &mut self,
+        escalations: &[Escalation],
+        degraded_files: usize,
+        blockers: usize,
+    ) {
         self.summary.repaired = self.repairs.len();
         self.summary.reconciled = self.reconciliations.len();
         self.summary.degraded = degraded_files;
-        self.summary.blockers = escalations
-            .iter()
-            .filter(|item| item.severity == Severity::Error)
-            .count();
+        self.summary.blockers = blockers;
         let mut remaining: Vec<String> = escalations.iter().map(|item| item.id.clone()).collect();
         remaining.sort();
         remaining.dedup();
@@ -268,12 +271,19 @@ impl RemediationReport {
     }
 }
 
-/// Classify one blocked fix provider outcome as an escalation.
+/// Project one native-classified blocked provider into the Doctor evidence
+/// shape. The host owns stable codes and human action text; Commons decides
+/// whether the outcome belongs in the escalation class.
 pub fn escalation_for_blocked(
+    policy: &DoctorMncsRuntime,
     provider_id: &str,
     relative: &str,
     applicability: Applicability,
-) -> Escalation {
+) -> Result<Option<Escalation>, RuntimeError> {
+    let class = policy.classify_repair(applicability, false)?;
+    if class != RemediationClass::Escalation {
+        return Ok(None);
+    }
     let (code, action) = match applicability {
         Applicability::Review => (
             "review-required",
@@ -288,45 +298,48 @@ pub fn escalation_for_blocked(
             "The fix was unexpectedly ineligible; re-run with diagnostics.",
         ),
     };
-    Escalation {
+    Ok(Some(Escalation {
         id: format!("{code}:{relative}"),
         code: code.to_owned(),
         target: Some(relative.to_owned()),
         severity: Severity::Warning,
         action: format!("{provider_id}: {action}"),
-    }
+    }))
 }
 
-/// Classify a non-fixpoint convergence stop as an escalation.
+/// Project a native-classified convergence stop into Doctor evidence.
 pub fn escalation_for_stop(
+    policy: &DoctorMncsRuntime,
     relative: &str,
     stopped: StopReason,
     validated: bool,
-) -> Option<Escalation> {
-    match stopped {
-        StopReason::Fixpoint => None,
-        StopReason::BudgetExhausted => Some(Escalation {
-            id: format!("budget-exhausted:{relative}"),
-            code: "budget-exhausted".to_owned(),
-            target: Some(relative.to_owned()),
-            severity: Severity::Warning,
-            action: "The convergence budget expired with eligible fixes left; re-run remediate.".to_owned(),
-        }),
-        StopReason::Oscillation => Some(Escalation {
-            id: format!("oscillation:{relative}"),
-            code: "oscillation".to_owned(),
-            target: Some(relative.to_owned()),
-            severity: if validated { Severity::Warning } else { Severity::Error },
-            action: "A fix became applicable again after applying; inspect the provider pair before retrying.".to_owned(),
-        }),
-        StopReason::EditConflict => Some(Escalation {
-            id: format!("edit-conflict:{relative}"),
-            code: "edit-conflict".to_owned(),
-            target: Some(relative.to_owned()),
-            severity: Severity::Error,
-            action: "An edit set failed validation against a changed base; re-diagnose before retrying.".to_owned(),
-        }),
+) -> Result<Option<Escalation>, RuntimeError> {
+    let disposition = policy.classify_stop(stopped, validated)?;
+    if !disposition.escalate {
+        return Ok(None);
     }
+    let (code, action) = match stopped {
+        StopReason::Fixpoint => return Ok(None),
+        StopReason::BudgetExhausted => (
+            "budget-exhausted",
+            "The convergence budget expired with eligible fixes left; re-run remediate.",
+        ),
+        StopReason::Oscillation => (
+            "oscillation",
+            "A fix became applicable again after applying; inspect the provider pair before retrying.",
+        ),
+        StopReason::EditConflict => (
+            "edit-conflict",
+            "An edit set failed validation against a changed base; re-diagnose before retrying.",
+        ),
+    };
+    Ok(Some(Escalation {
+        id: format!("{code}:{relative}"),
+        code: code.to_owned(),
+        target: Some(relative.to_owned()),
+        severity: disposition.severity,
+        action: action.to_owned(),
+    }))
 }
 
 /// Classify one residual error-severity diagnostic as an escalation.
@@ -353,9 +366,10 @@ pub fn escalation_for_diagnostic(relative: &str, diagnostic: &Diagnostic) -> Esc
 /// Returns the escalations and whether every file sits at an immediate
 /// Safe fixpoint with nothing applicable.
 pub fn escalations_for_post_state(
+    policy: &DoctorMncsRuntime,
     convergence: &[Convergence],
     diagnostics: &BTreeMap<String, Vec<Diagnostic>>,
-) -> (Vec<Escalation>, bool) {
+) -> Result<(Vec<Escalation>, bool), RuntimeError> {
     let mut escalations = Vec::new();
     let mut idempotent = true;
     for conv in convergence {
@@ -363,39 +377,33 @@ pub fn escalations_for_post_state(
             idempotent = false;
         }
         for provider_id in &conv.blocked_review {
-            escalations.push(escalation_for_blocked(
-                provider_id,
-                &conv.relative,
-                Applicability::Review,
-            ));
+            if let Some(escalation) =
+                escalation_for_blocked(policy, provider_id, &conv.relative, Applicability::Review)?
+            {
+                escalations.push(escalation);
+            }
         }
         for provider_id in &conv.blocked_manual {
-            escalations.push(escalation_for_blocked(
-                provider_id,
-                &conv.relative,
-                Applicability::Manual,
-            ));
+            if let Some(escalation) =
+                escalation_for_blocked(policy, provider_id, &conv.relative, Applicability::Manual)?
+            {
+                escalations.push(escalation);
+            }
         }
-        if let Some(escalation) = escalation_for_stop(&conv.relative, conv.stopped, idempotent) {
+        if let Some(escalation) =
+            escalation_for_stop(policy, &conv.relative, conv.stopped, idempotent)?
+        {
             escalations.push(escalation);
         }
     }
     for (relative, file_diags) in diagnostics {
         for diag in file_diags {
-            if diag.severity == Severity::Error {
+            if policy.classify_residual(diag.severity)?.escalate {
                 escalations.push(escalation_for_diagnostic(relative, diag));
             }
         }
     }
-    (escalations, idempotent)
-}
-
-/// Count files carrying residual warning-severity diagnostics.
-pub fn degraded_files(diagnostics: &BTreeMap<String, Vec<Diagnostic>>) -> usize {
-    diagnostics
-        .values()
-        .filter(|diags| diags.iter().any(|diag| diag.severity == Severity::Warning))
-        .count()
+    Ok((escalations, idempotent))
 }
 
 /// Resolve where the evidence artifact goes.
@@ -503,7 +511,7 @@ mod tests {
             severity: Severity::Error,
             action: "fix".to_owned(),
         }];
-        report.refresh_summary(&escalations, 1);
+        report.refresh_summary(&escalations, 1, 1);
         assert_eq!(report.summary.repaired, 1);
         assert_eq!(report.summary.reconciled, 1);
         assert_eq!(report.summary.degraded, 1);
@@ -513,11 +521,20 @@ mod tests {
 
     #[test]
     fn stop_reasons_classify_deterministically() {
-        assert!(escalation_for_stop("a", StopReason::Fixpoint, true).is_none());
-        let budget = escalation_for_stop("a", StopReason::BudgetExhausted, true).unwrap();
+        let policy = DoctorMncsRuntime::production().unwrap();
+        assert!(
+            escalation_for_stop(&policy, "a", StopReason::Fixpoint, true)
+                .unwrap()
+                .is_none()
+        );
+        let budget = escalation_for_stop(&policy, "a", StopReason::BudgetExhausted, true)
+            .unwrap()
+            .unwrap();
         assert_eq!(budget.id, "budget-exhausted:a");
         assert_eq!(budget.severity, Severity::Warning);
-        let conflict = escalation_for_stop("a", StopReason::EditConflict, false).unwrap();
+        let conflict = escalation_for_stop(&policy, "a", StopReason::EditConflict, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(conflict.severity, Severity::Error);
     }
 

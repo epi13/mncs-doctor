@@ -1,6 +1,6 @@
 # MNCS Doctor core
 
-Real Doctor policy implemented in MNCS (profile 0.16), executed on the
+Real Doctor policy implemented in MNCS, executed on the
 `mncs-research-bytecode` backend via `mncs-embed`. This is not fixture
 corpus: these modules decide version classification, health aggregation,
 migration structure, edit conflicts, convergence, exit policy, and
@@ -8,10 +8,16 @@ verification composition. The Rust side keeps I/O mechanism (filesystem,
 processes, rendering) plus the reference implementations the parity
 suite compares against.
 
+Ten Doctor-owned modules declare profile 0.16. The remediation adapter
+declares profile 0.18 and imports `mncs.commons.family.remediation.v1`, so
+Commons owns the shared repair-class, stop-disposition, residual-escalation,
+degradation, and blocker decisions used by the production `remediate`
+command.
+
 ## Layout
 
 `mncs/doctor/<area>.mncs` — one policy module per area. The
-`mncs/doctor_family.mncs` freeze root imports all ten modules; its checked-in
+`mncs/doctor_family.mncs` freeze root imports all eleven modules; its checked-in
 `mncs/doctor/family.backend.json` is generated with the upstream compiler and
 opened by the production runtime. See DOC-P-018 and
 `docs/BACKEND-MATRIX-2026-09.md`. Semantic decisions that have a native
@@ -47,6 +53,7 @@ strings render host-side.
 | verification | generated `VerificationVerdict` finite value |
 | edit/fix verdicts | generated nominal finite values for conflict, shape, merge, and seen decisions |
 | discovery facts | generated `DirectoryName`, `FileName`, and `FileExtension` finite values |
+| remediation classification | shared Commons `RemediationClass`, `StopDisposition`, and `ResidualDisposition` values |
 | windows | fixed sequences (`[u64; 8]`, `[i64; 16]`) + live count; the value contract refuses wrong lengths/signedness fail-closed |
 
 The registry (which profiles exist, which is current) is host-loaded
@@ -85,3 +92,4 @@ parity test executes through them green.
   target validation policy.
 - `discovery.mncs` — directory traversal and file classification policy.
 - `scanner.mncs` — stateful 64-byte BOM/newline scanner ingress.
+- `remediate.mncs` — thin Doctor-facing adapter for the shared Commons 0.18 remediation policy.

@@ -24,7 +24,7 @@ thiserror = "2"
 sha2 = "0.10"
 # Production policy runtime. The revision is intentionally pinned so a
 # Doctor report can identify the exact language implementation that ran.
-mncs-embed = { git = "https://github.com/epi13/mncs-language", rev = "25525f0636f45b2f91a3391a37975b7a7334508e" }
+mncs-embed = { git = "https://github.com/epi13/mncs-language", rev = "2317e629a768b6cac11fbd6e61dc16a5805873e0" }
 
 [profile.release]
 opt-level = 2

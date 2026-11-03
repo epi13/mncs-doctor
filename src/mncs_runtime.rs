@@ -6,7 +6,7 @@
 //! artifacts, retaining sessions, validating scalar transport, and exposing
 //! policy decisions to command orchestration.
 //!
-//! The ten policy sources are frozen into one checked-in artifact generated
+//! The eleven policy sources are frozen into one checked-in artifact generated
 //! by the upstream compiler's import-resolution path. The shipped crate opens
 //! those bytes directly, so production startup does not invoke a compiler and
 //! all imported Doctor modules share one artifact/session identity.
@@ -20,19 +20,23 @@ use sha2::{Digest, Sha256};
 
 use crate::diagnostics::Severity;
 use crate::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts, NewlineStyle};
+use crate::fix::Applicability;
 use crate::fix::StopReason;
 use crate::health::{CheckResult, Status};
 use crate::migration::{MigrationVerdict, TransitionKind};
+use crate::remediate::RemediationClass;
 use crate::report::ExitCode;
 use crate::verify::VerificationOutcome;
 use crate::version::{LanguageVersion, VersionClass};
 
+#[allow(non_camel_case_types)]
 #[path = "generated/doctor_version.rs"]
 pub(crate) mod doctor_version;
 
 /// Exact language revision used by the embedded policy runtime.
-pub const MNCS_LANGUAGE_REV: &str = "25525f0636f45b2f91a3391a37975b7a7334508e";
-/// Policy source profile used by every embedded Doctor module.
+pub const MNCS_LANGUAGE_REV: &str = "2317e629a768b6cac11fbd6e61dc16a5805873e0";
+/// Profile declared by the Doctor family root. The remediation adapter imports
+/// the Commons policy at its independently declared 0.18 profile.
 pub const POLICY_PROFILE: &str = "0.16";
 /// Backend whose value-level execution is currently proven for Doctor.
 pub const POLICY_BACKEND: &str = "mncs-research-bytecode";
@@ -41,7 +45,7 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "3b0b24760049cec4f52e6b9b39d5fba88bd1811e339b937534a54dc9a3bdd935";
+    "bf8d36d83aea2d5ce9c3f2201f75c7c033999a1ab0f9788f19d386b6f9e9d32f";
 
 struct ModuleSpec {
     key: &'static str,
@@ -88,6 +92,10 @@ const MODULES: &[ModuleSpec] = &[
     ModuleSpec {
         key: "scanner",
         source: include_str!("../mncs/doctor/scanner.mncs"),
+    },
+    ModuleSpec {
+        key: "remediate",
+        source: include_str!("../mncs/doctor/remediate.mncs"),
     },
 ];
 
@@ -142,6 +150,20 @@ pub struct ScanSummary {
     pub crlf: u64,
     pub bare_cr: u64,
     pub chunks: usize,
+}
+
+/// Residual diagnostic policy returned by the shared Commons law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResidualClassification {
+    pub escalate: bool,
+    pub degraded: bool,
+}
+
+/// Convergence-stop policy returned by the shared Commons law.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StopClassification {
+    pub escalate: bool,
+    pub severity: Severity,
 }
 
 impl RuntimeError {
@@ -256,6 +278,147 @@ impl DoctorMncsRuntime {
             .map_err(|_| RuntimeError::new("mncs_runtime_trace", "entrypoint trace poisoned"))?
             .clone();
         Ok(provenance)
+    }
+
+    /// Classify one repair applicability through the shared Commons policy.
+    /// The host projects the closed applicability enum to its stable code;
+    /// Commons owns the class decision.
+    pub fn classify_repair(
+        &self,
+        applicability: Applicability,
+        granted: bool,
+    ) -> Result<RemediationClass, RuntimeError> {
+        let code = match applicability {
+            Applicability::Safe => 0,
+            Applicability::SemanticallyProven => 1,
+            Applicability::Review => 2,
+            Applicability::Manual => 3,
+        };
+        self.classify_repair_code(code, granted)
+    }
+
+    /// Classify an explicitly projected applicability code. Exposed for
+    /// independent tests of the Commons fail-closed behavior on unknowns.
+    pub fn classify_repair_code(
+        &self,
+        code: i64,
+        granted: bool,
+    ) -> Result<RemediationClass, RuntimeError> {
+        let class = doctor_version::classify_repair(
+            &self.session,
+            code,
+            granted,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.remediate.v1", "classify_repair")?;
+        Ok(match class {
+            doctor_version::RemediationClass::safe_automatic => RemediationClass::SafeAutomatic,
+            doctor_version::RemediationClass::bounded_reconciliation => {
+                RemediationClass::BoundedReconciliation
+            }
+            doctor_version::RemediationClass::escalation => RemediationClass::Escalation,
+        })
+    }
+
+    /// Classify a convergence stop. `StopReason` is projected to Commons'
+    /// stable closed integer vocabulary at this boundary.
+    pub fn classify_stop(
+        &self,
+        stopped: StopReason,
+        validated: bool,
+    ) -> Result<StopClassification, RuntimeError> {
+        let code = match stopped {
+            StopReason::Fixpoint => 0,
+            StopReason::BudgetExhausted => 1,
+            StopReason::Oscillation => 2,
+            StopReason::EditConflict => 3,
+        };
+        self.classify_stop_code(code, validated)
+    }
+
+    /// Classify a projected stop code, including unknown codes for
+    /// independent fail-closed verification.
+    pub fn classify_stop_code(
+        &self,
+        code: i64,
+        validated: bool,
+    ) -> Result<StopClassification, RuntimeError> {
+        let disposition = doctor_version::classify_stop(
+            &self.session,
+            code,
+            validated,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.remediate.v1", "classify_stop")?;
+        Ok(StopClassification {
+            escalate: disposition.escalate,
+            severity: host_remediation_severity(disposition.severity),
+        })
+    }
+
+    /// Classify residual severity through Commons. Unknown severity codes
+    /// remain available to independent tests and fail closed in native code.
+    pub fn classify_residual_code(
+        &self,
+        code: i64,
+    ) -> Result<ResidualClassification, RuntimeError> {
+        let disposition = doctor_version::classify_residual(
+            &self.session,
+            code,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.remediate.v1", "classify_residual")?;
+        Ok(ResidualClassification {
+            escalate: disposition.escalate,
+            degraded: disposition.degraded,
+        })
+    }
+
+    /// Classify a closed Doctor severity value through Commons.
+    pub fn classify_residual(
+        &self,
+        severity: Severity,
+    ) -> Result<ResidualClassification, RuntimeError> {
+        self.classify_residual_code(severity_code(severity))
+    }
+
+    /// Count files with native-classified residual warnings.
+    pub fn degraded_files(
+        &self,
+        diagnostics: &BTreeMap<String, Vec<crate::diagnostics::Diagnostic>>,
+    ) -> Result<usize, RuntimeError> {
+        let mut degraded = 0;
+        for file_diagnostics in diagnostics.values() {
+            let mut file_is_degraded = false;
+            for diagnostic in file_diagnostics {
+                if self
+                    .classify_residual_code(severity_code(diagnostic.severity))?
+                    .degraded
+                {
+                    file_is_degraded = true;
+                    break;
+                }
+            }
+            degraded += usize::from(file_is_degraded);
+        }
+        Ok(degraded)
+    }
+
+    /// Count blocker escalations from the Commons residual classification.
+    pub fn blocker_count(
+        &self,
+        escalations: &[crate::remediate::Escalation],
+    ) -> Result<usize, RuntimeError> {
+        let mut blockers = 0;
+        for escalation in escalations {
+            if self.classify_residual(escalation.severity)?.escalate {
+                blockers += 1;
+            }
+        }
+        Ok(blockers)
     }
 
     /// Classify one finding-count pair through the health policy session.
@@ -810,6 +973,22 @@ fn native_status(status: Status) -> doctor_version::Status {
         Status::Warning => doctor_version::Status::Warning,
         Status::Fail => doctor_version::Status::Fail,
         Status::Skipped => doctor_version::Status::Skipped,
+    }
+}
+
+fn severity_code(severity: Severity) -> i64 {
+    match severity {
+        Severity::Error => 0,
+        Severity::Warning => 1,
+        Severity::Info => 2,
+    }
+}
+
+fn host_remediation_severity(severity: doctor_version::RemediationSeverity) -> Severity {
+    match severity {
+        doctor_version::RemediationSeverity::error => Severity::Error,
+        doctor_version::RemediationSeverity::warning => Severity::Warning,
+        doctor_version::RemediationSeverity::info => Severity::Info,
     }
 }
 

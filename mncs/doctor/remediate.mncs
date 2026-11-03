@@ -1,0 +1,19 @@
+mncs 0.18;
+module doctor.remediate.v1;
+
+// Doctor consumes the shared family policy. This module exposes the
+// remediation classifiers in the Doctor family artifact without copying
+// Commons-owned classification rules into the host.
+use mncs.commons.family.remediation.v1 as shared;
+
+fn classify_repair(code: i64, granted: bool) -> (result: shared.RemediationClass) {
+    return shared.classify_repair(code, granted);
+}
+
+fn classify_stop(code: i64, validated: bool) -> (result: shared.StopDisposition) {
+    return shared.classify_stop(code, validated);
+}
+
+fn classify_residual(severity_code: i64) -> (result: shared.ResidualDisposition) {
+    return shared.classify_residual(severity_code);
+}

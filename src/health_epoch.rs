@@ -47,7 +47,7 @@ use crate::fix::Convergence;
 use crate::health::CheckResult;
 use crate::mncs_runtime::{static_policy_identity, PolicyProvenance};
 use crate::remediate::{
-    degraded_files, Escalation, RemediationEvidence, RemediationReport, RepairRecord,
+    Escalation, RemediationEvidence, RemediationReport, RepairRecord,
     REMEDIATION_EVIDENCE_SCHEMA_VERSION, REMEDIATION_SCHEMA_VERSION,
 };
 use crate::report::Report;
@@ -397,6 +397,14 @@ pub struct ValidatedState {
     /// Residual escalations over this state (empty for doctor-only).
     #[serde(default)]
     pub escalations: Vec<Escalation>,
+    /// Native Commons classification of residual degraded files. Stored
+    /// with the epoch so a validated fast-path reuses the exact native
+    /// result without starting the MNCS runtime again.
+    #[serde(default)]
+    pub residual_degraded_files: Option<usize>,
+    /// Native Commons classification of blocker escalations.
+    #[serde(default)]
+    pub residual_blockers: Option<usize>,
     /// Post-state verification with `errors_before == errors_after`
     /// (what a no-change rerun would compute), or `None` when the
     /// validating run could not prove it.
@@ -784,8 +792,13 @@ pub fn remediation_from_epoch(
         report.repairs = state.dry_repairs.clone();
         report.budget.items_done = state.dry_repairs.len();
     }
-    let degraded = degraded_files(&state.file_diagnostics);
-    report.refresh_summary(&state.escalations, degraded);
+    let degraded = state
+        .residual_degraded_files
+        .ok_or_else(|| "epoch lacks native residual classification".to_owned())?;
+    let blockers = state
+        .residual_blockers
+        .ok_or_else(|| "epoch lacks native blocker classification".to_owned())?;
+    report.refresh_summary(&state.escalations, degraded, blockers);
     report.validation = crate::remediate::RemediationValidation {
         passed: verification.passed,
         errors_before: verification.errors_before,
@@ -882,6 +895,8 @@ mod tests {
             dry_run: false,
             convergence: Vec::new(),
             escalations: Vec::new(),
+            residual_degraded_files: None,
+            residual_blockers: None,
             verification_post: None,
             remediation_exit_code: 0,
             remediation_exit_meaning: String::new(),

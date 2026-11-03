@@ -3,13 +3,13 @@
 use mncs_embed::{CallOptions, EmbedError, Session};
 use serde_json::{json, Map, Value};
 
-pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.2";
+pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "3658402860ed436e50e198b6137fb0389d776a1f5470ec97e068151b583f310d";
+    "613dcaa9153a1c150396e2560d41593972f13f94800d6b19955c06776c07c091";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "b33c256499f7da5a27bb149bff41a867d916942aaec8782f3dc4907a88c1391a";
+    "c4e369bead9d0bdfb611acea650a51bf9a8d1e6d6a675b482afd359ee79d8f51";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -111,15 +111,45 @@ fn finite_variant(value: &Value) -> Result<&str, EmbedError> {
         .and_then(Value::as_str)
         .ok_or_else(|| EmbedError::new("binding_decode", "typed finite has no variant identity"))
 }
-fn record_fields<'a>(value: &'a Value) -> Result<&'a Map<String, Value>, EmbedError> {
+fn record_fields(value: &Value) -> Result<Map<String, Value>, EmbedError> {
     let record = decode_object(value, "record")?
         .get("record")
         .and_then(Value::as_object)
         .ok_or_else(|| EmbedError::new("binding_decode", "typed record is malformed"))?;
-    record
+    let fields = record
         .get("fields")
-        .and_then(Value::as_object)
-        .ok_or_else(|| EmbedError::new("binding_decode", "typed record fields are malformed"))
+        .ok_or_else(|| EmbedError::new("binding_decode", "typed record fields are missing"))?;
+    if let Some(fields) = fields.as_object() {
+        return Ok(fields.clone());
+    }
+    let pairs = fields
+        .as_array()
+        .ok_or_else(|| EmbedError::new("binding_decode", "typed record fields are malformed"))?;
+    let mut normalized = Map::new();
+    for pair in pairs {
+        let pair = pair
+            .as_array()
+            .filter(|pair| pair.len() == 2)
+            .ok_or_else(|| {
+                EmbedError::new(
+                    "binding_decode",
+                    "typed record contains a malformed field pair",
+                )
+            })?;
+        let name = pair[0].as_str().ok_or_else(|| {
+            EmbedError::new("binding_decode", "typed record field name is not text")
+        })?;
+        if normalized
+            .insert(name.to_owned(), pair[1].clone())
+            .is_some()
+        {
+            return Err(EmbedError::new(
+                "binding_decode",
+                format!("typed record contains duplicate field {name}"),
+            ));
+        }
+    }
+    Ok(normalized)
 }
 fn returned_value(output: &mncs_embed::CallOutput) -> Result<Value, EmbedError> {
     if output.status != "returned" {
@@ -605,6 +635,99 @@ impl MigrationVerdict {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemediationClass {
+    safe_automatic,
+    bounded_reconciliation,
+    escalation,
+}
+
+impl HostValue for RemediationClass {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::safe_automatic => "safe_automatic",
+            Self::bounded_reconciliation => "bounded_reconciliation",
+            Self::escalation => "escalation",
+        };
+        json!({"finite": {"type": "RemediationClass", "variant": variant}})
+    }
+}
+
+impl RemediationClass {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "safe_automatic" => Ok(Self::safe_automatic),
+            "bounded_reconciliation" => Ok(Self::bounded_reconciliation),
+            "escalation" => Ok(Self::escalation),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown RemediationClass variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemediationSeverity {
+    error,
+    warning,
+    info,
+}
+
+impl HostValue for RemediationSeverity {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::error => "error",
+            Self::warning => "warning",
+            Self::info => "info",
+        };
+        json!({"finite": {"type": "RemediationSeverity", "variant": variant}})
+    }
+}
+
+impl RemediationSeverity {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "error" => Ok(Self::error),
+            "warning" => Ok(Self::warning),
+            "info" => Ok(Self::info),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown RemediationSeverity variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryVerdict {
+    attempt,
+    suppress,
+}
+
+impl HostValue for RetryVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::attempt => "attempt",
+            Self::suppress => "suppress",
+        };
+        json!({"finite": {"type": "RetryVerdict", "variant": variant}})
+    }
+}
+
+impl RetryVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "attempt" => Ok(Self::attempt),
+            "suppress" => Ok(Self::suppress),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown RetryVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeenVerdict {
     Fresh,
     Seen,
@@ -869,6 +992,57 @@ impl VersionClass {
                 format!("unknown VersionClass variant {other}"),
             )),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BudgetResult {
+    pub exhausted: bool,
+    pub items_done: u64,
+    pub max_items: u64,
+    pub rounds: u64,
+}
+
+impl HostValue for BudgetResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "BudgetResult", "fields": {
+            "exhausted": json!({"boolean": {"value": self.exhausted}}),
+            "items_done": json!({"integer": {"value": self.items_done, "type": {"bits": 64, "signed": false}}}),
+            "max_items": json!({"integer": {"value": self.max_items, "type": {"bits": 64, "signed": false}}}),
+            "rounds": json!({"integer": {"value": self.rounds, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl BudgetResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let exhausted = decode_bool(
+            fields
+                .get("exhausted")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let items_done = decode_u64(
+            fields
+                .get("items_done")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let max_items = decode_u64(
+            fields
+                .get("max_items")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let rounds = decode_u64(
+            fields
+                .get("rounds")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            exhausted,
+            items_done,
+            max_items,
+            rounds,
+        })
     }
 }
 
@@ -1228,6 +1402,85 @@ impl EligibilityInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EscalationRecord {
+    pub action: Vec<u8>,
+    pub code: Vec<u8>,
+    pub id: Vec<u8>,
+    pub severity: RemediationSeverity,
+    pub target: Vec<u8>,
+    pub target_present: bool,
+}
+
+impl HostValue for EscalationRecord {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "EscalationRecord", "fields": {
+            "action": json!({"sequence": {"values": self.action.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "code": json!({"sequence": {"values": self.code.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "id": json!({"sequence": {"values": self.id.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "severity": self.severity.host_value(),
+            "target": json!({"sequence": {"values": self.target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "target_present": json!({"boolean": {"value": self.target_present}}),
+        }}})
+    }
+}
+
+impl EscalationRecord {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let action = sequence_values(
+            fields
+                .get("action")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let code = sequence_values(
+            fields
+                .get("code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let id = sequence_values(
+            fields
+                .get("id")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let severity = RemediationSeverity::from_host_value(
+            fields
+                .get("severity")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let target = sequence_values(
+            fields
+                .get("target")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let target_present = decode_bool(
+            fields
+                .get("target_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            action,
+            code,
+            id,
+            severity,
+            target,
+            target_present,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExitInput {
     pub review_blocked: bool,
     pub verified: bool,
@@ -1274,6 +1527,88 @@ impl ExitInput {
             verified,
             verify_passed,
             worst,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FailureIdentityMaterial {
+    pub code: Vec<u8>,
+    pub observation_digest: Vec<u8>,
+    pub provider_revision: Vec<u8>,
+    pub recovery_available: bool,
+    pub service: Vec<u8>,
+    pub status: Vec<u8>,
+}
+
+impl HostValue for FailureIdentityMaterial {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "FailureIdentityMaterial", "fields": {
+            "code": json!({"sequence": {"values": self.code.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "observation_digest": json!({"sequence": {"values": self.observation_digest.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "provider_revision": json!({"sequence": {"values": self.provider_revision.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "recovery_available": json!({"boolean": {"value": self.recovery_available}}),
+            "service": json!({"sequence": {"values": self.service.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "status": json!({"sequence": {"values": self.status.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl FailureIdentityMaterial {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let code = sequence_values(
+            fields
+                .get("code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let observation_digest = sequence_values(
+            fields
+                .get("observation_digest")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let provider_revision = sequence_values(
+            fields
+                .get("provider_revision")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let recovery_available = decode_bool(
+            fields
+                .get("recovery_available")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let service = sequence_values(
+            fields
+                .get("service")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let status = sequence_values(
+            fields
+                .get("status")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            code,
+            observation_digest,
+            provider_revision,
+            recovery_available,
+            service,
+            status,
         })
     }
 }
@@ -1476,6 +1811,585 @@ impl PlanInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RemediationEnvelope {
+    pub budget: BudgetResult,
+    pub dry_run: bool,
+    pub escalations: Vec<EscalationRecord>,
+    pub evidence: Vec<u8>,
+    pub evidence_present: bool,
+    pub provider: Vec<u8>,
+    pub reconciliations: Vec<RepairRecord>,
+    pub remaining: Vec<Vec<u8>>,
+    pub repairs: Vec<RepairRecord>,
+    pub schema_version: Vec<u8>,
+    pub scope: RemediationScope,
+    pub summary: RemediationSummary,
+    pub validation: ValidationResult,
+}
+
+impl HostValue for RemediationEnvelope {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RemediationEnvelope", "fields": {
+            "budget": self.budget.host_value(),
+            "dry_run": json!({"boolean": {"value": self.dry_run}}),
+            "escalations": json!({"sequence": {"values": self.escalations.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "evidence": json!({"sequence": {"values": self.evidence.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "evidence_present": json!({"boolean": {"value": self.evidence_present}}),
+            "provider": json!({"sequence": {"values": self.provider.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "reconciliations": json!({"sequence": {"values": self.reconciliations.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "remaining": json!({"sequence": {"values": self.remaining.iter().map(|item| json!({"sequence": {"values": item.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}),
+            "repairs": json!({"sequence": {"values": self.repairs.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "schema_version": json!({"sequence": {"values": self.schema_version.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "scope": self.scope.host_value(),
+            "summary": self.summary.host_value(),
+            "validation": self.validation.host_value(),
+        }}})
+    }
+}
+
+impl RemediationEnvelope {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let budget = BudgetResult::from_host_value(
+            fields
+                .get("budget")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let dry_run = decode_bool(
+            fields
+                .get("dry_run")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let escalations = sequence_values(
+            fields
+                .get("escalations")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| EscalationRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let evidence = sequence_values(
+            fields
+                .get("evidence")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let evidence_present = decode_bool(
+            fields
+                .get("evidence_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let provider = sequence_values(
+            fields
+                .get("provider")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let reconciliations = sequence_values(
+            fields
+                .get("reconciliations")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| RepairRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let remaining = sequence_values(
+            fields
+                .get("remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| {
+            sequence_values(item)?
+                .iter()
+                .map(|item| decode_u8(item))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let repairs = sequence_values(
+            fields
+                .get("repairs")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| RepairRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let schema_version = sequence_values(
+            fields
+                .get("schema_version")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let scope = RemediationScope::from_host_value(
+            fields
+                .get("scope")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let summary = RemediationSummary::from_host_value(
+            fields
+                .get("summary")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let validation = ValidationResult::from_host_value(
+            fields
+                .get("validation")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            budget,
+            dry_run,
+            escalations,
+            evidence,
+            evidence_present,
+            provider,
+            reconciliations,
+            remaining,
+            repairs,
+            schema_version,
+            scope,
+            summary,
+            validation,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemediationEnvelopeIdentityMaterial {
+    pub budget: BudgetResult,
+    pub dry_run: bool,
+    pub escalations: Vec<EscalationRecord>,
+    pub evidence: Vec<u8>,
+    pub evidence_present: bool,
+    pub provider: Vec<u8>,
+    pub reconciliations: Vec<RepairRecord>,
+    pub remaining: Vec<Vec<u8>>,
+    pub repairs: Vec<RepairRecord>,
+    pub schema_version: Vec<u8>,
+    pub scope: RemediationScope,
+    pub summary: RemediationSummary,
+    pub validation: ValidationResult,
+}
+
+impl HostValue for RemediationEnvelopeIdentityMaterial {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RemediationEnvelopeIdentityMaterial", "fields": {
+            "budget": self.budget.host_value(),
+            "dry_run": json!({"boolean": {"value": self.dry_run}}),
+            "escalations": json!({"sequence": {"values": self.escalations.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "evidence": json!({"sequence": {"values": self.evidence.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "evidence_present": json!({"boolean": {"value": self.evidence_present}}),
+            "provider": json!({"sequence": {"values": self.provider.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "reconciliations": json!({"sequence": {"values": self.reconciliations.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "remaining": json!({"sequence": {"values": self.remaining.iter().map(|item| json!({"sequence": {"values": item.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}),
+            "repairs": json!({"sequence": {"values": self.repairs.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "schema_version": json!({"sequence": {"values": self.schema_version.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "scope": self.scope.host_value(),
+            "summary": self.summary.host_value(),
+            "validation": self.validation.host_value(),
+        }}})
+    }
+}
+
+impl RemediationEnvelopeIdentityMaterial {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let budget = BudgetResult::from_host_value(
+            fields
+                .get("budget")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let dry_run = decode_bool(
+            fields
+                .get("dry_run")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let escalations = sequence_values(
+            fields
+                .get("escalations")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| EscalationRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let evidence = sequence_values(
+            fields
+                .get("evidence")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let evidence_present = decode_bool(
+            fields
+                .get("evidence_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let provider = sequence_values(
+            fields
+                .get("provider")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let reconciliations = sequence_values(
+            fields
+                .get("reconciliations")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| RepairRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let remaining = sequence_values(
+            fields
+                .get("remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| {
+            sequence_values(item)?
+                .iter()
+                .map(|item| decode_u8(item))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let repairs = sequence_values(
+            fields
+                .get("repairs")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| RepairRecord::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let schema_version = sequence_values(
+            fields
+                .get("schema_version")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let scope = RemediationScope::from_host_value(
+            fields
+                .get("scope")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let summary = RemediationSummary::from_host_value(
+            fields
+                .get("summary")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let validation = ValidationResult::from_host_value(
+            fields
+                .get("validation")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            budget,
+            dry_run,
+            escalations,
+            evidence,
+            evidence_present,
+            provider,
+            reconciliations,
+            remaining,
+            repairs,
+            schema_version,
+            scope,
+            summary,
+            validation,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemediationScope {
+    pub domain: Vec<u8>,
+    pub target: Vec<u8>,
+}
+
+impl HostValue for RemediationScope {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RemediationScope", "fields": {
+            "domain": json!({"sequence": {"values": self.domain.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "target": json!({"sequence": {"values": self.target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl RemediationScope {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let domain = sequence_values(
+            fields
+                .get("domain")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let target = sequence_values(
+            fields
+                .get("target")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { domain, target })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemediationSummary {
+    pub blockers: u64,
+    pub degraded: u64,
+    pub reconciled: u64,
+    pub repaired: u64,
+}
+
+impl HostValue for RemediationSummary {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RemediationSummary", "fields": {
+            "blockers": json!({"integer": {"value": self.blockers, "type": {"bits": 64, "signed": false}}}),
+            "degraded": json!({"integer": {"value": self.degraded, "type": {"bits": 64, "signed": false}}}),
+            "reconciled": json!({"integer": {"value": self.reconciled, "type": {"bits": 64, "signed": false}}}),
+            "repaired": json!({"integer": {"value": self.repaired, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl RemediationSummary {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let blockers = decode_u64(
+            fields
+                .get("blockers")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let degraded = decode_u64(
+            fields
+                .get("degraded")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let reconciled = decode_u64(
+            fields
+                .get("reconciled")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let repaired = decode_u64(
+            fields
+                .get("repaired")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            blockers,
+            degraded,
+            reconciled,
+            repaired,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepairRecord {
+    pub after_fingerprint: Vec<u8>,
+    pub after_present: bool,
+    pub before_fingerprint: Vec<u8>,
+    pub before_present: bool,
+    pub _class: RemediationClass,
+    pub detail: Vec<u8>,
+    pub id: Vec<u8>,
+    pub provider: Vec<u8>,
+    pub target: Vec<u8>,
+    pub target_present: bool,
+    pub validated: bool,
+}
+
+impl HostValue for RepairRecord {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RepairRecord", "fields": {
+            "after_fingerprint": json!({"sequence": {"values": self.after_fingerprint.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "after_present": json!({"boolean": {"value": self.after_present}}),
+            "before_fingerprint": json!({"sequence": {"values": self.before_fingerprint.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "before_present": json!({"boolean": {"value": self.before_present}}),
+            "_class": self._class.host_value(),
+            "detail": json!({"sequence": {"values": self.detail.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "id": json!({"sequence": {"values": self.id.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "provider": json!({"sequence": {"values": self.provider.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "target": json!({"sequence": {"values": self.target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "target_present": json!({"boolean": {"value": self.target_present}}),
+            "validated": json!({"boolean": {"value": self.validated}}),
+        }}})
+    }
+}
+
+impl RepairRecord {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let after_fingerprint = sequence_values(
+            fields
+                .get("after_fingerprint")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let after_present = decode_bool(
+            fields
+                .get("after_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let before_fingerprint = sequence_values(
+            fields
+                .get("before_fingerprint")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let before_present = decode_bool(
+            fields
+                .get("before_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let _class = RemediationClass::from_host_value(
+            fields
+                .get("_class")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let detail = sequence_values(
+            fields
+                .get("detail")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let id = sequence_values(
+            fields
+                .get("id")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let provider = sequence_values(
+            fields
+                .get("provider")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let target = sequence_values(
+            fields
+                .get("target")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let target_present = decode_bool(
+            fields
+                .get("target_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let validated = decode_bool(
+            fields
+                .get("validated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            after_fingerprint,
+            after_present,
+            before_fingerprint,
+            before_present,
+            _class,
+            detail,
+            id,
+            provider,
+            target,
+            target_present,
+            validated,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualDisposition {
+    pub degraded: bool,
+    pub escalate: bool,
+}
+
+impl HostValue for ResidualDisposition {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ResidualDisposition", "fields": {
+            "degraded": json!({"boolean": {"value": self.degraded}}),
+            "escalate": json!({"boolean": {"value": self.escalate}}),
+        }}})
+    }
+}
+
+impl ResidualDisposition {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let degraded = decode_bool(
+            fields
+                .get("degraded")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let escalate = decode_bool(
+            fields
+                .get("escalate")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { degraded, escalate })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetryPolicy {
+    pub base_delay_secs: u64,
+    pub max_delay_secs: u64,
+}
+
+impl HostValue for RetryPolicy {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "RetryPolicy", "fields": {
+            "base_delay_secs": json!({"integer": {"value": self.base_delay_secs, "type": {"bits": 64, "signed": false}}}),
+            "max_delay_secs": json!({"integer": {"value": self.max_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl RetryPolicy {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let base_delay_secs = decode_u64(
+            fields
+                .get("base_delay_secs")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let max_delay_secs = decode_u64(
+            fields
+                .get("max_delay_secs")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            base_delay_secs,
+            max_delay_secs,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SeenBeforeInput {
     pub count: u64,
     pub fired: Vec<u64>,
@@ -1557,6 +2471,38 @@ impl ShapeInput {
             replacement_len,
             start,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StopDisposition {
+    pub escalate: bool,
+    pub severity: RemediationSeverity,
+}
+
+impl HostValue for StopDisposition {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "StopDisposition", "fields": {
+            "escalate": json!({"boolean": {"value": self.escalate}}),
+            "severity": self.severity.host_value(),
+        }}})
+    }
+}
+
+impl StopDisposition {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let escalate = decode_bool(
+            fields
+                .get("escalate")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let severity = RemediationSeverity::from_host_value(
+            fields
+                .get("severity")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { escalate, severity })
     }
 }
 
@@ -1679,6 +2625,65 @@ impl TransactionTargetInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ValidationResult {
+    pub errors_after: u64,
+    pub errors_before: u64,
+    pub idempotent: bool,
+    pub idempotent_known: bool,
+    pub passed: bool,
+}
+
+impl HostValue for ValidationResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ValidationResult", "fields": {
+            "errors_after": json!({"integer": {"value": self.errors_after, "type": {"bits": 64, "signed": false}}}),
+            "errors_before": json!({"integer": {"value": self.errors_before, "type": {"bits": 64, "signed": false}}}),
+            "idempotent": json!({"boolean": {"value": self.idempotent}}),
+            "idempotent_known": json!({"boolean": {"value": self.idempotent_known}}),
+            "passed": json!({"boolean": {"value": self.passed}}),
+        }}})
+    }
+}
+
+impl ValidationResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let errors_after = decode_u64(
+            fields
+                .get("errors_after")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let errors_before = decode_u64(
+            fields
+                .get("errors_before")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let idempotent = decode_bool(
+            fields
+                .get("idempotent")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let idempotent_known = decode_bool(
+            fields
+                .get("idempotent_known")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let passed = decode_bool(
+            fields
+                .get("passed")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            errors_after,
+            errors_before,
+            idempotent,
+            idempotent_known,
+            passed,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct VersionInput {
     pub current_major: i64,
     pub current_minor: i64,
@@ -1792,6 +2797,68 @@ pub fn classify(
     )?;
     let value = returned_value(&output)?;
     Ok(VersionClass::from_host_value(&value)?)
+}
+
+pub fn classify_repair(
+    session: &Session,
+    code: i64,
+    granted: bool,
+    options: CallOptions,
+) -> Result<RemediationClass, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": code}}),
+        json!({"boolean": {"value": granted}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "classify_repair",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(RemediationClass::from_host_value(&value)?)
+}
+
+pub fn classify_residual(
+    session: &Session,
+    input: i64,
+    options: CallOptions,
+) -> Result<ResidualDisposition, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"integer": {"value": input}})])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "classify_residual",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ResidualDisposition::from_host_value(&value)?)
+}
+
+pub fn classify_stop(
+    session: &Session,
+    code: i64,
+    validated: bool,
+    options: CallOptions,
+) -> Result<StopDisposition, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": code}}),
+        json!({"boolean": {"value": validated}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "classify_stop",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(StopDisposition::from_host_value(&value)?)
 }
 
 pub fn combine(
@@ -2296,6 +3363,117 @@ pub fn rank(
     Ok(Severity::from_host_value(&value)?)
 }
 
+pub fn remediation_envelope_identity_material(
+    session: &Session,
+    input: RemediationEnvelope,
+    options: CallOptions,
+) -> Result<RemediationEnvelopeIdentityMaterial, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "remediation_envelope_identity_material",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(RemediationEnvelopeIdentityMaterial::from_host_value(
+        &value,
+    )?)
+}
+
+pub fn remediation_envelope_schema(
+    session: &Session,
+    options: CallOptions,
+) -> Result<Vec<u8>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "remediation_envelope_schema",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn remediation_evidence_schema(
+    session: &Session,
+    options: CallOptions,
+) -> Result<Vec<u8>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "remediation_evidence_schema",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn remediation_repair_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<RemediationClass, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "remediation_repair_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(RemediationClass::from_host_value(&value)?)
+}
+
+pub fn remediation_residual_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<ResidualDisposition, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "remediation_residual_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ResidualDisposition::from_host_value(&value)?)
+}
+
+pub fn remediation_stop_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<StopDisposition, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "remediation_stop_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(StopDisposition::from_host_value(&value)?)
+}
+
 pub fn report_code(session: &Session, options: CallOptions) -> Result<ExitDecision, EmbedError> {
     let arguments = serde_json::to_string(&Vec::<Value>::new())
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
@@ -2308,6 +3486,99 @@ pub fn report_code(session: &Session, options: CallOptions) -> Result<ExitDecisi
     )?;
     let value = returned_value(&output)?;
     Ok(ExitDecision::from_host_value(&value)?)
+}
+
+pub fn repository_domain(session: &Session, options: CallOptions) -> Result<Vec<u8>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "repository_domain",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn retry_delay_secs(
+    session: &Session,
+    base_delay_secs: u64,
+    max_delay_secs: u64,
+    attempts: u64,
+    options: CallOptions,
+) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": base_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": max_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": attempts, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "retry_delay_secs",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
+}
+
+pub fn retry_eligible(
+    session: &Session,
+    base_delay_secs: u64,
+    max_delay_secs: u64,
+    attempts: u64,
+    elapsed_secs: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": base_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": max_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": attempts, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": elapsed_secs, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "retry_eligible",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn retry_verdict(
+    session: &Session,
+    base_delay_secs: u64,
+    max_delay_secs: u64,
+    attempts: u64,
+    elapsed_secs: u64,
+    options: CallOptions,
+) -> Result<RetryVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": base_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": max_delay_secs, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": attempts, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": elapsed_secs, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.commons.family.remediation.v1",
+        "retry_verdict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(RetryVerdict::from_host_value(&value)?)
 }
 
 pub fn scan_kinds(
