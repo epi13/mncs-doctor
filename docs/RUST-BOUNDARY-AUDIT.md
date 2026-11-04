@@ -118,13 +118,16 @@ authorize a write by itself; stale-base, symlink refusal, rollback, and
 permission preservation remain host invariants.
 
 ### `discovery.rs` — A (policy) + B (mechanism)
-Production `doctor.discovery.v1` decides exclusion/traversal verdicts and
-file classes from host-acquired nominal directory-name, file-name, and
-extension facts; deterministic ordering stays in the host walker. Mechanism
-(directory enumeration beyond one level,
-metadata, symlink inspection) is B (DOC-P-008…014). `fs_list` covers one
-level with kinds (file/dir/other); multi-level navigation handles are not
-exposed.
+Production `doctor.discovery.v1` decides directory exclusion/traversal,
+symlink path handling, and file classes from host-acquired facts. Its native
+symlink policy classifies file, directory, other, and unresolved targets;
+applies file/directory follow settings; and resolves directory-link depth and
+cycle outcomes. The Rust walker retains target metadata and directory
+identity acquisition, deterministic ordering, recursion, and file reads.
+The independent Rust decisions remain available as a differential reference.
+Mechanism (directory enumeration beyond one level, metadata, symlink
+inspection) is B (DOC-P-008…014). `fs_list` covers one level with kinds
+(file/dir/other); multi-level navigation handles are not exposed.
 
 ### `toolchain.rs` — D
 Host-tool probing (PATH search, subprocess, `--help` sniffing) is

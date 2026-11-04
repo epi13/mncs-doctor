@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "0e9bcd847710f752c0c01a28f5737caf2d4289e970f4144807e0a5671cd0f025";
+    "893e0af793d936a34d920c713db9850d99915aa46ee9ce180734e644a285a2c2";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "7aa2975c774fe9a30e1dc3158bb78ec0f08734502d21a53e40338c36bd6750c1";
+    "a91985a5e902be8956bab40eb76abd06792caf11500bda95c92a5cb8bf7a0f3d";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -885,6 +885,85 @@ impl StopDecision {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown StopDecision variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymlinkDecision {
+    FollowFile,
+    DescendDirectory,
+    SkipDepth,
+    SkipCycle,
+    SkipDirectory,
+    SkipFile,
+    SkipUnresolvable,
+}
+
+impl HostValue for SymlinkDecision {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::FollowFile => "FollowFile",
+            Self::DescendDirectory => "DescendDirectory",
+            Self::SkipDepth => "SkipDepth",
+            Self::SkipCycle => "SkipCycle",
+            Self::SkipDirectory => "SkipDirectory",
+            Self::SkipFile => "SkipFile",
+            Self::SkipUnresolvable => "SkipUnresolvable",
+        };
+        json!({"finite": {"type": "SymlinkDecision", "variant": variant}})
+    }
+}
+
+impl SymlinkDecision {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "FollowFile" => Ok(Self::FollowFile),
+            "DescendDirectory" => Ok(Self::DescendDirectory),
+            "SkipDepth" => Ok(Self::SkipDepth),
+            "SkipCycle" => Ok(Self::SkipCycle),
+            "SkipDirectory" => Ok(Self::SkipDirectory),
+            "SkipFile" => Ok(Self::SkipFile),
+            "SkipUnresolvable" => Ok(Self::SkipUnresolvable),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown SymlinkDecision variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymlinkTargetKind {
+    File,
+    Directory,
+    Other,
+    Unresolved,
+}
+
+impl HostValue for SymlinkTargetKind {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::File => "File",
+            Self::Directory => "Directory",
+            Self::Other => "Other",
+            Self::Unresolved => "Unresolved",
+        };
+        json!({"finite": {"type": "SymlinkTargetKind", "variant": variant}})
+    }
+}
+
+impl SymlinkTargetKind {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "File" => Ok(Self::File),
+            "Directory" => Ok(Self::Directory),
+            "Other" => Ok(Self::Other),
+            "Unresolved" => Ok(Self::Unresolved),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown SymlinkTargetKind variant {other}"),
             )),
         }
     }
@@ -2622,6 +2701,73 @@ impl StopRuleInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SymlinkDecisionInput {
+    pub cycle: bool,
+    pub depth: u64,
+    pub follow_directory: bool,
+    pub follow_file: bool,
+    pub max_depth: u64,
+    pub target: SymlinkTargetKind,
+}
+
+impl HostValue for SymlinkDecisionInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "SymlinkDecisionInput", "fields": {
+            "cycle": json!({"boolean": {"value": self.cycle}}),
+            "depth": json!({"integer": {"value": self.depth, "type": {"bits": 64, "signed": false}}}),
+            "follow_directory": json!({"boolean": {"value": self.follow_directory}}),
+            "follow_file": json!({"boolean": {"value": self.follow_file}}),
+            "max_depth": json!({"integer": {"value": self.max_depth, "type": {"bits": 64, "signed": false}}}),
+            "target": self.target.host_value(),
+        }}})
+    }
+}
+
+impl SymlinkDecisionInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let cycle = decode_bool(
+            fields
+                .get("cycle")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let depth = decode_u64(
+            fields
+                .get("depth")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let follow_directory = decode_bool(
+            fields
+                .get("follow_directory")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let follow_file = decode_bool(
+            fields
+                .get("follow_file")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let max_depth = decode_u64(
+            fields
+                .get("max_depth")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let target = SymlinkTargetKind::from_host_value(
+            fields
+                .get("target")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            cycle,
+            depth,
+            follow_directory,
+            follow_file,
+            max_depth,
+            target,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TransactionTargetInput {
     pub actual_present: bool,
     pub expected_present: bool,
@@ -3925,6 +4071,24 @@ pub fn stop_rule(
     let output = typed_call(session, "doctor.fix.v1", "stop_rule", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(StopDecision::from_host_value(&value)?)
+}
+
+pub fn symlink_decision(
+    session: &Session,
+    input: SymlinkDecisionInput,
+    options: CallOptions,
+) -> Result<SymlinkDecision, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "symlink_decision",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(SymlinkDecision::from_host_value(&value)?)
 }
 
 pub fn transaction_code(

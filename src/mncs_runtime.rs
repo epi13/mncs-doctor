@@ -19,7 +19,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{DelimiterScanResult, DelimiterScanStatus, Severity};
-use crate::discovery::{DirectoryDecision, DirectoryFacts, FileClass, FileFacts, NewlineStyle};
+use crate::discovery::{
+    DirectoryDecision, DirectoryFacts, FileClass, FileFacts, NewlineStyle, SymlinkDecision,
+    SymlinkFacts,
+};
 use crate::fix::Applicability;
 use crate::fix::StopReason;
 use crate::health::{CheckResult, Status};
@@ -47,7 +50,7 @@ const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "56873d51bdaddf0e79c5c65d70e8f5b2d6856d5031e49958943a1935845d9fdc";
+    "8c599cc0f0c690267ddcb36265ccfc3d532a51c745c8ecf9f2ccfb8fd49dd186";
 
 struct ModuleSpec {
     key: &'static str,
@@ -648,6 +651,41 @@ impl DoctorMncsRuntime {
             doctor_version::DirectoryDecision::SkipExcluded => Ok(DirectoryDecision::SkipExcluded),
             doctor_version::DirectoryDecision::SkipCycle => Ok(DirectoryDecision::SkipCycle),
             doctor_version::DirectoryDecision::SkipSymlink => Ok(DirectoryDecision::SkipSymlink),
+        }
+    }
+
+    /// Decide symlink traversal and file-follow policy from host-observed
+    /// target facts. The host still acquires metadata and applies effects.
+    pub fn discovery_symlink_decision(
+        &self,
+        facts: SymlinkFacts,
+    ) -> Result<SymlinkDecision, RuntimeError> {
+        let decision = doctor_version::symlink_decision(
+            &self.session,
+            doctor_version::SymlinkDecisionInput {
+                target: facts.target,
+                follow_file: facts.follow_file,
+                follow_directory: facts.follow_directory,
+                cycle: facts.cycle,
+                depth: facts.depth,
+                max_depth: facts.max_depth,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.discovery.v1", "symlink_decision")?;
+        match decision {
+            doctor_version::SymlinkDecision::FollowFile => Ok(SymlinkDecision::FollowFile),
+            doctor_version::SymlinkDecision::DescendDirectory => {
+                Ok(SymlinkDecision::DescendDirectory)
+            }
+            doctor_version::SymlinkDecision::SkipDepth => Ok(SymlinkDecision::SkipDepth),
+            doctor_version::SymlinkDecision::SkipCycle => Ok(SymlinkDecision::SkipCycle),
+            doctor_version::SymlinkDecision::SkipDirectory => Ok(SymlinkDecision::SkipDirectory),
+            doctor_version::SymlinkDecision::SkipFile => Ok(SymlinkDecision::SkipFile),
+            doctor_version::SymlinkDecision::SkipUnresolvable => {
+                Ok(SymlinkDecision::SkipUnresolvable)
+            }
         }
     }
 

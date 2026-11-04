@@ -61,6 +61,36 @@ fn healthy_repo_reports_two_files() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn production_discovery_uses_native_symlink_path_policy() {
+    let root = stage("repos/healthy");
+    fs::write(
+        root.join("symlink-target.txt"),
+        "mncs 0.18;\nmodule linked;\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("symlink-target.txt", root.join("linked.mncs")).unwrap();
+    std::os::unix::fs::symlink("missing-target", root.join("broken.mncs")).unwrap();
+
+    let out = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(
+        out.status.success(),
+        "status: {}; stderr: {}; stdout: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let report = stdout_json(&out);
+    // Two fixture sources plus the followed link; the broken link is skipped.
+    assert_eq!(report["inventory"]["files_checked"], 3);
+    assert_eq!(report["inventory"]["skipped_dirs"], 1);
+    let entrypoints = report["policy"]["entrypoints"].as_array().unwrap();
+    assert!(entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.discovery.v1::symlink_decision"));
+}
+
 #[test]
 fn outdated_repo_reports_sealed_profiles() {
     let root = stage("repos/outdated");

@@ -80,6 +80,52 @@ fn directory_decision(input: DirectoryDecisionInput) -> (result: DirectoryDecisi
     return DirectoryDecision.Descend;
 }
 
+enum SymlinkTargetKind { File, Directory, Other, Unresolved }
+enum SymlinkDecision {
+    FollowFile,
+    DescendDirectory,
+    SkipDepth,
+    SkipCycle,
+    SkipDirectory,
+    SkipFile,
+    SkipUnresolvable,
+}
+
+record SymlinkDecisionInput {
+    target: SymlinkTargetKind,
+    follow_file: bool,
+    follow_directory: bool,
+    cycle: bool,
+    depth: u64,
+    max_depth: u64,
+}
+
+fn symlink_decision(input: SymlinkDecisionInput) -> (result: SymlinkDecision) {
+    return match input.target {
+        SymlinkTargetKind.File => match input.follow_file {
+            true => SymlinkDecision.FollowFile,
+            false => SymlinkDecision.SkipFile,
+        },
+        SymlinkTargetKind.Directory => match directory_decision(DirectoryDecisionInput {
+            name: DirectoryName.Other,
+            extra_excluded: false,
+            is_symlink: true,
+            follow_symlink: input.follow_directory,
+            cycle: input.cycle,
+            depth: input.depth,
+            max_depth: input.max_depth,
+        }) {
+            DirectoryDecision.Descend => SymlinkDecision.DescendDirectory,
+            DirectoryDecision.SkipDepth => SymlinkDecision.SkipDepth,
+            DirectoryDecision.SkipCycle => SymlinkDecision.SkipCycle,
+            DirectoryDecision.SkipExcluded => SymlinkDecision.SkipDirectory,
+            DirectoryDecision.SkipSymlink => SymlinkDecision.SkipDirectory,
+        },
+        SymlinkTargetKind.Other => SymlinkDecision.SkipUnresolvable,
+        SymlinkTargetKind.Unresolved => SymlinkDecision.SkipUnresolvable,
+    };
+}
+
 enum FileName { Other, ForgeManifest, WorkspaceManifest, Cargo, ManifestJson }
 enum FileExtension { Other, Mncs }
 enum FileClass { Ignore, Source, ForgeManifest, WorkspaceManifest, ManifestJson, Cargo }

@@ -10,7 +10,8 @@ use std::sync::OnceLock;
 
 use mncs_doctor::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
 use mncs_doctor::discovery::{
-    DirectoryDecision, DirectoryFacts, DirectoryName, FileClass, FileExtension, FileFacts, FileName,
+    DirectoryDecision, DirectoryFacts, DirectoryName, FileClass, FileExtension, FileFacts,
+    FileName, SymlinkDecision, SymlinkFacts, SymlinkTargetKind,
 };
 use mncs_doctor::edits::{EditSet, TextEdit};
 use mncs_doctor::fix::{Applicability, StopReason};
@@ -561,6 +562,60 @@ fn parity_discovery_fact_classification() {
         assert_eq!(
             runtime
                 .discovery_file_class(FileFacts { name, extension })
+                .unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn parity_discovery_symlink_path_policy() {
+    let cases = [
+        (
+            (SymlinkTargetKind::File, true, false, false, 1, 64),
+            SymlinkDecision::FollowFile,
+        ),
+        (
+            (SymlinkTargetKind::File, false, false, false, 1, 64),
+            SymlinkDecision::SkipFile,
+        ),
+        (
+            (SymlinkTargetKind::Directory, false, false, false, 1, 64),
+            SymlinkDecision::SkipDirectory,
+        ),
+        (
+            (SymlinkTargetKind::Directory, false, true, false, 64, 64),
+            SymlinkDecision::DescendDirectory,
+        ),
+        (
+            (SymlinkTargetKind::Directory, false, true, true, 1, 64),
+            SymlinkDecision::SkipCycle,
+        ),
+        (
+            (SymlinkTargetKind::Directory, false, true, false, 65, 64),
+            SymlinkDecision::SkipDepth,
+        ),
+        (
+            (SymlinkTargetKind::Other, true, true, false, 1, 64),
+            SymlinkDecision::SkipUnresolvable,
+        ),
+        (
+            (SymlinkTargetKind::Unresolved, true, true, false, 1, 64),
+            SymlinkDecision::SkipUnresolvable,
+        ),
+    ];
+    let runtime = DoctorMncsRuntime::new().unwrap();
+    for ((target, follow_file, follow_directory, cycle, depth, max_depth), expected) in cases {
+        assert_eq!(
+            runtime
+                .discovery_symlink_decision(SymlinkFacts {
+                    target,
+                    follow_file,
+                    follow_directory,
+                    cycle,
+                    depth,
+                    max_depth,
+                })
                 .unwrap(),
             expected
         );

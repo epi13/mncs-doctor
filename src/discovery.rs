@@ -23,7 +23,9 @@ const ROOT_MARKERS: &[&str] = &["mncs-forge.toml", "mncs-workspace.toml", ".mncs
 /// Nominal discovery facts are the generated values from the language-owned
 /// family binding. The host acquires the fact from a path entry but does not
 /// define or assign a semantic integer discriminant.
-pub use crate::mncs_runtime::doctor_version::{DirectoryName, FileExtension, FileName};
+pub use crate::mncs_runtime::doctor_version::{
+    DirectoryName, FileExtension, FileName, SymlinkTargetKind,
+};
 
 /// Facts acquired by the host before MNCS decides whether a directory should
 /// be visited.
@@ -56,6 +58,42 @@ impl DirectoryDecision {
             Self::SkipExcluded => "excluded directory",
             Self::SkipCycle => "symlink cycle",
             Self::SkipSymlink => "symlinked directory (policy=skip)",
+        }
+    }
+}
+
+/// Facts about a symlink after the host has inspected its target metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SymlinkFacts {
+    pub target: SymlinkTargetKind,
+    pub follow_file: bool,
+    pub follow_directory: bool,
+    pub cycle: bool,
+    pub depth: u64,
+    pub max_depth: u64,
+}
+
+/// MNCS symlink path policy verdict. Rust applies traversal or read effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymlinkDecision {
+    FollowFile,
+    DescendDirectory,
+    SkipDepth,
+    SkipCycle,
+    SkipDirectory,
+    SkipFile,
+    SkipUnresolvable,
+}
+
+impl SymlinkDecision {
+    fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::FollowFile | Self::DescendDirectory => None,
+            Self::SkipDepth => Some("max depth exceeded"),
+            Self::SkipCycle => Some("symlink cycle"),
+            Self::SkipDirectory => Some("symlinked directory (policy=skip)"),
+            Self::SkipFile => Some("symlinked file (policy=skip)"),
+            Self::SkipUnresolvable => Some("unresolvable symlink"),
         }
     }
 }
@@ -409,7 +447,14 @@ fn canonicalize(path: &Path) -> Result<PathBuf, DiscoveryError> {
 pub fn discover(root: &Path, options: &DiscoveryOptions) -> Result<Inventory, DiscoveryError> {
     let directory_policy = |facts| Ok(rust_directory_decision(facts));
     let file_policy = |facts| Ok(rust_file_class(facts));
-    discover_with_policy(root, options, &directory_policy, &file_policy)
+    let symlink_policy = |facts| Ok(rust_symlink_decision(facts));
+    discover_with_policy(
+        root,
+        options,
+        &directory_policy,
+        &file_policy,
+        &symlink_policy,
+    )
 }
 
 /// Discover using explicit host-facts → policy callbacks. Production Doctor
@@ -420,8 +465,15 @@ pub fn discover_with_policy(
     options: &DiscoveryOptions,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
 ) -> Result<Inventory, DiscoveryError> {
-    let topology = discover_topology_with_policy(root, options, directory_policy, file_policy)?;
+    let topology = discover_topology_with_policy(
+        root,
+        options,
+        directory_policy,
+        file_policy,
+        symlink_policy,
+    )?;
     let mut sources = Vec::new();
     for candidate in &topology.sources {
         let path = root.join(&candidate.relative);
@@ -453,6 +505,7 @@ pub fn discover_topology_with_policy(
     options: &DiscoveryOptions,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
 ) -> Result<TopologySnapshot, DiscoveryError> {
     let mut topology = TopologySnapshot::default();
     let mut visited: Vec<(u64, u64)> = Vec::new();
@@ -465,6 +518,7 @@ pub fn discover_topology_with_policy(
         &mut visited,
         directory_policy,
         file_policy,
+        symlink_policy,
     )?;
     topology
         .directories
@@ -551,6 +605,7 @@ fn visit_topology_dir(
     visited: &mut Vec<(u64, u64)>,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
 ) -> Result<(), DiscoveryError> {
     // Doctor's own cache is a host-owned artifact.  It must not invalidate
     // the project topology merely because the cache was created after the
@@ -593,6 +648,7 @@ fn visit_topology_dir(
                 visited,
                 directory_policy,
                 file_policy,
+                symlink_policy,
             )?;
             continue;
         }
@@ -627,6 +683,7 @@ fn visit_topology_dir(
                 visited,
                 directory_policy,
                 file_policy,
+                symlink_policy,
             )?;
             continue;
         }
@@ -647,60 +704,62 @@ fn handle_topology_symlink(
     visited: &mut Vec<(u64, u64)>,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
 ) -> Result<(), DiscoveryError> {
-    let meta = fs::metadata(path);
-    match meta {
-        Ok(md) if md.is_dir() => {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let id = dir_id(&md);
-            let decision = directory_policy(DirectoryFacts {
-                name: directory_name(&name),
-                extra_excluded: false,
-                is_symlink: true,
-                follow_symlink: options.symlink_policy == SymlinkPolicy::Follow,
-                cycle: visited.contains(&id),
-                depth: (depth + 1) as u64,
-                max_depth: options.max_depth as u64,
-            })
-            .map_err(DiscoveryError::Policy)?;
-            if decision == DirectoryDecision::Descend {
-                visited.push(id);
-                visit_topology_dir(
-                    root,
-                    path,
-                    depth + 1,
-                    options,
-                    topology,
-                    visited,
-                    directory_policy,
-                    file_policy,
-                )?;
-            } else {
-                topology.skipped.push(SkippedDir {
-                    relative: rel_string(root, path),
-                    reason: decision.reason().to_owned(),
-                });
-            }
-            Ok(())
+    let mut target_directory_id = None;
+    let target = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => {
+            let id = dir_id(&metadata);
+            target_directory_id = Some(id);
+            SymlinkTargetKind::Directory
         }
-        Ok(md) if md.is_file() => {
-            if options.follow_file_symlinks {
-                record_topology_file(root, path, true, topology, file_policy)?;
-            } else {
-                topology.skipped.push(SkippedDir {
-                    relative: rel_string(root, path),
-                    reason: "symlinked file (policy=skip)".to_owned(),
-                });
-            }
-            Ok(())
+        Ok(metadata) if metadata.is_file() => SymlinkTargetKind::File,
+        Ok(_) => SymlinkTargetKind::Other,
+        Err(_) => SymlinkTargetKind::Unresolved,
+    };
+    let decision = symlink_policy(SymlinkFacts {
+        target,
+        follow_file: options.follow_file_symlinks,
+        follow_directory: options.symlink_policy == SymlinkPolicy::Follow,
+        cycle: target_directory_id.is_some_and(|id| visited.contains(&id)),
+        depth: (depth + 1) as u64,
+        max_depth: options.max_depth as u64,
+    })
+    .map_err(DiscoveryError::Policy)?;
+
+    match decision {
+        SymlinkDecision::FollowFile if target == SymlinkTargetKind::File => {
+            record_topology_file(root, path, true, topology, file_policy)
         }
-        _ => {
+        SymlinkDecision::DescendDirectory if target == SymlinkTargetKind::Directory => {
+            let id = target_directory_id.ok_or_else(|| {
+                DiscoveryError::Policy(
+                    "symlink policy requested directory traversal without directory identity".to_owned(),
+                )
+            })?;
+            visited.push(id);
+            visit_topology_dir(
+                root,
+                path,
+                depth + 1,
+                options,
+                topology,
+                visited,
+                directory_policy,
+                file_policy,
+                symlink_policy,
+            )
+        }
+        SymlinkDecision::FollowFile | SymlinkDecision::DescendDirectory => {
+            Err(DiscoveryError::Policy(format!(
+                "symlink policy decision {decision:?} is incompatible with observed target {target:?}"
+            )))
+        }
+        skipped => {
+            let reason = skipped.reason().expect("skip decisions have a reason");
             topology.skipped.push(SkippedDir {
                 relative: rel_string(root, path),
-                reason: "unresolvable symlink".to_owned(),
+                reason: reason.to_owned(),
             });
             Ok(())
         }
@@ -799,6 +858,37 @@ fn rust_directory_decision(facts: DirectoryFacts) -> DirectoryDecision {
         return DirectoryDecision::SkipSymlink;
     }
     DirectoryDecision::Descend
+}
+
+fn rust_symlink_decision(facts: SymlinkFacts) -> SymlinkDecision {
+    match facts.target {
+        SymlinkTargetKind::File => {
+            if facts.follow_file {
+                SymlinkDecision::FollowFile
+            } else {
+                SymlinkDecision::SkipFile
+            }
+        }
+        SymlinkTargetKind::Directory => match rust_directory_decision(DirectoryFacts {
+            name: DirectoryName::Other,
+            extra_excluded: false,
+            is_symlink: true,
+            follow_symlink: facts.follow_directory,
+            cycle: facts.cycle,
+            depth: facts.depth,
+            max_depth: facts.max_depth,
+        }) {
+            DirectoryDecision::Descend => SymlinkDecision::DescendDirectory,
+            DirectoryDecision::SkipDepth => SymlinkDecision::SkipDepth,
+            DirectoryDecision::SkipCycle => SymlinkDecision::SkipCycle,
+            DirectoryDecision::SkipExcluded | DirectoryDecision::SkipSymlink => {
+                SymlinkDecision::SkipDirectory
+            }
+        },
+        SymlinkTargetKind::Other | SymlinkTargetKind::Unresolved => {
+            SymlinkDecision::SkipUnresolvable
+        }
+    }
 }
 
 fn rust_file_class(facts: FileFacts) -> FileClass {

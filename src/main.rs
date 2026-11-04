@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
     discover_topology_with_policy, discover_with_policy, find_root, read_source_file,
-    DiscoveryOptions, Inventory, SourceFile, TopologySnapshot,
+    DiscoveryOptions, Inventory, SourceFile, SymlinkFacts, TopologySnapshot,
 };
 use mncs_doctor::fix::{
     plan_workspace_with_mncs_policy, providers_for_root, repair_to_fixpoint_with_diagnose,
@@ -246,6 +246,11 @@ fn discover_with_mncs_policy(
                 .discovery_file_class(facts)
                 .map_err(|error| error.to_string())
         },
+        &|facts: SymlinkFacts| {
+            policy
+                .discovery_symlink_decision(facts)
+                .map_err(|error| error.to_string())
+        },
     )
     .map_err(|error| error.to_string())
 }
@@ -266,6 +271,11 @@ fn discover_topology_with_mncs_policy(
         &|facts| {
             policy
                 .discovery_file_class(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts: SymlinkFacts| {
+            policy
+                .discovery_symlink_decision(facts)
                 .map_err(|error| error.to_string())
         },
     )
