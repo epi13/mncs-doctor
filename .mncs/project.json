@@ -1,7 +1,7 @@
 {
   "schema_version": "mncs-family.repository-manifest/v0alpha1",
   "repository": "mncs-doctor",
-  "revision": 9,
+  "revision": 10,
   "manifest_location": "in-repository",
   "authority": {
     "note": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority."
@@ -67,16 +67,14 @@
       },
       {
         "path": "src/architecture_knowledge.rs",
-        "class": "canonical",
-        "authority": "mncs-doctor",
-        "note": "Doctor-specific validation projection; does not replace Commons architecture validation.",
+        "class": "host-boundary",
+        "note": "Reads the Commons JSON projection and local claims, observes filesystem existence, marshals bounded facts, and renders diagnostics; MNCS owns architecture validation decisions.",
         "classification": {
-          "authority": "canonical",
-          "lifecycle": "temporary",
-          "boundary_kind": "none",
-          "semantic_role": "temporary-host-semantic"
-        },
-        "artifact_class": "authoritative"
+          "authority": "none",
+          "lifecycle": "active",
+          "boundary_kind": "filesystem",
+          "semantic_role": "platform-adapter"
+        }
       },
       {
         "path": "pressure/",
@@ -185,6 +183,11 @@
         "fingerprint_sources": [
           "src/health.rs",
           "src/architecture_knowledge.rs",
+          "mncs/doctor/architecture.mncs",
+          "mncs/doctor_family.mncs",
+          "mncs/doctor/family.backend.json",
+          "src/generated/doctor_version.rs",
+          "src/mncs_runtime.rs",
           "src/language_knowledge.rs",
           "src/verify.rs"
         ],
@@ -354,6 +357,17 @@
           "op": "any"
         },
         "required": false
+      },
+      {
+        "contract": "mncs-stdlib.stdlib-source",
+        "envelope": {
+          "op": "any"
+        },
+        "required": true,
+        "evidence": {
+          "source": "mncs/doctor/architecture.mncs",
+          "kind": "native-import"
+        }
       },
       {
         "contract": "mncs-commons.family-change",

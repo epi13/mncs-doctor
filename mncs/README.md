@@ -8,16 +8,18 @@ verification composition. The Rust side keeps I/O mechanism (filesystem,
 processes, rendering) plus the reference implementations the parity
 suite compares against.
 
-Ten Doctor-owned modules declare profile 0.16. The remediation adapter
+Eleven Doctor-owned modules declare profile 0.16. The remediation adapter
 declares profile 0.18 and imports `mncs.commons.family.remediation.v1`, so
 Commons owns the shared repair-class, stop-disposition, residual-escalation,
 degradation, and blocker decisions used by the production `remediate`
-command.
+command. The architecture policy imports Stdlib's bounded text comparison
+kernel and owns schema, content-identity, capability-claim, path/shadow, and
+wire-contract decisions for Doctor's Commons projection.
 
 ## Layout
 
 `mncs/doctor/<area>.mncs` — one policy module per area. The
-`mncs/doctor_family.mncs` freeze root imports all eleven modules; its checked-in
+`mncs/doctor_family.mncs` freeze root imports all twelve modules; its checked-in
 `mncs/doctor/family.backend.json` is generated with the upstream compiler and
 opened by the production runtime. See DOC-P-018 and
 `docs/BACKEND-MATRIX-2026-09.md`. Semantic decisions that have a native
@@ -96,3 +98,6 @@ parity test executes through them green.
 - `discovery.mncs` — directory traversal and file classification policy.
 - `scanner.mncs` — stateful 64-byte BOM/newline and delimiter scanning.
 - `remediate.mncs` — thin Doctor-facing adapter for the shared Commons 0.18 remediation policy.
+- `architecture.mncs` — schema and identity validation, capability-claim
+  matching, path/shadow drift, and wire-contract membership using
+  `mncs.std.text_scan.v1` from Stdlib.

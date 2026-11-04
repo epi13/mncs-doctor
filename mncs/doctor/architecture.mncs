@@ -1,0 +1,338 @@
+mncs 0.16;
+module doctor.architecture.v1;
+
+use mncs.std.text_scan.v1 as text_scan;
+
+// The host decodes JSON and supplies bounded byte views. The architecture
+// module owns schema, identity, capability, and contract comparison policy.
+record Text64 { bytes: [byte; 64], length: u64, present: bool }
+record Text128 { bytes: [byte; 128], length: u64, present: bool }
+
+enum TextRelation { Equal, Different, TooLong }
+
+record ModelInput {
+    schema: Text64,
+    content_identity: Text128,
+}
+
+record ModelDecision {
+    schema_supported: bool,
+    content_identity_valid: bool,
+    value_too_long: bool,
+}
+
+record ClaimsHeaderInput {
+    schema: Text64,
+    architecture_claim: Text128,
+    model_identity: Text128,
+    language_claim: Text128,
+    language_identity: Text128,
+    profile_claim: Text128,
+    language_profile: Text128,
+}
+
+record ClaimsHeaderDecision {
+    schema_supported: bool,
+    architecture_identity_drift: bool,
+    language_identity_drift: bool,
+    language_profile_drift: bool,
+    value_too_long: bool,
+}
+
+record ModelCapability {
+    id: Text64,
+    canonical_path: Text64,
+    shadow_path: Text64,
+    retirement_state: Text64,
+}
+
+record CapabilityInput {
+    claim_id: Text64,
+    claim_canonical_path: Text64,
+    claim_shadow_path: Text64,
+    claim_shadow_state: Text64,
+    model_capabilities: [ModelCapability; up_to 64],
+    root_available: bool,
+    canonical_path_exists: bool,
+}
+
+record CapabilityDecision {
+    missing_claim_id: bool,
+    found: bool,
+    model_index: u64,
+    canonical_path_drift: bool,
+    stale_canonical_path: bool,
+    shadow_path_drift: bool,
+    shadow_state_drift: bool,
+    value_too_long: bool,
+}
+
+record CapabilityScan {
+    found: bool,
+    model_index: u64,
+    canonical_path_drift: bool,
+    stale_canonical_path: bool,
+    shadow_path_drift: bool,
+    shadow_state_drift: bool,
+    value_too_long: bool,
+}
+
+record ContractInput {
+    claim: Text64,
+    model_contracts: [Text64; up_to 64],
+}
+
+record ContractDecision {
+    resolved: bool,
+    value_too_long: bool,
+}
+
+fn relation64(left: Text64, right: Text64) -> (result: TextRelation) {
+    if left.length > 64 || right.length > 64 {
+        return TextRelation.TooLong;
+    }
+    if left.length != right.length {
+        return TextRelation.Different;
+    }
+    if text_scan.compare(left.bytes, left.length, right.bytes, right.length) == 0 {
+        return TextRelation.Equal;
+    }
+    return TextRelation.Different;
+}
+
+fn relation128(left: Text128, right: Text128) -> (result: TextRelation) {
+    if left.length > 128 || right.length > 128 {
+        return TextRelation.TooLong;
+    }
+    if left.length != right.length {
+        return TextRelation.Different;
+    }
+    if text_scan.compare(left.bytes, left.length, right.bytes, right.length) == 0 {
+        return TextRelation.Equal;
+    }
+    return TextRelation.Different;
+}
+
+fn optional_relation64(left: Text64, right: Text64) -> (result: TextRelation) {
+    if (left.present && left.length > 64) || (right.present && right.length > 64) {
+        return TextRelation.TooLong;
+    }
+    if left.present != right.present {
+        return TextRelation.Different;
+    }
+    if !left.present {
+        return TextRelation.Equal;
+    }
+    return relation64(left, right);
+}
+
+fn relation_when_present128(left: Text128, right: Text128) -> (result: TextRelation) {
+    if !left.present || !right.present {
+        return TextRelation.Equal;
+    }
+    return relation128(left, right);
+}
+
+fn is_different(relation: TextRelation) -> (result: bool) {
+    return match relation {
+        TextRelation.Equal => false,
+        TextRelation.Different => true,
+        TextRelation.TooLong => false,
+    };
+}
+
+fn is_too_long(relation: TextRelation) -> (result: bool) {
+    return match relation {
+        TextRelation.Equal => false,
+        TextRelation.Different => false,
+        TextRelation.TooLong => true,
+    };
+}
+
+fn is_hex_digit(value: byte) -> (result: bool) {
+    let code: i64 = value as i64;
+    return (code >= 48 && code <= 57)
+        || (code >= 65 && code <= 70)
+        || (code >= 97 && code <= 102);
+}
+
+fn valid_content_identity(identity: Text128) -> (result: bool) {
+    if !identity.present || identity.length != 71 {
+        return false;
+    }
+    let prefix: [byte; 7] = [115, 104, 97, 50, 53, 54, 58];
+    iterate i over prefix carrying prefix_matches: bool = true {
+        next prefix_matches = prefix_matches && identity.bytes[i] == prefix[i];
+    }
+    iterate i over identity.bytes carrying hex_matches: bool = true {
+        let in_digest: bool = i >= 7 && i < 71;
+        next hex_matches = hex_matches
+            && select(in_digest, is_hex_digit(identity.bytes[i]), true);
+    }
+    return prefix_matches && hex_matches;
+}
+
+fn check_model(input: ModelInput) -> (result: ModelDecision) {
+    let expected_schema: [byte; 33] = [
+        99, 111, 109, 109, 111, 110, 115, 46, 109, 110, 99, 115, 46, 97, 114, 99,
+        104, 105, 116, 101, 99, 116, 117, 114, 101, 45, 109, 111, 100, 101, 108, 47,
+        49,
+    ];
+    let schema_supported: bool = input.schema.present
+        && input.schema.length <= 64
+        && text_scan.compare(input.schema.bytes, input.schema.length,
+                             expected_schema, 33) == 0;
+    return ModelDecision {
+        schema_supported: schema_supported,
+        content_identity_valid: valid_content_identity(input.content_identity),
+        value_too_long: (input.schema.present && input.schema.length > 64)
+            || (input.content_identity.present && input.content_identity.length > 128),
+    };
+}
+
+fn check_claims_header(input: ClaimsHeaderInput) -> (result: ClaimsHeaderDecision) {
+    let expected_schema: [byte; 33] = [
+        109, 110, 99, 115, 46, 100, 111, 99, 116, 111, 114, 46, 97, 114, 99, 104,
+        105, 116, 101, 99, 116, 117, 114, 101, 45, 99, 108, 97, 105, 109, 115, 47,
+        49,
+    ];
+    let architecture_relation: TextRelation = relation_when_present128(
+        input.architecture_claim, input.model_identity);
+    let language_relation: TextRelation = relation_when_present128(
+        input.language_claim, input.language_identity);
+    let profile_relation: TextRelation = relation_when_present128(
+        input.profile_claim, input.language_profile);
+    return ClaimsHeaderDecision {
+        schema_supported: input.schema.present
+            && input.schema.length <= 64
+            && text_scan.compare(input.schema.bytes, input.schema.length,
+                                 expected_schema, 33) == 0,
+        architecture_identity_drift: is_different(architecture_relation),
+        language_identity_drift: is_different(language_relation),
+        language_profile_drift: is_different(profile_relation),
+        value_too_long: (input.schema.present && input.schema.length > 64)
+            || is_too_long(architecture_relation)
+            || is_too_long(language_relation)
+            || is_too_long(profile_relation),
+    };
+}
+
+fn shadow_state_relation(claim: Text64, model: Text64) -> (result: TextRelation) {
+    if !claim.present {
+        return TextRelation.Equal;
+    }
+    if model.present {
+        return relation64(claim, model);
+    }
+    if claim.length != 4 {
+        return TextRelation.Different;
+    }
+    let none: [byte; 4] = [110, 111, 110, 101];
+    if text_scan.compare(claim.bytes, claim.length, none, 4) == 0 {
+        return TextRelation.Equal;
+    }
+    return TextRelation.Different;
+}
+
+fn check_capability(input: CapabilityInput) -> (result: CapabilityDecision) {
+    if !input.claim_id.present {
+        return CapabilityDecision {
+            missing_claim_id: true,
+            found: false,
+            model_index: 0,
+            canonical_path_drift: false,
+            stale_canonical_path: false,
+            shadow_path_drift: false,
+            shadow_state_drift: false,
+            value_too_long: false,
+        };
+    }
+    if input.claim_id.length > 64 {
+        return CapabilityDecision {
+            missing_claim_id: false,
+            found: false,
+            model_index: 0,
+            canonical_path_drift: false,
+            stale_canonical_path: false,
+            shadow_path_drift: false,
+            shadow_state_drift: false,
+            value_too_long: true,
+        };
+    }
+    let initial: CapabilityScan = CapabilityScan {
+        found: false,
+        model_index: 0,
+        canonical_path_drift: false,
+        stale_canonical_path: false,
+        shadow_path_drift: false,
+        shadow_state_drift: false,
+        value_too_long: false,
+    };
+    iterate i over input.model_capabilities
+        carrying state: CapabilityScan = initial {
+        let candidate: ModelCapability = input.model_capabilities[i];
+        let matches: bool = !state.found && candidate.id.present
+            && candidate.id.length == input.claim_id.length
+            && candidate.id.length <= 64
+            && text_scan.compare(input.claim_id.bytes, input.claim_id.length,
+                                 candidate.id.bytes, candidate.id.length) == 0;
+        let canonical: TextRelation = optional_relation64(
+            input.claim_canonical_path, candidate.canonical_path);
+        let shadow: TextRelation = optional_relation64(
+            input.claim_shadow_path, candidate.shadow_path);
+        let shadow_state: TextRelation = shadow_state_relation(
+            input.claim_shadow_state, candidate.retirement_state);
+        let stale: bool = input.root_available
+            && input.claim_canonical_path.present
+            && !input.canonical_path_exists;
+        let updated: CapabilityScan = CapabilityScan {
+            found: true,
+            model_index: i,
+            canonical_path_drift: is_different(canonical),
+            stale_canonical_path: stale,
+            shadow_path_drift: is_different(shadow),
+            shadow_state_drift: is_different(shadow_state),
+            value_too_long: is_too_long(canonical)
+                || is_too_long(shadow)
+                || is_too_long(shadow_state),
+        };
+        next state = CapabilityScan {
+            found: select(matches, updated.found, state.found),
+            model_index: select(matches, updated.model_index, state.model_index),
+            canonical_path_drift: select(matches, updated.canonical_path_drift, state.canonical_path_drift),
+            stale_canonical_path: select(matches, updated.stale_canonical_path, state.stale_canonical_path),
+            shadow_path_drift: select(matches, updated.shadow_path_drift, state.shadow_path_drift),
+            shadow_state_drift: select(matches, updated.shadow_state_drift, state.shadow_state_drift),
+            value_too_long: select(matches, updated.value_too_long, state.value_too_long),
+        };
+    }
+    return CapabilityDecision {
+        missing_claim_id: false,
+        found: state.found,
+        model_index: state.model_index,
+        canonical_path_drift: state.canonical_path_drift,
+        stale_canonical_path: state.stale_canonical_path,
+        shadow_path_drift: state.shadow_path_drift,
+        shadow_state_drift: state.shadow_state_drift,
+        value_too_long: state.value_too_long,
+    };
+}
+
+fn check_contract(input: ContractInput) -> (result: ContractDecision) {
+    if !input.claim.present || input.claim.length > 64 {
+        return ContractDecision {
+            resolved: false,
+            value_too_long: input.claim.present && input.claim.length > 64,
+        };
+    }
+    iterate i over input.model_contracts carrying resolved: bool = false {
+        let candidate: Text64 = input.model_contracts[i];
+        let matches: bool = candidate.present
+            && candidate.length == input.claim.length
+            && candidate.length <= 64
+            && text_scan.compare(input.claim.bytes, input.claim.length,
+                                 candidate.bytes, candidate.length) == 0;
+        next resolved = resolved || matches;
+    }
+    return ContractDecision { resolved: resolved, value_too_long: false };
+}

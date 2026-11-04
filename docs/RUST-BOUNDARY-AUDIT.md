@@ -10,7 +10,7 @@ bootstrap with a concrete next conversion target.
 
 Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
 `DoctorMncsRuntime` opens the checked-in `mncs/doctor/family.backend.json`
-(`mncs-research-bytecode`) once per process, retains one session for all ten
+(`mncs-research-bytecode`) once per process, retains one session for all twelve
 imported policy modules, and uses the generated Rust binding for nominal
 records and finite values. The binding submits the expected interface
 identity on every call. The generated binding now also covers the
@@ -129,6 +129,19 @@ Mechanism (directory enumeration beyond one level, metadata, symlink
 inspection) is B (DOC-P-008…014). `fs_list` covers one level with kinds
 (file/dir/other); multi-level navigation handles are not exposed.
 
+### `architecture_knowledge.rs` — A (validation policy) + D (fact acquisition)
+`doctor.architecture.v1` owns architecture-model schema and SHA-256 identity
+checks, claims-header drift, capability lookup, canonical/shadow path and
+retirement-state drift, stale-path verdicts from host-observed existence, and
+wire-contract membership. Text equality reuses
+`mncs.std.text_scan.v1::compare` from Stdlib. Rust reads bounded JSON facts,
+observes path existence, passes those facts through the generated binding, and
+renders diagnostics. The native policy returns the matched capability index,
+so the host does not repeat capability identity matching to explain a verdict.
+Independent fixtures cover valid projections, uppercase hexadecimal
+identities, malformed schemas/identities, all drift classes, missing and
+unknown IDs, and fail-closed text bounds.
+
 ### `toolchain.rs` — D
 Host-tool probing (PATH search, subprocess, `--help` sniffing) is
 inherently host-side. The study-JSON mapping is already the narrowest
@@ -146,21 +159,21 @@ control flow around those policy calls, not a hidden Rust policy fallback.
 ## Production-runtime result
 
 The runtime integration is now shipped. `mncs-embed` is a normal dependency;
-`OnceLock` verifies/opens the checked-in ten-module family artifact once per
+`OnceLock` verifies/opens the checked-in twelve-module family artifact once per
 process and reuses its session. Every call requires one returned value, checks
 the exact scalar/sequence shape, rejects unsupported/failing policy calls, and
 records the shared artifact identity/digest. Initialization and call failures
 return tool failure (exit 4); there is no silent Rust fallback.
 
 The source-to-family freeze path was adopted: `mncs/doctor_family.mncs` imports
-all ten Doctor modules, `mncs compile` + `MNCS_LIBRARY_PATH` produces the
-checked-in family artifact, and `mncs experiment execute` returns all ten
+all twelve Doctor modules, `mncs compile` + `MNCS_LIBRARY_PATH` produces the
+checked-in family artifact, and `mncs experiment execute` returns all twelve
 wrapper expectations. `src/mncs_runtime.rs` also validates the raw artifact
 digest before `Artifact::from_json` validates the canonical identity.
 
 ## Backend finding
 
-All ten MNCS core modules execute on `mncs-research-bytecode` (pinned rev).
+All twelve MNCS core modules execute on `mncs-research-bytecode` (pinned rev).
 The upstream source-level value runner executed every module on research
 bytecode, portable WASM, C11, LLVM, and Cranelift; all values matched. Six
 modules retain compiler `UNKNOWN` evidence because unresolved obligations

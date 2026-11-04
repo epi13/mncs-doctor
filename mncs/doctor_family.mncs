@@ -6,6 +6,7 @@ module doctor.family.v1;
 // imported doctor.* module identities, not these probe functions.
 use doctor.discovery.v1 as discovery;
 use doctor.edits.v1 as edits;
+use doctor.architecture.v1 as architecture;
 use doctor.fix.v1 as fix;
 use doctor.health.v1 as health;
 use doctor.migration.v1 as migration;
@@ -103,4 +104,61 @@ fn version_code() -> (result: version.VersionClass) {
         current_major: 0,
         current_minor: 16,
     });
+}
+
+fn architecture_code() -> (result: [u64; 6]) {
+    let empty_text64: architecture.Text64 = architecture.Text64 {
+        bytes: [0; 64],
+        length: 0,
+        present: false,
+    };
+    let empty_text128: architecture.Text128 = architecture.Text128 {
+        bytes: [0; 128],
+        length: 0,
+        present: false,
+    };
+    let model: architecture.ModelDecision = architecture.check_model(
+        architecture.ModelInput {
+            schema: empty_text64,
+            content_identity: empty_text128,
+        },
+    );
+    let header: architecture.ClaimsHeaderDecision = architecture.check_claims_header(
+        architecture.ClaimsHeaderInput {
+            schema: empty_text64,
+            architecture_claim: empty_text128,
+            model_identity: empty_text128,
+            language_claim: empty_text128,
+            language_identity: empty_text128,
+            profile_claim: empty_text128,
+            language_profile: empty_text128,
+        },
+    );
+    let no_capabilities: [architecture.ModelCapability; up_to 64] = [];
+    let capability: architecture.CapabilityDecision = architecture.check_capability(
+        architecture.CapabilityInput {
+            claim_id: empty_text64,
+            claim_canonical_path: empty_text64,
+            claim_shadow_path: empty_text64,
+            claim_shadow_state: empty_text64,
+            model_capabilities: no_capabilities,
+            root_available: false,
+            canonical_path_exists: false,
+        },
+    );
+    let no_contracts: [architecture.Text64; up_to 64] = [];
+    let contract: architecture.ContractDecision = architecture.check_contract(
+        architecture.ContractInput {
+            claim: empty_text64,
+            model_contracts: no_contracts,
+        },
+    );
+    return [
+        model.schema_supported as u64,
+        model.content_identity_valid as u64,
+        model.value_too_long as u64,
+        header.schema_supported as u64,
+        capability.found as u64,
+        contract.resolved as u64,
+    ];
 }

@@ -7,15 +7,23 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 mncs_bin="${MNCS_BIN:-mncs}"
 language_root="${MNCS_LANGUAGE_ROOT:-$repo_root/../mncs-language}"
+stdlib_root="${MNCS_STDLIB_ROOT:-$repo_root/../mncs-stdlib}"
 commons_root="${MNCS_COMMONS_ROOT:-$repo_root/../MNCS-Commons}"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mncs-doctor-freeze.XXXXXX")"
 trap 'rm -rf -- "$tmp_dir"' EXIT
 
-MNCS_LIBRARY_PATH="$repo_root/mncs:$language_root/library:$commons_root/src/mncs_commons/mesh" \
+MNCS_LIBRARY_PATH="$repo_root/mncs:$stdlib_root/library:$language_root/library:$commons_root/src/mncs_commons/mesh" \
   "$mncs_bin" compile "$repo_root/mncs/doctor_family.mncs" \
   --emit backend \
   --target mncs-research-bytecode \
   --output-dir "$tmp_dir" >/dev/null
+
+MNCS_LIBRARY_PATH="$repo_root/mncs:$stdlib_root/library:$language_root/library:$commons_root/src/mncs_commons/mesh" \
+  "$mncs_bin" abi "$repo_root/mncs/doctor_family.mncs" >"$tmp_dir/doctor.abi.json"
+python3 "$language_root/scripts/generate_host_bindings.py" \
+  --abi "$tmp_dir/doctor.abi.json" \
+  --language rust \
+  --output "$repo_root/src/generated/doctor_version.rs"
 
 cp "$tmp_dir/backend.json" "$repo_root/mncs/doctor/family.backend.json"
 execute_output="$tmp_dir/execute.json"

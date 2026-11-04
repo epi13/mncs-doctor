@@ -6,7 +6,7 @@
 //! artifacts, retaining sessions, validating scalar transport, and exposing
 //! policy decisions to command orchestration.
 //!
-//! The eleven policy sources are frozen into one checked-in artifact generated
+//! The twelve policy sources are frozen into one checked-in artifact generated
 //! by the upstream compiler's import-resolution path. The shipped crate opens
 //! those bytes directly, so production startup does not invoke a compiler and
 //! all imported Doctor modules share one artifact/session identity.
@@ -32,7 +32,7 @@ use crate::report::ExitCode;
 use crate::verify::VerificationOutcome;
 use crate::version::{LanguageVersion, VersionClass};
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, non_snake_case)]
 #[path = "generated/doctor_version.rs"]
 pub(crate) mod doctor_version;
 
@@ -50,7 +50,7 @@ const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "8c599cc0f0c690267ddcb36265ccfc3d532a51c745c8ecf9f2ccfb8fd49dd186";
+    "7d4fefb9bea2a0ebda2509b1278e48bc4b99bf176026e790d5ffa22f1b172b19";
 
 struct ModuleSpec {
     key: &'static str,
@@ -58,6 +58,10 @@ struct ModuleSpec {
 }
 
 const MODULES: &[ModuleSpec] = &[
+    ModuleSpec {
+        key: "architecture",
+        source: include_str!("../mncs/doctor/architecture.mncs"),
+    },
     ModuleSpec {
         key: "version",
         source: include_str!("../mncs/doctor/version.mncs"),
@@ -171,6 +175,50 @@ pub struct StopClassification {
     pub severity: Severity,
 }
 
+/// Bounded host facts and native verdicts for the Commons architecture
+/// projection. JSON decoding and filesystem existence remain host mechanisms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchitectureCapability {
+    pub id: Option<String>,
+    pub canonical_path: Option<String>,
+    pub shadow_path: Option<String>,
+    pub retirement_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchitectureModelDecision {
+    pub schema_supported: bool,
+    pub content_identity_valid: bool,
+    pub value_too_long: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchitectureHeaderDecision {
+    pub schema_supported: bool,
+    pub architecture_identity_drift: bool,
+    pub language_identity_drift: bool,
+    pub language_profile_drift: bool,
+    pub value_too_long: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchitectureCapabilityDecision {
+    pub missing_claim_id: bool,
+    pub found: bool,
+    pub model_index: u64,
+    pub canonical_path_drift: bool,
+    pub stale_canonical_path: bool,
+    pub shadow_path_drift: bool,
+    pub shadow_state_drift: bool,
+    pub value_too_long: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchitectureContractDecision {
+    pub resolved: bool,
+    pub value_too_long: bool,
+}
+
 impl RuntimeError {
     fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -271,6 +319,155 @@ impl DoctorMncsRuntime {
             Ok(runtime) => Ok(runtime),
             Err(error) => Err(error.clone()),
         }
+    }
+
+    /// Validate Commons model metadata through the native Doctor policy.
+    pub(crate) fn architecture_model(
+        &self,
+        schema: Option<&str>,
+        content_identity: Option<&str>,
+    ) -> Result<ArchitectureModelDecision, RuntimeError> {
+        let decision = doctor_version::check_model(
+            &self.session,
+            doctor_version::ModelInput {
+                schema: native_text64(schema),
+                content_identity: native_text128(content_identity),
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.architecture.v1", "check_model")?;
+        Ok(ArchitectureModelDecision {
+            schema_supported: decision.schema_supported,
+            content_identity_valid: decision.content_identity_valid,
+            value_too_long: decision.value_too_long,
+        })
+    }
+
+    /// Compare project claims with the architecture and language identities
+    /// through the native Doctor policy.
+    pub(crate) fn architecture_claims_header(
+        &self,
+        schema: Option<&str>,
+        architecture_claim: Option<&str>,
+        model_identity: Option<&str>,
+        language_claim: Option<&str>,
+        language_identity: Option<&str>,
+        profile_claim: Option<&str>,
+        language_profile: Option<&str>,
+    ) -> Result<ArchitectureHeaderDecision, RuntimeError> {
+        let decision = doctor_version::check_claims_header(
+            &self.session,
+            doctor_version::ClaimsHeaderInput {
+                schema: native_text64(schema),
+                architecture_claim: native_text128(architecture_claim),
+                model_identity: native_text128(model_identity),
+                language_claim: native_text128(language_claim),
+                language_identity: native_text128(language_identity),
+                profile_claim: native_text128(profile_claim),
+                language_profile: native_text128(language_profile),
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.architecture.v1", "check_claims_header")?;
+        Ok(ArchitectureHeaderDecision {
+            schema_supported: decision.schema_supported,
+            architecture_identity_drift: decision.architecture_identity_drift,
+            language_identity_drift: decision.language_identity_drift,
+            language_profile_drift: decision.language_profile_drift,
+            value_too_long: decision.value_too_long,
+        })
+    }
+
+    /// Validate one project capability claim against bounded model facts.
+    pub(crate) fn architecture_capability(
+        &self,
+        id: Option<&str>,
+        canonical_path: Option<&str>,
+        shadow_path: Option<&str>,
+        shadow_state: Option<&str>,
+        model_capabilities: &[ArchitectureCapability],
+        root_available: bool,
+        canonical_path_exists: bool,
+    ) -> Result<ArchitectureCapabilityDecision, RuntimeError> {
+        if model_capabilities.len() > 64 {
+            return Err(RuntimeError::new(
+                "mncs_value_contract",
+                format!(
+                    "architecture policy accepts at most 64 model capabilities, got {}",
+                    model_capabilities.len()
+                ),
+            ));
+        }
+        let model_capabilities = model_capabilities
+            .iter()
+            .map(|item| doctor_version::ModelCapability {
+                id: native_text64(item.id.as_deref()),
+                canonical_path: native_text64(item.canonical_path.as_deref()),
+                shadow_path: native_text64(item.shadow_path.as_deref()),
+                retirement_state: native_text64(item.retirement_state.as_deref()),
+            })
+            .collect();
+        let decision = doctor_version::check_capability(
+            &self.session,
+            doctor_version::CapabilityInput {
+                claim_id: native_text64(id),
+                claim_canonical_path: native_text64(canonical_path),
+                claim_shadow_path: native_text64(shadow_path),
+                claim_shadow_state: native_text64(shadow_state),
+                model_capabilities,
+                root_available,
+                canonical_path_exists,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.architecture.v1", "check_capability")?;
+        Ok(ArchitectureCapabilityDecision {
+            missing_claim_id: decision.missing_claim_id,
+            found: decision.found,
+            model_index: decision.model_index,
+            canonical_path_drift: decision.canonical_path_drift,
+            stale_canonical_path: decision.stale_canonical_path,
+            shadow_path_drift: decision.shadow_path_drift,
+            shadow_state_drift: decision.shadow_state_drift,
+            value_too_long: decision.value_too_long,
+        })
+    }
+
+    /// Resolve one declared contract against the bounded Commons model list.
+    pub(crate) fn architecture_contract(
+        &self,
+        claim: &str,
+        model_contracts: &[String],
+    ) -> Result<ArchitectureContractDecision, RuntimeError> {
+        if model_contracts.len() > 64 {
+            return Err(RuntimeError::new(
+                "mncs_value_contract",
+                format!(
+                    "architecture policy accepts at most 64 model contracts, got {}",
+                    model_contracts.len()
+                ),
+            ));
+        }
+        let decision = doctor_version::check_contract(
+            &self.session,
+            doctor_version::ContractInput {
+                claim: native_text64(Some(claim)),
+                model_contracts: model_contracts
+                    .iter()
+                    .map(|value| native_text64(Some(value)))
+                    .collect(),
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.architecture.v1", "check_contract")?;
+        Ok(ArchitectureContractDecision {
+            resolved: decision.resolved,
+            value_too_long: decision.value_too_long,
+        })
     }
 
     /// Snapshot provenance, including entrypoints successfully executed so
@@ -994,6 +1191,32 @@ impl DoctorMncsRuntime {
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn native_text64(value: Option<&str>) -> doctor_version::Text64 {
+    let (bytes, length) = native_text_bytes(value, 64);
+    doctor_version::Text64 {
+        bytes,
+        length,
+        present: value.is_some(),
+    }
+}
+
+fn native_text128(value: Option<&str>) -> doctor_version::Text128 {
+    let (bytes, length) = native_text_bytes(value, 128);
+    doctor_version::Text128 {
+        bytes,
+        length,
+        present: value.is_some(),
+    }
+}
+
+fn native_text_bytes(value: Option<&str>, width: usize) -> (Vec<u8>, u64) {
+    let bytes = value.unwrap_or_default().as_bytes();
+    let mut bounded = vec![0; width];
+    let copied = bytes.len().min(width);
+    bounded[..copied].copy_from_slice(&bytes[..copied]);
+    (bounded, bytes.len() as u64)
 }
 
 /// Policy identity that is computable without opening the policy runtime.
