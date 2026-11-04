@@ -14,7 +14,7 @@ use mncs_doctor::discovery::{
 };
 use mncs_doctor::edits::{EditSet, TextEdit};
 use mncs_doctor::fix::{Applicability, StopReason};
-use mncs_doctor::health::{worst_of, CheckResult, Status};
+use mncs_doctor::health::{CheckResult, Status};
 use mncs_doctor::migration::{default_registry, fixture_registry, plan};
 use mncs_doctor::mncs_runtime::{DoctorMncsRuntime, TransactionTargetVerdict};
 use mncs_doctor::version::{classify, LanguageVersion};
@@ -322,8 +322,19 @@ fn status_variant(s: Status) -> &'static str {
 #[test]
 fn parity_health_combine() {
     let all = [Status::Pass, Status::Warning, Status::Fail, Status::Skipped];
-    for a in all {
-        for b in all {
+    let expected = [
+        [Status::Pass, Status::Warning, Status::Fail, Status::Pass],
+        [
+            Status::Warning,
+            Status::Warning,
+            Status::Fail,
+            Status::Warning,
+        ],
+        [Status::Fail, Status::Fail, Status::Fail, Status::Fail],
+        [Status::Pass, Status::Warning, Status::Fail, Status::Skipped],
+    ];
+    for (row, a) in all.into_iter().enumerate() {
+        for (column, b) in all.into_iter().enumerate() {
             let got = as_variant(&typed_call(
                 health_session(),
                 "doctor.health.v1",
@@ -334,24 +345,27 @@ fn parity_health_combine() {
                     finite_arg("Status", status_variant(b))
                 ),
             ));
-            assert_eq!(got, status_variant(worst_of(a, b)), "{a:?} <> {b:?}");
+            assert_eq!(got, status_variant(expected[row][column]), "{a:?} <> {b:?}");
         }
     }
 }
 
 #[test]
 fn parity_health_overall() {
-    let cases: &[&[Status]] = &[
-        &[],
-        &[Status::Pass],
-        &[Status::Pass, Status::Pass],
-        &[Status::Pass, Status::Warning],
-        &[Status::Warning, Status::Fail, Status::Pass],
-        &[Status::Skipped, Status::Skipped],
-        &[Status::Skipped, Status::Warning],
-        &[Status::Pass, Status::Warning, Status::Fail, Status::Skipped],
+    let cases: &[(&[Status], Status)] = &[
+        (&[], Status::Pass),
+        (&[Status::Pass], Status::Pass),
+        (&[Status::Pass, Status::Pass], Status::Pass),
+        (&[Status::Pass, Status::Warning], Status::Warning),
+        (&[Status::Warning, Status::Fail, Status::Pass], Status::Fail),
+        (&[Status::Skipped, Status::Skipped], Status::Pass),
+        (&[Status::Skipped, Status::Warning], Status::Warning),
+        (
+            &[Status::Pass, Status::Warning, Status::Fail, Status::Skipped],
+            Status::Fail,
+        ),
     ];
-    for statuses in cases {
+    for (statuses, expected) in cases {
         let mut items: Vec<String> = statuses
             .iter()
             .map(|s| finite_arg("Status", status_variant(*s)))
@@ -372,18 +386,7 @@ fn parity_health_overall() {
             "overall",
             &args,
         ));
-        let expected = mncs_doctor::health::overall_status(
-            &statuses
-                .iter()
-                .map(|s| CheckResult {
-                    id: "t".to_owned(),
-                    title: "t".to_owned(),
-                    status: *s,
-                    findings: Vec::new(),
-                })
-                .collect::<Vec<_>>(),
-        );
-        assert_eq!(got, status_variant(expected), "{statuses:?}");
+        assert_eq!(got, status_variant(*expected), "{statuses:?}");
     }
 }
 
@@ -792,7 +795,8 @@ fn parity_fix_stop_rule() {
 
 #[test]
 fn parity_report_exit_for() {
-    // (worst, review_blocked, verified, verify_passed) -> exit decision.
+    // (worst, review_blocked, verified, verify_passed) -> independently
+    // specified exit decision.
     let cases = [
         (("Pass", false, false, true), "Healthy"),
         (("Warning", false, false, true), "Findings"),
@@ -819,8 +823,18 @@ fn parity_report_exit_for() {
             "exit_for",
             &args,
         ));
+        let reference = if verified && !passed {
+            "VerificationFailed"
+        } else if matches!(worst, "Warning" | "Fail") && blocked {
+            "ReviewRequired"
+        } else if matches!(worst, "Warning" | "Fail") {
+            "Findings"
+        } else {
+            "Healthy"
+        };
         assert_eq!(got, expected);
-        // Cross-check the Rust exit mapping on equivalent inputs.
+        assert_eq!(got, reference);
+        // Cross-check the public Rust helper against the independent table.
         let checks = vec![CheckResult {
             id: "t".to_owned(),
             title: "t".to_owned(),
@@ -848,9 +862,9 @@ fn parity_report_exit_for() {
             mncs_doctor::report::ExitCode::Findings => "Findings",
             mncs_doctor::report::ExitCode::ReviewRequired => "ReviewRequired",
             mncs_doctor::report::ExitCode::VerificationFailed => "VerificationFailed",
-            mncs_doctor::report::ExitCode::ToolFailure => unreachable!(),
+            mncs_doctor::report::ExitCode::ToolFailure => "ToolFailure",
         };
-        assert_eq!(got, rust_decision);
+        assert_eq!(reference, rust_decision);
     }
 }
 

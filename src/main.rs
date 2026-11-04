@@ -807,9 +807,7 @@ fn cmd_doctor(args: &[String]) -> Result<ExitCode, String> {
         diagnostics: &diags,
         toolchain: &toolchain,
     };
-    let mut checks = run_all_checks(&ctx);
-    policy
-        .apply_health_policy(&mut checks)
+    let checks = run_all_checks(&ctx, policy)
         .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
     let review_blocked = diags.values().flatten().any(|d| {
         matches!(
@@ -1189,9 +1187,7 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
             diagnostics: &report.file_diagnostics,
             toolchain: &toolchain,
         };
-        report.checks = run_all_checks(&ctx);
-        policy
-            .apply_health_policy(&mut report.checks)
+        report.checks = run_all_checks(&ctx, policy)
             .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
         let code = policy
             .exit_for(&report.checks, blocked_review + blocked_manual > 0, None)
@@ -1345,11 +1341,9 @@ fn cmd_fix(args: &[String]) -> Result<ExitCode, String> {
         diagnostics: &fresh_diags,
         toolchain: &toolchain,
     };
-    report.checks = run_all_checks(&ctx);
-    report.toolchain = Some(toolchain);
-    policy
-        .apply_health_policy(&mut report.checks)
+    report.checks = run_all_checks(&ctx, policy)
         .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
+    report.toolchain = Some(toolchain);
     let code = policy
         .exit_for(
             &report.checks,
@@ -1783,9 +1777,7 @@ fn cmd_remediate(args: &[String]) -> Result<ExitCode, String> {
         diagnostics: &diags,
         toolchain: &toolchain,
     };
-    let mut checks = run_all_checks(&ctx);
-    policy
-        .apply_health_policy(&mut checks)
+    let checks = run_all_checks(&ctx, policy)
         .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
     let review_blocked = escalations.iter().any(|item| {
         item.code == "review-required"
@@ -2122,11 +2114,15 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         diagnose_all_with_mncs_policy(&fresh_sources, flags.with_language_backend, policy)?;
     report.file_diagnostics = fresh_diags.clone();
     let fresh_toolchain = probe_toolchain();
-    report.checks = run_all_checks(&HealthContext {
-        inventory: &fresh_inventory,
-        diagnostics: &fresh_diags,
-        toolchain: &fresh_toolchain,
-    });
+    report.checks = run_all_checks(
+        &HealthContext {
+            inventory: &fresh_inventory,
+            diagnostics: &fresh_diags,
+            toolchain: &fresh_toolchain,
+        },
+        policy,
+    )
+    .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
     report.toolchain = Some(fresh_toolchain);
     // Idempotence: re-planning migrated files must yield no-op plans.
     let mut idempotent = true;
@@ -2164,9 +2160,6 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
         )
         .map_err(|error| format!("MNCS verification policy failed (fail-closed): {error}"))?;
     report.verification = Some(verification);
-    policy
-        .apply_health_policy(&mut report.checks)
-        .map_err(|error| format!("MNCS health policy failed (fail-closed): {error}"))?;
     let migration_check = migration_policy_check(&unmigratable, fully_known);
     report.checks.push(migration_check.clone());
     let code = policy

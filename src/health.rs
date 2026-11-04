@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::discovery::{Inventory, ManifestKind};
+use crate::mncs_runtime::{DoctorMncsRuntime, RuntimeError};
 use crate::toolchain::ToolchainStatus;
 use crate::version::current_version;
 
@@ -67,9 +68,13 @@ pub struct HealthContext<'a> {
     pub toolchain: &'a ToolchainStatus,
 }
 
-/// Run the full registered check suite.
-pub fn run_all_checks(ctx: &HealthContext<'_>) -> Vec<CheckResult> {
-    vec![
+/// Run the full registered check suite and assign every verdict through the
+/// verified MNCS health policy. Host checks collect facts and findings only.
+pub fn run_all_checks(
+    ctx: &HealthContext<'_>,
+    policy: &DoctorMncsRuntime,
+) -> Result<Vec<CheckResult>, RuntimeError> {
+    let mut checks = vec![
         check_source_parse_health(ctx),
         check_header_health(ctx),
         check_version_drift(ctx),
@@ -78,28 +83,21 @@ pub fn run_all_checks(ctx: &HealthContext<'_>) -> Vec<CheckResult> {
         check_toolchain_health(ctx),
         check_language_knowledge(ctx),
         check_migration_availability(ctx),
-    ]
+    ];
+    policy.apply_health_policy(&mut checks)?;
+    Ok(checks)
 }
 
-/// Worst of two check statuses: fail dominates, then warning; skipped is
-/// neutral and yields to any decided status.
-pub fn worst_of(a: Status, b: Status) -> Status {
-    match (a, b) {
-        (_, Status::Fail) | (Status::Fail, _) => Status::Fail,
-        (_, Status::Warning) | (Status::Warning, _) => Status::Warning,
-        (Status::Skipped, s) => s,
-        (s, Status::Skipped) => s,
-        _ => Status::Pass,
+/// Hold host-collected facts until the MNCS policy writes the final verdict.
+fn unclassified_check(id: &str, title: &str, findings: Vec<Finding>) -> CheckResult {
+    CheckResult {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        // This placeholder is never returned by run_all_checks: the native
+        // check_status_with_skip call replaces it before the result escapes.
+        status: Status::Pass,
+        findings,
     }
-}
-
-/// Worst status across all checks.
-pub fn overall_status(results: &[CheckResult]) -> Status {
-    let mut overall = Status::Pass;
-    for result in results {
-        overall = worst_of(overall, result.status);
-    }
-    overall
 }
 
 fn finding(diag: &Diagnostic, path: &str, message: Option<String>) -> Finding {
@@ -138,19 +136,7 @@ fn check_source_parse_health(ctx: &HealthContext<'_>) -> CheckResult {
             .cmp(&b.path)
             .then_with(|| b.severity.cmp(&a.severity))
     });
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.is_empty() {
-        Status::Pass
-    } else {
-        Status::Warning
-    };
-    CheckResult {
-        id: "source-parse-health".to_owned(),
-        title: "Source parse health".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("source-parse-health", "Source parse health", findings)
 }
 
 fn check_header_health(ctx: &HealthContext<'_>) -> CheckResult {
@@ -160,19 +146,7 @@ fn check_header_health(ctx: &HealthContext<'_>) -> CheckResult {
         .map(|(path, diag)| finding(diag, path, None))
         .collect();
     findings.sort_by(|a, b| a.path.cmp(&b.path));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.is_empty() {
-        Status::Pass
-    } else {
-        Status::Warning
-    };
-    CheckResult {
-        id: "header-health".to_owned(),
-        title: "Source header and module health".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("header-health", "Source header and module health", findings)
 }
 
 fn check_version_drift(ctx: &HealthContext<'_>) -> CheckResult {
@@ -197,19 +171,7 @@ fn check_version_drift(ctx: &HealthContext<'_>) -> CheckResult {
         ));
     }
     findings.sort_by(|a, b| a.path.cmp(&b.path));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.is_empty() {
-        Status::Pass
-    } else {
-        Status::Warning
-    };
-    CheckResult {
-        id: "version-drift".to_owned(),
-        title: "Language version drift".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("version-drift", "Language version drift", findings)
 }
 
 fn check_newline_encoding(ctx: &HealthContext<'_>) -> CheckResult {
@@ -244,19 +206,7 @@ fn check_newline_encoding(ctx: &HealthContext<'_>) -> CheckResult {
         }
     }
     findings.sort_by(|a, b| a.path.cmp(&b.path));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.is_empty() {
-        Status::Pass
-    } else {
-        Status::Warning
-    };
-    CheckResult {
-        id: "newline-encoding".to_owned(),
-        title: "Newline and encoding health".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("newline-encoding", "Newline and encoding health", findings)
 }
 
 fn check_manifest_health(ctx: &HealthContext<'_>) -> CheckResult {
@@ -292,37 +242,20 @@ fn check_manifest_health(ctx: &HealthContext<'_>) -> CheckResult {
             ManifestKind::Cargo => {}
         }
     }
-    findings.extend(check_family_repository_manifest(ctx).findings);
+    findings.extend(check_family_repository_manifest(ctx));
     findings.sort_by(|a, b| a.path.cmp(&b.path));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.is_empty() {
-        Status::Pass
-    } else {
-        Status::Warning
-    };
-    CheckResult {
-        id: "manifest-health".to_owned(),
-        title: "Project metadata health".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("manifest-health", "Project metadata health", findings)
 }
 
 /// Validate the repository-owned MNCS family manifest without reimplementing
 /// the Standard's full JSON Schema.  The Standard remains the schema
 /// authority; Doctor checks the binding facts that affect local freshness and
 /// safe context entry.
-fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> CheckResult {
+fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> Vec<Finding> {
     let relative = ".mncs/project.json";
     let path = ctx.inventory.root.join(relative);
     if !path.is_file() {
-        return CheckResult {
-            id: "family-repository-manifest".to_owned(),
-            title: "Family repository manifest".to_owned(),
-            status: Status::Skipped,
-            findings: Vec::new(),
-        };
+        return Vec::new();
     }
 
     let mut findings = Vec::new();
@@ -343,12 +276,7 @@ fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> CheckResult {
                     "Repair .mncs/project.json and validate it against the MNCS Standard schema."
                         .to_owned(),
             });
-            return CheckResult {
-                id: "family-repository-manifest".to_owned(),
-                title: "Family repository manifest".to_owned(),
-                status: Status::Fail,
-                findings,
-            };
+            return findings;
         }
     };
 
@@ -362,12 +290,7 @@ fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> CheckResult {
                 explanation: "The family-manifest contract is object-shaped.".to_owned(),
                 suggested_action: "Use the MNCS Standard repository-manifest schema.".to_owned(),
             });
-            return CheckResult {
-                id: "family-repository-manifest".to_owned(),
-                title: "Family repository manifest".to_owned(),
-                status: Status::Fail,
-                findings,
-            };
+            return findings;
         }
     };
 
@@ -439,19 +362,7 @@ fn check_family_repository_manifest(ctx: &HealthContext<'_>) -> CheckResult {
     }
 
     findings.sort_by(|a, b| a.message.cmp(&b.message));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.iter().any(|f| f.severity == Severity::Warning) {
-        Status::Warning
-    } else {
-        Status::Pass
-    };
-    CheckResult {
-        id: "family-repository-manifest".to_owned(),
-        title: "Family repository manifest".to_owned(),
-        status,
-        findings,
-    }
+    findings
 }
 
 fn manifest_finding(
@@ -785,29 +696,21 @@ fn check_toolchain_health(ctx: &HealthContext<'_>) -> CheckResult {
             });
         }
     }
-    findings.extend(check_architecture_knowledge(ctx).findings);
+    findings.extend(check_architecture_knowledge(ctx));
     // Stage F: stdlib composition findings ride the toolchain check. The
     // MNCS policy window is fixed at 8 checks (see DOC-P-023); a dedicated
     // stdlib-health check id waits on widening that window.
     findings.extend(stdlib_composition_findings(ctx));
-    let status = if findings.iter().any(|f| f.severity == Severity::Error) {
-        Status::Fail
-    } else if findings.iter().any(|f| f.severity == Severity::Warning) {
-        Status::Warning
-    } else {
-        Status::Pass
-    };
-    CheckResult {
-        id: "toolchain-health".to_owned(),
-        title: "Toolchain and architecture compatibility".to_owned(),
-        status,
+    unclassified_check(
+        "toolchain-health",
+        "Toolchain and architecture compatibility",
         findings,
-    }
+    )
 }
 
 fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
     let mut findings = Vec::new();
-    let status = match ctx.toolchain.language_knowledge.as_ref() {
+    match ctx.toolchain.language_knowledge.as_ref() {
         None => {
             findings.push(Finding {
                 severity: Severity::Info,
@@ -816,7 +719,6 @@ fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                 explanation: "Doctor cannot validate profile/compiler agreement without the shared mncs-language projection.".to_owned(),
                 suggested_action: "Build or locate mncs-language/docs/language-capabilities.json.".to_owned(),
             });
-            Status::Pass
         }
         Some(knowledge) if knowledge.state == "invalid" || knowledge.freshness == "stale" => {
             findings.push(Finding {
@@ -830,9 +732,8 @@ fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                 suggested_action: "Regenerate the index from mncs-language and rerun Doctor."
                     .to_owned(),
             });
-            Status::Fail
         }
-        Some(knowledge) if knowledge.freshness == "verified" => Status::Pass,
+        Some(knowledge) if knowledge.freshness == "verified" => {}
         Some(knowledge) => {
             findings.push(Finding {
                 severity: Severity::Info,
@@ -841,20 +742,18 @@ fn check_language_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                 explanation: knowledge.error.clone().unwrap_or_else(|| "The index is usable but its provenance sources are not available in this checkout.".to_owned()),
                 suggested_action: "Make the matching mncs-language checkout available for provenance verification.".to_owned(),
             });
-            Status::Pass
         }
-    };
-    CheckResult {
-        id: "language-knowledge".to_owned(),
-        title: "Authoritative language knowledge".to_owned(),
-        status,
-        findings,
     }
+    unclassified_check(
+        "language-knowledge",
+        "Authoritative language knowledge",
+        findings,
+    )
 }
 
-fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
+fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> Vec<Finding> {
     let mut findings = Vec::new();
-    let status = match ctx.toolchain.architecture_knowledge.as_ref() {
+    match ctx.toolchain.architecture_knowledge.as_ref() {
         None => {
             findings.push(Finding {
                 severity: Severity::Info,
@@ -866,7 +765,6 @@ fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                 suggested_action: "Make MNCS-Commons available or set MNCS_COMMONS_ROOT."
                     .to_owned(),
             });
-            Status::Skipped
         }
         Some(architecture)
             if architecture.state == "invalid" || !architecture.errors.is_empty() =>
@@ -882,9 +780,8 @@ fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                             .to_owned(),
                 });
             }
-            Status::Fail
         }
-        Some(architecture) if architecture.claims_state == "verified" => Status::Pass,
+        Some(architecture) if architecture.claims_state == "verified" => {}
         Some(architecture) => {
             findings.push(Finding {
                 severity: Severity::Info,
@@ -897,15 +794,9 @@ fn check_architecture_knowledge(ctx: &HealthContext<'_>) -> CheckResult {
                     .unwrap_or_else(|| "No .mncs/architecture-claims.json was available.".to_owned()),
                 suggested_action: "Add project architecture claims when a repository declares family-owned capabilities.".to_owned(),
             });
-            Status::Skipped
         }
-    };
-    CheckResult {
-        id: "architecture-knowledge".to_owned(),
-        title: "Commons architecture drift".to_owned(),
-        status,
-        findings,
     }
+    findings
 }
 
 /// Standard-library composition findings (Stage F): a usable stdlib is
@@ -1104,19 +995,7 @@ fn check_migration_availability(ctx: &HealthContext<'_>) -> CheckResult {
             suggested_action: "Correct the headers.".to_owned(),
         });
     }
-    let status = if unmigratable > 0 {
-        Status::Fail
-    } else if outdated > 0 {
-        Status::Warning
-    } else {
-        Status::Pass
-    };
-    CheckResult {
-        id: "migration-availability".to_owned(),
-        title: "Migration availability".to_owned(),
-        status,
-        findings,
-    }
+    unclassified_check("migration-availability", "Migration availability", findings)
 }
 
 #[cfg(test)]
@@ -1126,6 +1005,11 @@ mod tests {
     use crate::discovery::{DiscoveryOptions, Inventory};
     use crate::fix::Applicability;
     use std::path::PathBuf;
+
+    fn native_checks(ctx: &HealthContext<'_>) -> Vec<CheckResult> {
+        let policy = DoctorMncsRuntime::new().expect("verified MNCS health policy");
+        run_all_checks(ctx, &policy).expect("native health policy succeeds")
+    }
 
     fn empty_ctx() -> (
         Inventory,
@@ -1155,7 +1039,7 @@ mod tests {
             diagnostics: &diags,
             toolchain: &tc,
         };
-        let results = run_all_checks(&ctx);
+        let results = native_checks(&ctx);
         assert_eq!(results.len(), 8);
         // No toolchain installed in test env guarantee: toolchain check is
         // warning at worst here, never fail.
@@ -1171,7 +1055,7 @@ mod tests {
             diagnostics: &diags,
             toolchain: &tc,
         };
-        let check = run_all_checks(&ctx)
+        let check = native_checks(&ctx)
             .into_iter()
             .find(|result| result.id == "toolchain-health")
             .expect("toolchain check");
@@ -1206,13 +1090,12 @@ mod tests {
             diagnostics: &diags,
             toolchain: &tc,
         };
-        let results = run_all_checks(&ctx);
+        let results = native_checks(&ctx);
         let parse = results
             .iter()
             .find(|r| r.id == "source-parse-health")
             .unwrap();
         assert_eq!(parse.status, Status::Fail);
-        assert_eq!(overall_status(&results), Status::Fail);
     }
 
     #[test]
@@ -1251,12 +1134,12 @@ mod tests {
         };
         let diagnostics = BTreeMap::new();
         let toolchain = ToolchainStatus::default();
-        let check = check_family_repository_manifest(&HealthContext {
+        let findings = check_family_repository_manifest(&HealthContext {
             inventory: &inventory,
             diagnostics: &diagnostics,
             toolchain: &toolchain,
         });
-        assert_eq!(check.status, Status::Pass);
+        assert!(findings.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1294,14 +1177,12 @@ mod tests {
         };
         let diagnostics = BTreeMap::new();
         let toolchain = ToolchainStatus::default();
-        let check = check_family_repository_manifest(&HealthContext {
+        let findings = check_family_repository_manifest(&HealthContext {
             inventory: &inventory,
             diagnostics: &diagnostics,
             toolchain: &toolchain,
         });
-        assert_eq!(check.status, Status::Fail);
-        assert!(check
-            .findings
+        assert!(findings
             .iter()
             .any(|finding| finding.message.contains("fingerprint source is missing")));
         let _ = std::fs::remove_dir_all(root);
@@ -1342,14 +1223,12 @@ mod tests {
         };
         let diagnostics = BTreeMap::new();
         let toolchain = ToolchainStatus::default();
-        let check = check_family_repository_manifest(&HealthContext {
+        let findings = check_family_repository_manifest(&HealthContext {
             inventory: &inventory,
             diagnostics: &diagnostics,
             toolchain: &toolchain,
         });
-        assert_eq!(check.status, Status::Fail);
-        assert!(check
-            .findings
+        assert!(findings
             .iter()
             .any(|finding| finding.message.contains("begin marker is absent")));
         let _ = std::fs::remove_dir_all(root);

@@ -1,7 +1,7 @@
 {
   "schema_version": "mncs-family.repository-manifest/v0alpha1",
   "repository": "mncs-doctor",
-  "revision": 8,
+  "revision": 9,
   "manifest_location": "in-repository",
   "authority": {
     "note": "Doctor owns repository discovery, health, drift, migration, and validation; it validates sibling facts without becoming their semantic authority."
@@ -56,16 +56,14 @@
       },
       {
         "path": "src/health.rs",
-        "class": "canonical",
-        "authority": "mncs-doctor",
-        "note": "Current host health/validation policy pending bounded native parity; Standard schema authority is external.",
+        "class": "host-boundary",
+        "note": "Host collects repository facts and findings; the verified MNCS health kernel owns status classification and aggregation. Standard schema authority is external.",
         "classification": {
-          "authority": "canonical",
-          "lifecycle": "temporary",
-          "boundary_kind": "none",
-          "semantic_role": "temporary-host-semantic"
-        },
-        "artifact_class": "authoritative"
+          "authority": "none",
+          "lifecycle": "active",
+          "boundary_kind": "filesystem",
+          "semantic_role": "platform-adapter"
+        }
       },
       {
         "path": "src/architecture_knowledge.rs",

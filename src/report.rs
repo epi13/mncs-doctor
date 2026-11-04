@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::discovery::InventorySummary;
 use crate::fix::Convergence;
-use crate::health::{overall_status, CheckResult, Status};
+use crate::health::CheckResult;
 use crate::migration::MigrationRecord;
-use crate::mncs_runtime::PolicyProvenance;
+use crate::mncs_runtime::{DoctorMncsRuntime, PolicyProvenance};
 use crate::toolchain::ToolchainStatus;
 use crate::transaction::DiffSummary;
 use crate::verify::VerificationOutcome;
@@ -54,19 +54,9 @@ pub fn exit_for(
     review_blocked: bool,
     verification: Option<&VerificationOutcome>,
 ) -> ExitCode {
-    if let Some(v) = verification {
-        if !v.passed {
-            return ExitCode::VerificationFailed;
-        }
-    }
-    match overall_status(checks) {
-        Status::Pass => ExitCode::Healthy,
-        Status::Skipped => ExitCode::Healthy,
-        Status::Warning if review_blocked => ExitCode::ReviewRequired,
-        Status::Warning => ExitCode::Findings,
-        Status::Fail if review_blocked => ExitCode::ReviewRequired,
-        Status::Fail => ExitCode::Findings,
-    }
+    DoctorMncsRuntime::production()
+        .and_then(|policy| policy.exit_for(checks, review_blocked, verification))
+        .unwrap_or(ExitCode::ToolFailure)
 }
 
 /// Full machine-readable report envelope.
@@ -283,6 +273,7 @@ pub fn render_human(report: &Report, explain: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health::Status;
 
     #[test]
     fn exit_code_semantics() {
