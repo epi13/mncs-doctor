@@ -520,6 +520,7 @@ name = "mncs-doctor"
 version = "0.1.0"
 dependencies = [
  "mncs-embed",
+ "mncs-model",
  "serde",
  "serde_json",
  "sha2",

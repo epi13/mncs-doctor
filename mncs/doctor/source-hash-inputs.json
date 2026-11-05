@@ -1,0 +1,30 @@
+{
+  "schema": "mncs.doctor.source-hash-inputs.v1",
+  "profile": "0.16",
+  "policy_backend": "mncs-research-bytecode",
+  "language_revision": "2317e629a768b6cac11fbd6e61dc16a5805873e0",
+  "family_source": "mncs/doctor_family.mncs",
+  "family_module": "doctor.family.v1",
+  "family_artifact": "mncs/doctor/family.backend.json",
+  "family_artifact_sha256": "2cface9ba9ca00ff7210eb32294bd78e459c55a119728cfcbafbab0dab7d421b",
+  "digest_module": "mncs.std.sha256.v1",
+  "digest_backend": "mncs-cranelift",
+  "digest_artifact": "mncs/doctor/source-sha256.backend.json",
+  "digest_artifact_file_sha256": "733d5cd21758b9fc29d9e619e26d3eb1eb63d78efdabc0074148907eb7d6d455",
+  "chunk_bytes": 1024,
+  "step_budget": 500000,
+  "modules": [
+    { "key": "architecture", "module": "doctor.architecture.v1", "source": "mncs/doctor/architecture.mncs" },
+    { "key": "version", "module": "doctor.version.v1", "source": "mncs/doctor/version.mncs" },
+    { "key": "health", "module": "doctor.health.v1", "source": "mncs/doctor/health.mncs" },
+    { "key": "migration", "module": "doctor.migration.v1", "source": "mncs/doctor/migration.mncs" },
+    { "key": "edits", "module": "doctor.edits.v1", "source": "mncs/doctor/edits.mncs" },
+    { "key": "fix", "module": "doctor.fix.v1", "source": "mncs/doctor/fix.mncs" },
+    { "key": "report", "module": "doctor.report.v1", "source": "mncs/doctor/report.mncs" },
+    { "key": "verify", "module": "doctor.verify.v1", "source": "mncs/doctor/verify.mncs" },
+    { "key": "transaction", "module": "doctor.transaction.v1", "source": "mncs/doctor/transaction.mncs" },
+    { "key": "discovery", "module": "doctor.discovery.v1", "source": "mncs/doctor/discovery.mncs" },
+    { "key": "scanner", "module": "doctor.scanner.v1", "source": "mncs/doctor/scanner.mncs" },
+    { "key": "remediate", "module": "doctor.remediate.v1", "source": "mncs/doctor/remediate.mncs" }
+  ]
+}

@@ -505,10 +505,11 @@ pub fn record_epoch(
     state: ValidatedState,
 ) -> Result<HealthEpoch, String> {
     let recorded_at_unix = now_unix().ok_or_else(|| "clock is unusable".to_owned())?;
+    let policy_identity = static_policy_identity();
     let inputs = EpochInputs {
         root,
         options_identity: &options_identity,
-        policy_identity: &static_policy_identity(),
+        policy_identity: &policy_identity,
         inventory_identity: &inventory_identity,
         topology_identity: &topology_identity,
         visited_directories: &visited_directories,
@@ -531,7 +532,7 @@ pub fn record_epoch(
         digest,
         root: root.to_path_buf(),
         options_identity,
-        policy_identity: static_policy_identity(),
+        policy_identity,
         inventory_identity,
         topology_identity,
         visited_directories,
@@ -607,7 +608,8 @@ pub fn validate_epoch(
     if epoch.options_identity != options_identity {
         return Err("options".to_owned());
     }
-    if epoch.policy_identity != static_policy_identity() {
+    let policy_identity = static_policy_identity();
+    if epoch.policy_identity != policy_identity {
         return Err("policy".to_owned());
     }
     if epoch.with_language_backend {
@@ -884,6 +886,9 @@ mod tests {
                 backend: "mncs-research-bytecode".to_owned(),
                 language_revision: "rev".to_owned(),
                 family_source_sha256: "abc".to_owned(),
+                source_digest_backend: "backend".to_owned(),
+                source_digest_artifact_identity: "sha-artifact".to_owned(),
+                source_digest_artifact_sha256: "sha-digest".to_owned(),
                 modules: BTreeMap::new(),
                 entrypoints: vec!["doctor.health.v1::overall".to_owned()],
             },

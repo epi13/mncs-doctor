@@ -288,11 +288,8 @@ fn cache_path(root: &std::path::Path) -> PathBuf {
 }
 
 fn policy_identity(_policy: &DoctorMncsRuntime) -> Result<String, String> {
-    // The policy identity is a pure function of the embedded policy
-    // sources, computable without opening the runtime. The runtime
-    // argument stays so call sites keep proving they hold the verified
-    // session whose policy this names; health-epoch validation calls
-    // `static_policy_identity` directly, before any runtime exists.
+    // The build-generated native Stdlib SHA identity is available without
+    // opening Doctor's larger policy runtime.
     Ok(static_policy_identity())
 }
 

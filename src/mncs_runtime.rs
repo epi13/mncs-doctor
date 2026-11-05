@@ -36,77 +36,23 @@ use crate::version::{LanguageVersion, VersionClass};
 #[path = "generated/doctor_version.rs"]
 pub(crate) mod doctor_version;
 
-/// Exact language revision used by the embedded policy runtime.
-pub const MNCS_LANGUAGE_REV: &str = "2317e629a768b6cac11fbd6e61dc16a5805873e0";
-/// Profile declared by the Doctor family root. The remediation adapter imports
-/// the Commons policy at its independently declared 0.18 profile.
-pub const POLICY_PROFILE: &str = "0.16";
-/// Backend whose value-level execution is currently proven for Doctor.
-pub const POLICY_BACKEND: &str = "mncs-research-bytecode";
-
 const POLICY_STEP_BUDGET: u64 = 32_768;
 const DELIMITER_STATE_WIDTH: usize = 1_024;
 const DELIMITER_WINDOW_WIDTH: usize = 64;
-const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
-const FAMILY_ARTIFACT_SHA256: &str =
-    "2cface9ba9ca00ff7210eb32294bd78e459c55a119728cfcbafbab0dab7d421b";
 
 struct ModuleSpec {
     key: &'static str,
+    #[cfg(test)]
     source: &'static str,
+    source_sha256: &'static str,
 }
 
-const MODULES: &[ModuleSpec] = &[
-    ModuleSpec {
-        key: "architecture",
-        source: include_str!("../mncs/doctor/architecture.mncs"),
-    },
-    ModuleSpec {
-        key: "version",
-        source: include_str!("../mncs/doctor/version.mncs"),
-    },
-    ModuleSpec {
-        key: "health",
-        source: include_str!("../mncs/doctor/health.mncs"),
-    },
-    ModuleSpec {
-        key: "migration",
-        source: include_str!("../mncs/doctor/migration.mncs"),
-    },
-    ModuleSpec {
-        key: "edits",
-        source: include_str!("../mncs/doctor/edits.mncs"),
-    },
-    ModuleSpec {
-        key: "fix",
-        source: include_str!("../mncs/doctor/fix.mncs"),
-    },
-    ModuleSpec {
-        key: "report",
-        source: include_str!("../mncs/doctor/report.mncs"),
-    },
-    ModuleSpec {
-        key: "verify",
-        source: include_str!("../mncs/doctor/verify.mncs"),
-    },
-    ModuleSpec {
-        key: "transaction",
-        source: include_str!("../mncs/doctor/transaction.mncs"),
-    },
-    ModuleSpec {
-        key: "discovery",
-        source: include_str!("../mncs/doctor/discovery.mncs"),
-    },
-    ModuleSpec {
-        key: "scanner",
-        source: include_str!("../mncs/doctor/scanner.mncs"),
-    },
-    ModuleSpec {
-        key: "remediate",
-        source: include_str!("../mncs/doctor/remediate.mncs"),
-    },
-];
+include!(concat!(env!("OUT_DIR"), "/doctor_source_hashes.rs"));
+
+#[cfg(test)]
+const SOURCE_HASH_ARTIFACT_BYTES: &[u8] =
+    include_bytes!("../mncs/doctor/source-sha256.backend.json");
 
 /// Provenance for one embedded policy module.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +70,12 @@ pub struct PolicyProvenance {
     pub backend: String,
     pub language_revision: String,
     pub family_source_sha256: String,
+    #[serde(default)]
+    pub source_digest_backend: String,
+    #[serde(default)]
+    pub source_digest_artifact_identity: String,
+    #[serde(default)]
+    pub source_digest_artifact_sha256: String,
     pub modules: BTreeMap<String, PolicyModuleProvenance>,
     #[serde(default)]
     pub entrypoints: Vec<String>,
@@ -312,7 +264,7 @@ impl DoctorMncsRuntime {
             module_provenance.insert(
                 spec.key.to_owned(),
                 PolicyModuleProvenance {
-                    source_sha256: sha256_hex(spec.source.as_bytes()),
+                    source_sha256: spec.source_sha256.to_owned(),
                     artifact_identity: artifact_identity.clone(),
                     artifact_sha256: artifact_sha256.clone(),
                 },
@@ -326,7 +278,10 @@ impl DoctorMncsRuntime {
                 profile: POLICY_PROFILE.to_owned(),
                 backend: POLICY_BACKEND.to_owned(),
                 language_revision: MNCS_LANGUAGE_REV.to_owned(),
-                family_source_sha256: sha256_hex(FAMILY_SOURCE.as_bytes()),
+                family_source_sha256: FAMILY_SOURCE_SHA256.to_owned(),
+                source_digest_backend: SOURCE_HASH_BACKEND.to_owned(),
+                source_digest_artifact_identity: SOURCE_HASH_ARTIFACT_IDENTITY.to_owned(),
+                source_digest_artifact_sha256: SOURCE_HASH_ARTIFACT_SHA256.to_owned(),
                 modules: module_provenance,
                 entrypoints: Vec::new(),
             },
@@ -1248,6 +1203,8 @@ impl DoctorMncsRuntime {
     }
 }
 
+/// Host SHA-256 verifies the frozen Doctor artifact. Tests also use it as an
+/// independent oracle for the MNCS-generated source and policy identities.
 fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -1279,51 +1236,36 @@ fn native_text_bytes(value: Option<&str>, width: usize) -> (Vec<u8>, u64) {
     (bounded, bytes.len() as u64)
 }
 
-/// Policy identity that is computable without opening the policy runtime.
-///
-/// This names the exact discovery/health policy a full run would execute:
-/// the policy coordinates (profile, backend, language revision), the
-/// pinned frozen-artifact digest, and the actual embedded family and
-/// per-module source bytes. Health-epoch validation compares this value
-/// before deciding that a cached verdict is still valid, so an epoch hit
-/// never needs the ~6s runtime startup it is trying to avoid.
-///
-/// The multi-megabyte frozen artifact contributes its pinned digest
-/// rather than re-hashed bytes: re-hashing it on every hit would cost
-/// ~1s in debug builds for no new information, because runtime startup
-/// already proves bytes match the pin (fail-closed) on every full path.
-/// Any policy source change (including an unrotated freeze, whose module
-/// bytes still differ) changes this identity and forces the full path.
-/// Post-build artifact corruption without a const change would serve
-/// still-true cached verdicts until the epoch TTL expires, then fail
-/// closed on the next full path; that deferred failure is the documented
-/// price of a millisecond hit.
-pub fn static_policy_identity() -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(POLICY_PROFILE.as_bytes());
-    hasher.update([0]);
-    hasher.update(POLICY_BACKEND.as_bytes());
-    hasher.update([0]);
-    hasher.update(MNCS_LANGUAGE_REV.as_bytes());
-    hasher.update([0]);
-    hasher.update(FAMILY_ARTIFACT_SHA256.as_bytes());
-    hasher.update([0]);
-    hasher.update(FAMILY_SOURCE.as_bytes());
-    hasher.update([0]);
-    for spec in MODULES {
-        hasher.update(spec.key.as_bytes());
-        hasher.update([0]);
-        hasher.update(spec.source.as_bytes());
-        hasher.update([0]);
+/// Rebuild the identity preimage for an independent host-side test oracle.
+#[cfg(test)]
+fn policy_identity_material() -> Vec<u8> {
+    let mut material = Vec::with_capacity(1024);
+    for field in [
+        POLICY_PROFILE.as_bytes(),
+        POLICY_BACKEND.as_bytes(),
+        MNCS_LANGUAGE_REV.as_bytes(),
+        FAMILY_ARTIFACT_SHA256.as_bytes(),
+        SOURCE_HASH_BACKEND.as_bytes(),
+        SOURCE_HASH_ARTIFACT_FILE_SHA256.as_bytes(),
+        FAMILY_SOURCE_SHA256.as_bytes(),
+    ] {
+        material.extend_from_slice(field);
+        material.push(0);
     }
-    use std::fmt::Write as _;
-    hasher
-        .finalize()
-        .iter()
-        .fold(String::with_capacity(64), |mut out, byte| {
-            let _ = write!(out, "{byte:02x}");
-            out
-        })
+    for spec in MODULES {
+        material.extend_from_slice(spec.key.as_bytes());
+        material.push(0);
+        material.extend_from_slice(spec.source_sha256.as_bytes());
+        material.push(0);
+    }
+    material
+}
+
+/// Policy identity generated by executing the canonical MNCS SHA-256 kernel
+/// during Cargo's incremental build step. Reading this value is constant time
+/// and performs no hashing or policy-runtime initialization.
+pub fn static_policy_identity() -> String {
+    STATIC_POLICY_IDENTITY.to_owned()
 }
 
 fn version_coordinate(version: LanguageVersion) -> i64 {
@@ -1466,9 +1408,25 @@ mod tests {
         assert_eq!(provenance.language_revision, MNCS_LANGUAGE_REV);
         assert_eq!(
             provenance.family_source_sha256,
-            sha256_hex(FAMILY_SOURCE.as_bytes())
+            sha256_hex(include_str!("../mncs/doctor_family.mncs").as_bytes())
         );
+        assert_eq!(
+            sha256_hex(SOURCE_HASH_ARTIFACT_BYTES),
+            SOURCE_HASH_ARTIFACT_FILE_SHA256,
+            "the native digest artifact remains pinned"
+        );
+        assert!(!provenance.source_digest_artifact_identity.is_empty());
+        assert!(!provenance.source_digest_artifact_sha256.is_empty());
+        assert_eq!(provenance.source_digest_backend, SOURCE_HASH_BACKEND);
         assert_eq!(provenance.modules.len(), MODULES.len());
+        for spec in MODULES {
+            assert_eq!(
+                provenance.modules[spec.key].source_sha256,
+                sha256_hex(spec.source.as_bytes()),
+                "native source digest for {}",
+                spec.key
+            );
+        }
         assert_eq!(
             provenance
                 .modules
@@ -1484,6 +1442,24 @@ mod tests {
             .all(|module| !module.source_sha256.is_empty()
                 && !module.artifact_identity.is_empty()
                 && !module.artifact_sha256.is_empty()));
+    }
+
+    #[test]
+    fn legacy_policy_provenance_defaults_native_digest_metadata() {
+        let legacy = serde_json::json!({
+            "engine": "mncs",
+            "profile": "0.16",
+            "backend": "mncs-research-bytecode",
+            "language_revision": "legacy-revision",
+            "family_source_sha256": "legacy-family-digest",
+            "modules": {},
+            "entrypoints": []
+        });
+        let provenance: PolicyProvenance =
+            serde_json::from_value(legacy).expect("older provenance remains readable");
+        assert!(provenance.source_digest_backend.is_empty());
+        assert!(provenance.source_digest_artifact_identity.is_empty());
+        assert!(provenance.source_digest_artifact_sha256.is_empty());
     }
 
     #[test]
@@ -1577,8 +1553,7 @@ mod tests {
         let second = static_policy_identity();
         assert_eq!(first, second);
         assert_eq!(first.len(), 64);
-        // The identity covers more than the bare artifact digest: the
-        // profile, backend, revision, and module sources all participate.
+        assert_eq!(first, sha256_hex(&policy_identity_material()));
         assert_ne!(first, sha256_hex(FAMILY_ARTIFACT));
         assert_ne!(first, FAMILY_ARTIFACT_SHA256);
     }
