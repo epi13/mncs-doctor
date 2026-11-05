@@ -50,8 +50,8 @@ fn dry_run_plan_equals_applied_result() {
     for expected in [
         "doctor.discovery.v1::directory_decision",
         "doctor.discovery.v1::file_class",
-        "doctor.scanner.v1::feed",
-        "doctor.scanner.v1::finish",
+        "doctor.scanner.v1::stream_feed",
+        "doctor.scanner.v1::stream_finish",
         "doctor.version.v1::classify",
         "doctor.fix.v1::stop_rule",
         "doctor.edits.v1::pair_conflict",

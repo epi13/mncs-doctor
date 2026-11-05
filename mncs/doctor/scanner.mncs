@@ -49,6 +49,375 @@ fn finish(state: [u64; 6]) -> (result: [u64; 6]) {
     return replace(with_cr, 5, 0);
 }
 
+// Source-header and module declaration recognition is a deliberately shallow
+// Doctor hygiene rule. It does not parse MNCS syntax or infer a semantic
+// profile. The host streams valid UTF-8 bytes in the same bounded windows as
+// the delimiter scanner; candidate and line state survive every boundary.
+record HeaderScanState {
+    position: u64,
+    mode: byte,
+    slash_position: u64,
+    candidate_start: u64,
+    token_stage: byte,
+    first_token_length: u64,
+    first_token_matches: bool,
+    version_seen: bool,
+    version_valid: bool,
+    version_component: byte,
+    version_digits: u64,
+    version_plus: bool,
+    version_major: u64,
+    version_minor: u64,
+    header_present: bool,
+    header_valid: bool,
+    header_major: u64,
+    header_minor: u64,
+    header_start: u64,
+    header_end: u64,
+    module_prefix_length: byte,
+    module_prefix_invalid: bool,
+    module_last_nonwhite: u64,
+    module_seen: bool,
+    utf8_remaining: byte,
+    utf8_codepoint: u64
+}
+
+record HeaderScanResult {
+    header_present: bool,
+    version_valid: bool,
+    major: u64,
+    minor: u64,
+    start: u64,
+    end: u64,
+    module_decl_present: bool
+}
+
+// Combined source ingress carries both existing BOM/newline facts and the
+// Doctor hygiene header state through one bounded call per input window.
+record ScannerStreamState {
+    byte_state: [u64; 6],
+    header_state: HeaderScanState
+}
+
+record ScannerStreamResult {
+    byte_state: [u64; 6],
+    header_result: HeaderScanResult
+}
+
+fn header_init() -> (result: HeaderScanState) {
+    return HeaderScanState {
+        position: 0,
+        mode: 0,
+        slash_position: 0,
+        candidate_start: 0,
+        token_stage: 0,
+        first_token_length: 0,
+        first_token_matches: false,
+        version_seen: false,
+        version_valid: false,
+        version_component: 0,
+        version_digits: 0,
+        version_plus: false,
+        version_major: 0,
+        version_minor: 0,
+        header_present: false,
+        header_valid: false,
+        header_major: 0,
+        header_minor: 0,
+        header_start: 0,
+        header_end: 0,
+        module_prefix_length: 0,
+        module_prefix_invalid: false,
+        module_last_nonwhite: 0,
+        module_seen: false,
+        utf8_remaining: 0,
+        utf8_codepoint: 0
+    };
+}
+
+fn is_ascii_space(value: byte) -> (result: bool) {
+    return value == 9 || value == 10 || value == 11 || value == 12 || value == 13 || value == 32;
+}
+
+// Match Rust char::is_whitespace for the UTF-8 source text accepted by the
+// host boundary. The byte scanner validates no language syntax; it only needs
+// the same Unicode trim/split behavior as the former shallow host rule.
+fn is_unicode_space(value: u64) -> (result: bool) {
+    return (value >= 9 && value <= 13) || value == 32 || value == 133 || value == 160
+        || value == 5760 || (value >= 8192 && value <= 8202) || value == 8232
+        || value == 8233 || value == 8239 || value == 8287 || value == 12288;
+}
+
+fn module_prefix_char(index: u64) -> (result: u64) {
+    if index == 0 { return 109; }
+    if index == 1 { return 111; }
+    if index == 2 { return 100; }
+    if index == 3 { return 117; }
+    if index == 4 { return 108; }
+    if index == 5 { return 101; }
+    return 32;
+}
+
+fn module_line_feed(state: HeaderScanState, value: u64) -> (result: HeaderScanState) {
+    if value == 10 {
+        let found: bool = state.module_prefix_length == 7
+            && !state.module_prefix_invalid && state.module_last_nonwhite == 59;
+        return HeaderScanState {
+            ..state,
+            module_prefix_length: 0,
+            module_prefix_invalid: false,
+            module_last_nonwhite: 0,
+            module_seen: state.module_seen || found
+        };
+    }
+    let whitespace: bool = is_unicode_space(value);
+    let prefix_length: u64 = state.module_prefix_length as u64;
+    if prefix_length == 0 {
+        if whitespace { return state; }
+        if value == module_prefix_char(0) {
+            return HeaderScanState { ..state, module_prefix_length: 1, module_last_nonwhite: value };
+        }
+        return HeaderScanState { ..state, module_prefix_invalid: true, module_last_nonwhite: value };
+    }
+    if state.module_prefix_invalid { return state; }
+    if prefix_length < 7 {
+        if value == module_prefix_char(prefix_length) {
+            let next_length: byte = (prefix_length + 1) as byte;
+            return HeaderScanState {
+                ..state,
+                module_prefix_length: next_length,
+                module_last_nonwhite: select(whitespace, state.module_last_nonwhite, value)
+            };
+        }
+        return HeaderScanState {
+            ..state,
+            module_prefix_invalid: true,
+            module_last_nonwhite: select(whitespace, state.module_last_nonwhite, value)
+        };
+    }
+    if whitespace { return state; }
+    return HeaderScanState { ..state, module_last_nonwhite: value };
+}
+
+fn header_begin_candidate(state: HeaderScanState, start: u64) -> (result: HeaderScanState) {
+    return HeaderScanState {
+        ..state,
+        mode: 5,
+        candidate_start: start,
+        token_stage: 0,
+        first_token_length: 0,
+        first_token_matches: true,
+        version_seen: false,
+        version_valid: true,
+        version_component: 0,
+        version_digits: 0,
+        version_plus: false,
+        version_major: 0,
+        version_minor: 0
+    };
+}
+
+fn header_version_char(state: HeaderScanState, value: u64) -> (result: HeaderScanState) {
+    if value == 46 {
+        if state.version_component == 0 && state.version_digits > 0 {
+            return HeaderScanState {
+                ..state,
+                version_component: 1,
+                version_digits: 0,
+                version_plus: false
+            };
+        }
+        return HeaderScanState { ..state, version_valid: false };
+    }
+    if value == 43 {
+        if state.version_digits == 0 && !state.version_plus {
+            return HeaderScanState { ..state, version_plus: true };
+        }
+        return HeaderScanState { ..state, version_valid: false };
+    }
+    if value >= 48 && value <= 57 {
+        let digit: u64 = value - 48;
+        let current: u64 = select(state.version_component == 0, state.version_major, state.version_minor);
+        if current > 429496729 || (current == 429496729 && digit > 5) {
+            return HeaderScanState { ..state, version_valid: false, version_digits: state.version_digits + 1 };
+        }
+        let next_value: u64 = current *% 10 +% digit;
+        if state.version_component == 0 {
+            return HeaderScanState {
+                ..state,
+                version_major: next_value,
+                version_digits: state.version_digits + 1
+            };
+        }
+        return HeaderScanState {
+            ..state,
+            version_minor: next_value,
+            version_digits: state.version_digits + 1
+        };
+    }
+    return HeaderScanState { ..state, version_valid: false };
+}
+
+fn header_finish_candidate(state: HeaderScanState, end: u64) -> (result: HeaderScanState) {
+    let present: bool = state.first_token_length == 4 && state.first_token_matches && state.version_seen;
+    let valid: bool = present && state.version_valid && state.version_component == 1 && state.version_digits > 0;
+    return HeaderScanState {
+        ..state,
+        mode: 6,
+        header_present: present,
+        header_valid: valid,
+        header_major: state.version_major,
+        header_minor: state.version_minor,
+        header_start: state.candidate_start,
+        header_end: end
+    };
+}
+
+fn header_candidate_char(state: HeaderScanState, value: u64, start: u64) -> (result: HeaderScanState) {
+    if value == 10 { return HeaderScanState { ..state, mode: 6 }; }
+    if value == 59 { return header_finish_candidate(state, start + 1); }
+    if is_unicode_space(value) {
+        if state.token_stage == 0 && state.first_token_length > 0 {
+            return HeaderScanState { ..state, token_stage: 1 };
+        }
+        if state.token_stage == 2 { return HeaderScanState { ..state, token_stage: 3 }; }
+        return state;
+    }
+    if state.token_stage == 0 {
+        let expected: u64 = select(
+            state.first_token_length == 0, 109,
+            select(state.first_token_length == 1, 110,
+                select(state.first_token_length == 2, 99,
+                    select(state.first_token_length == 3, 115, 0)))
+        );
+        return HeaderScanState {
+            ..state,
+            first_token_matches: state.first_token_matches && state.first_token_length < 4 && value == expected,
+            first_token_length: select(state.first_token_length < 5, state.first_token_length + 1, 5)
+        };
+    }
+    if state.token_stage == 1 {
+        let begun: HeaderScanState = HeaderScanState { ..state, token_stage: 2, version_seen: true };
+        return header_version_char(begun, value);
+    }
+    if state.token_stage == 2 { return header_version_char(state, value); }
+    return state;
+}
+
+fn header_head_byte(state: HeaderScanState, value: byte) -> (result: HeaderScanState) {
+    let position: u64 = state.position;
+    if state.mode == 0 {
+        if is_ascii_space(value) { return state; }
+        if value == 47 { return HeaderScanState { ..state, mode: 1, slash_position: position }; }
+        let begun: HeaderScanState = header_begin_candidate(state, position);
+        if (value as u64) < 128 { return header_candidate_char(begun, value as u64, position); }
+        return begun;
+    }
+    if state.mode == 1 {
+        if value == 47 { return HeaderScanState { ..state, mode: 2 }; }
+        if value == 42 { return HeaderScanState { ..state, mode: 3 }; }
+        let begun: HeaderScanState = header_begin_candidate(state, state.slash_position);
+        let with_slash: HeaderScanState = header_candidate_char(begun, 47, state.slash_position);
+        if (value as u64) < 128 { return header_candidate_char(with_slash, value as u64, position); }
+        return with_slash;
+    }
+    if state.mode == 2 {
+        if value == 10 { return HeaderScanState { ..state, mode: 0 }; }
+        return state;
+    }
+    if state.mode == 3 {
+        if value == 42 { return HeaderScanState { ..state, mode: 4 }; }
+        return state;
+    }
+    if state.mode == 4 {
+        if value == 47 { return HeaderScanState { ..state, mode: 0 }; }
+        if value == 42 { return state; }
+        return HeaderScanState { ..state, mode: 3 };
+    }
+    if state.mode == 5 && (value as u64) < 128 {
+        return header_candidate_char(state, value as u64, position);
+    }
+    return state;
+}
+
+fn header_unicode_char(state: HeaderScanState, value: u64) -> (result: HeaderScanState) {
+    let with_module: HeaderScanState = module_line_feed(state, value);
+    if with_module.mode == 5 { return header_candidate_char(with_module, value, with_module.position); }
+    return with_module;
+}
+
+fn header_scan_byte(state: HeaderScanState, value: byte) -> (result: HeaderScanState) {
+    if state.mode == 6 && state.module_seen { return state; }
+    let position: u64 = state.position;
+    let headed: HeaderScanState = header_head_byte(state, value);
+    if (value as u64) < 128 {
+        let advanced: HeaderScanState = module_line_feed(headed, value as u64);
+        return HeaderScanState { ..advanced, position: position + 1 };
+    }
+    if headed.utf8_remaining == 0 {
+        if value >= 194 && value <= 223 {
+            return HeaderScanState { ..headed, position: position + 1, utf8_remaining: 1, utf8_codepoint: (value as u64) % 32 };
+        }
+        if value >= 224 && value <= 239 {
+            return HeaderScanState { ..headed, position: position + 1, utf8_remaining: 2, utf8_codepoint: (value as u64) % 16 };
+        }
+        if value >= 240 && value <= 244 {
+            return HeaderScanState { ..headed, position: position + 1, utf8_remaining: 3, utf8_codepoint: (value as u64) % 8 };
+        }
+        return HeaderScanState { ..headed, position: position + 1 };
+    }
+    let codepoint: u64 = headed.utf8_codepoint *% 64 +% ((value as u64) % 64);
+    let remaining: byte = ((headed.utf8_remaining as i64) - 1) as byte;
+    let pending: HeaderScanState = HeaderScanState { ..headed, utf8_remaining: remaining, utf8_codepoint: codepoint };
+    if remaining == 0 {
+        let complete: HeaderScanState = header_unicode_char(pending, codepoint);
+        return HeaderScanState { ..complete, position: position + 1 };
+    }
+    return HeaderScanState { ..pending, position: position + 1 };
+}
+
+fn header_feed(bytes: [byte; up_to 64], state: HeaderScanState) -> (result: HeaderScanState) {
+    iterate i over bytes carrying current: HeaderScanState = state {
+        next current = header_scan_byte(current, bytes[i]);
+    }
+    return current;
+}
+
+fn header_finish(state: HeaderScanState) -> (result: HeaderScanResult) {
+    let module_found: bool = state.module_prefix_length == 7
+        && !state.module_prefix_invalid && state.module_last_nonwhite == 59;
+    return HeaderScanResult {
+        header_present: state.header_present,
+        version_valid: state.header_valid,
+        major: state.header_major,
+        minor: state.header_minor,
+        start: state.header_start,
+        end: state.header_end,
+        module_decl_present: state.module_seen || module_found
+    };
+}
+
+fn stream_init() -> (result: ScannerStreamState) {
+    return ScannerStreamState {
+        byte_state: [0, 0, 0, 0, 0, 0],
+        header_state: header_init()
+    };
+}
+
+fn stream_feed(bytes: [byte; up_to 64], state: ScannerStreamState) -> (result: ScannerStreamState) {
+    return ScannerStreamState {
+        byte_state: feed(bytes, state.byte_state),
+        header_state: header_feed(bytes, state.header_state)
+    };
+}
+
+fn stream_finish(state: ScannerStreamState) -> (result: ScannerStreamResult) {
+    return ScannerStreamResult {
+        byte_state: finish(state.byte_state),
+        header_result: header_finish(state.header_state)
+    };
+}
+
 // Delimiter balance is also part of the streaming scanner contract. The
 // state carries lexical mode, absolute byte position, and a bounded stack of
 // packed (offset * 4 + opener-kind) entries. Capacity exhaustion is a

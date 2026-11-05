@@ -76,14 +76,20 @@ delimiter scans are MNCS-backed. Rust maps the native mismatch offset to a
 Unicode-aware span and constructs `DOC106` or the explicit `DOC109` capacity
 finding. The missing safe Rust batch API is DOC-P-020.
 
-### `diagnostics.rs` — D (model) + E (semantic scanner)
+### `diagnostics.rs` — D (model) + A (hygiene scanning) + E (semantic diagnostics)
 The `Diagnostic` envelope is the shared-contract proposal (D: it *is*
 the boundary). A stateful chunk-fed scanner crosses 64-byte views and produces
-BOM/newline counts, delimiter balance, and byte offsets in production. Its
-1,016-entry opener stack reports capacity exhaustion as `DOC109`, never a
-balanced result. Rust retains Unicode span projection, diagnostic text, and
-semantic language diagnostics; the independent host delimiter implementation
-is compiled only for tests and parity checks (DOC-P-001/020).
+BOM/newline counts, shallow `mncs X.Y;` header facts, `module ...;` presence,
+delimiter balance, and byte offsets in production. One composed native call
+per 64-byte source window carries both newline and header state, so header
+facts reuse the existing byte-ingress pass. Its 1,016-entry opener stack
+reports capacity exhaustion as `DOC109`, never a balanced result. Rust retains
+Unicode span projection, diagnostic text, and semantic language
+diagnostics; independent host header and delimiter implementations are
+compiled only for tests and parity checks. Header parsing remains Doctor's
+hygiene contract; reusable semantic source-profile inference is still an
+upstream Language pressure (DOC-P-005), while deeper language diagnostics
+remain upstream-owned (DOC-P-001/020).
 
 ### `report.rs` — A (policy) + D (rendering)
 `exit_for` lives in `mncs/doctor/report.mncs` with parity over 8

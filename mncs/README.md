@@ -96,7 +96,8 @@ parity test executes through them green.
 - `transaction.mncs` — target presence, symlink, stale-base, and identical
   target validation policy.
 - `discovery.mncs` — directory traversal and file classification policy.
-- `scanner.mncs` — stateful 64-byte BOM/newline and delimiter scanning.
+- `scanner.mncs` — stateful 64-byte BOM/newline and shallow source-header and
+  module-presence recognition in one ingress pass, plus delimiter scanning.
 - `remediate.mncs` — thin Doctor-facing adapter for the shared Commons 0.18 remediation policy.
 - `architecture.mncs` — schema and identity validation, capability-claim
   matching, path/shadow drift, and wire-contract membership using

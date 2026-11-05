@@ -50,7 +50,7 @@ const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "8669069608a5865ace7f7dc3296dc77be02b3bbcbbd6df62b2626a159f73bb5c";
+    "2cface9ba9ca00ff7210eb32294bd78e459c55a119728cfcbafbab0dab7d421b";
 
 struct ModuleSpec {
     key: &'static str,
@@ -159,6 +159,21 @@ pub struct ScanSummary {
     pub crlf: u64,
     pub bare_cr: u64,
     pub chunks: usize,
+    pub header: HeaderScanResult,
+}
+
+/// Source-header observations from the Doctor scanner policy. The host owns
+/// byte acquisition and source-span projection; the native scanner owns the
+/// shallow header and module-declaration recognition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderScanResult {
+    pub header_present: bool,
+    pub version_valid: bool,
+    pub major: u32,
+    pub minor: u32,
+    pub start: usize,
+    pub end: usize,
+    pub module_decl_present: bool,
 }
 
 /// Decoder and scanner facts used by the native file-encoding health policy.
@@ -948,16 +963,37 @@ impl DoctorMncsRuntime {
 
     /// Feed arbitrary source bytes through the bounded MNCS scanner in
     /// 64-byte windows, retaining its fixed scanner state across calls.
-    /// This is the production ingress path for BOM/newline facts; callers do
-    /// not need to materialize a larger MNCS value than one view.
+    /// This is the production ingress path for BOM/newline and shallow
+    /// header/module facts; callers need not materialize a larger MNCS value
+    /// than one view.
     pub fn scan_bytes(&self, bytes: &[u8]) -> Result<ScanSummary, RuntimeError> {
-        let mut state = [0_u64; 6];
+        let mut state = doctor_version::stream_init(
+            &self.session,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.scanner.v1", "stream_init")?;
         let mut chunks = 0usize;
         for chunk in bytes.chunks(64) {
-            state = self.scan_feed(chunk, state)?;
+            state = doctor_version::stream_feed(
+                &self.session,
+                chunk.to_vec(),
+                state,
+                mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+            )
+            .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+            self.record_entrypoint("doctor.scanner.v1", "stream_feed")?;
             chunks += 1;
         }
-        state = self.scan_finish(state)?;
+        let result = doctor_version::stream_finish(
+            &self.session,
+            state,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.scanner.v1", "stream_finish")?;
+        let state: [u64; 6] = state_array(result.byte_state)?;
+        let header = header_scan_result_from_native(result.header_result)?;
         let styles = u64::from(state[2] > 0) + u64::from(state[3] > 0) + u64::from(state[4] > 0);
         let newline = if styles == 0 {
             NewlineStyle::None
@@ -979,7 +1015,16 @@ impl DoctorMncsRuntime {
             crlf: state[3],
             bare_cr: state[4],
             chunks,
+            header,
         })
+    }
+
+    /// Stream valid source text through the MNCS shallow header scanner.
+    /// Header recognition, version token parsing, and module declaration
+    /// detection are native policy; Rust only carries the bounded window and
+    /// checks that returned offsets and version coordinates fit host types.
+    pub fn scan_header(&self, bytes: &[u8]) -> Result<HeaderScanResult, RuntimeError> {
+        Ok(self.scan_bytes(bytes)?.header)
     }
 
     /// Scan delimiter balance through the MNCS streaming state machine.
@@ -1032,29 +1077,6 @@ impl DoctorMncsRuntime {
             }
         };
         Ok(DelimiterScanResult { status, offset })
-    }
-
-    fn scan_feed(&self, bytes: &[u8], state: [u64; 6]) -> Result<[u64; 6], RuntimeError> {
-        let values = doctor_version::feed(
-            &self.session,
-            bytes.to_vec(),
-            state.to_vec(),
-            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
-        )
-        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
-        self.record_entrypoint("doctor.scanner.v1", "feed")?;
-        state_array(values)
-    }
-
-    fn scan_finish(&self, state: [u64; 6]) -> Result<[u64; 6], RuntimeError> {
-        let values = doctor_version::finish(
-            &self.session,
-            state.to_vec(),
-            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
-        )
-        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
-        self.record_entrypoint("doctor.scanner.v1", "finish")?;
-        state_array(values)
     }
 
     /// Ask MNCS whether a repair loop should stop. `None` means continue;
@@ -1323,6 +1345,44 @@ fn state_array<const N: usize>(values: Vec<u64>) -> Result<[u64; N], RuntimeErro
     Ok(output)
 }
 
+fn header_scan_result_from_native(
+    result: doctor_version::HeaderScanResult,
+) -> Result<HeaderScanResult, RuntimeError> {
+    let start = usize::try_from(result.start).map_err(|_| {
+        RuntimeError::new(
+            "mncs_value_contract",
+            "header scan start offset does not fit the host span domain",
+        )
+    })?;
+    let end = usize::try_from(result.end).map_err(|_| {
+        RuntimeError::new(
+            "mncs_value_contract",
+            "header scan end offset does not fit the host span domain",
+        )
+    })?;
+    let major = u32::try_from(result.major).map_err(|_| {
+        RuntimeError::new(
+            "mncs_value_contract",
+            "header scan major version does not fit the host version domain",
+        )
+    })?;
+    let minor = u32::try_from(result.minor).map_err(|_| {
+        RuntimeError::new(
+            "mncs_value_contract",
+            "header scan minor version does not fit the host version domain",
+        )
+    })?;
+    Ok(HeaderScanResult {
+        header_present: result.header_present,
+        version_valid: result.version_valid,
+        major,
+        minor,
+        start,
+        end,
+        module_decl_present: result.module_decl_present,
+    })
+}
+
 fn native_status(status: Status) -> doctor_version::Status {
     match status {
         Status::Pass => doctor_version::Status::Pass,
@@ -1527,8 +1587,9 @@ mod tests {
     fn chunked_scanner_carries_bom_and_newline_state_across_windows() {
         let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
         let mut bytes = vec![0xef, 0xbb, 0xbf];
-        bytes.extend(std::iter::repeat_n(b'x', 60));
-        bytes.extend_from_slice(b"\r\nline\nlast\r");
+        bytes.extend_from_slice(b"mncs 0.16;");
+        bytes.extend(std::iter::repeat_n(b'x', 50));
+        bytes.extend_from_slice(b"\r\nline\nmodule sample;\r");
         let summary = runtime.scan_bytes(&bytes).expect("scan");
         assert!(summary.has_bom);
         assert_eq!(summary.newline, NewlineStyle::Mixed);
@@ -1540,10 +1601,32 @@ mod tests {
         assert!(provenance
             .entrypoints
             .iter()
-            .any(|entrypoint| entrypoint == "doctor.scanner.v1::feed"));
+            .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_feed"));
         assert!(provenance
             .entrypoints
             .iter()
-            .any(|entrypoint| entrypoint == "doctor.scanner.v1::finish"));
+            .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_finish"));
+    }
+
+    #[test]
+    fn combined_source_stream_returns_header_and_module_facts() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let mut bytes = b"mncs 0.16;\n".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 50));
+        bytes.extend_from_slice(b"\nmodule sample;");
+
+        let summary = runtime.scan_bytes(&bytes).expect("combined scan");
+        assert!(summary.header.header_present);
+        assert!(summary.header.version_valid);
+        assert_eq!((summary.header.major, summary.header.minor), (0, 16));
+        assert_eq!((summary.header.start, summary.header.end), (0, 10));
+        assert!(summary.header.module_decl_present);
+        assert_eq!(summary.chunks, 2);
+        assert!(runtime
+            .provenance()
+            .unwrap()
+            .entrypoints
+            .iter()
+            .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_feed"));
     }
 }

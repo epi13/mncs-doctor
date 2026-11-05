@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "9c58209fe0b9b2e981df4c52969502349f9b484a925f94b6ff9dc195ed37b991";
+    "273e8d78931cff1a2d3d8c155141b878b32cf6628a720d4f1584d2e6eac3a392";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "325e454eb4b8de39cb9f59c2fcb88d9d597a5cc3e13471f3df84d8330f64035d";
+    "2751c809de2a7f10c54f1ae37564f3d64535b76962960b2f44e46cf92dd0d53b";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -2339,6 +2339,308 @@ impl FileClassInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct HeaderScanResult {
+    pub end: u64,
+    pub header_present: bool,
+    pub major: u64,
+    pub minor: u64,
+    pub module_decl_present: bool,
+    pub start: u64,
+    pub version_valid: bool,
+}
+
+impl HostValue for HeaderScanResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "HeaderScanResult", "fields": {
+            "end": json!({"integer": {"value": self.end, "type": {"bits": 64, "signed": false}}}),
+            "header_present": json!({"boolean": {"value": self.header_present}}),
+            "major": json!({"integer": {"value": self.major, "type": {"bits": 64, "signed": false}}}),
+            "minor": json!({"integer": {"value": self.minor, "type": {"bits": 64, "signed": false}}}),
+            "module_decl_present": json!({"boolean": {"value": self.module_decl_present}}),
+            "start": json!({"integer": {"value": self.start, "type": {"bits": 64, "signed": false}}}),
+            "version_valid": json!({"boolean": {"value": self.version_valid}}),
+        }}})
+    }
+}
+
+impl HeaderScanResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let end = decode_u64(
+            fields
+                .get("end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_present = decode_bool(
+            fields
+                .get("header_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let major = decode_u64(
+            fields
+                .get("major")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let minor = decode_u64(
+            fields
+                .get("minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let module_decl_present = decode_bool(
+            fields
+                .get("module_decl_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let start = decode_u64(
+            fields
+                .get("start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_valid = decode_bool(
+            fields
+                .get("version_valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            end,
+            header_present,
+            major,
+            minor,
+            module_decl_present,
+            start,
+            version_valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeaderScanState {
+    pub candidate_start: u64,
+    pub first_token_length: u64,
+    pub first_token_matches: bool,
+    pub header_end: u64,
+    pub header_major: u64,
+    pub header_minor: u64,
+    pub header_present: bool,
+    pub header_start: u64,
+    pub header_valid: bool,
+    pub mode: u8,
+    pub module_last_nonwhite: u64,
+    pub module_prefix_invalid: bool,
+    pub module_prefix_length: u8,
+    pub module_seen: bool,
+    pub position: u64,
+    pub slash_position: u64,
+    pub token_stage: u8,
+    pub utf8_codepoint: u64,
+    pub utf8_remaining: u8,
+    pub version_component: u8,
+    pub version_digits: u64,
+    pub version_major: u64,
+    pub version_minor: u64,
+    pub version_plus: bool,
+    pub version_seen: bool,
+    pub version_valid: bool,
+}
+
+impl HostValue for HeaderScanState {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "HeaderScanState", "fields": {
+            "candidate_start": json!({"integer": {"value": self.candidate_start, "type": {"bits": 64, "signed": false}}}),
+            "first_token_length": json!({"integer": {"value": self.first_token_length, "type": {"bits": 64, "signed": false}}}),
+            "first_token_matches": json!({"boolean": {"value": self.first_token_matches}}),
+            "header_end": json!({"integer": {"value": self.header_end, "type": {"bits": 64, "signed": false}}}),
+            "header_major": json!({"integer": {"value": self.header_major, "type": {"bits": 64, "signed": false}}}),
+            "header_minor": json!({"integer": {"value": self.header_minor, "type": {"bits": 64, "signed": false}}}),
+            "header_present": json!({"boolean": {"value": self.header_present}}),
+            "header_start": json!({"integer": {"value": self.header_start, "type": {"bits": 64, "signed": false}}}),
+            "header_valid": json!({"boolean": {"value": self.header_valid}}),
+            "mode": json!({"byte": {"value": self.mode}}),
+            "module_last_nonwhite": json!({"integer": {"value": self.module_last_nonwhite, "type": {"bits": 64, "signed": false}}}),
+            "module_prefix_invalid": json!({"boolean": {"value": self.module_prefix_invalid}}),
+            "module_prefix_length": json!({"byte": {"value": self.module_prefix_length}}),
+            "module_seen": json!({"boolean": {"value": self.module_seen}}),
+            "position": json!({"integer": {"value": self.position, "type": {"bits": 64, "signed": false}}}),
+            "slash_position": json!({"integer": {"value": self.slash_position, "type": {"bits": 64, "signed": false}}}),
+            "token_stage": json!({"byte": {"value": self.token_stage}}),
+            "utf8_codepoint": json!({"integer": {"value": self.utf8_codepoint, "type": {"bits": 64, "signed": false}}}),
+            "utf8_remaining": json!({"byte": {"value": self.utf8_remaining}}),
+            "version_component": json!({"byte": {"value": self.version_component}}),
+            "version_digits": json!({"integer": {"value": self.version_digits, "type": {"bits": 64, "signed": false}}}),
+            "version_major": json!({"integer": {"value": self.version_major, "type": {"bits": 64, "signed": false}}}),
+            "version_minor": json!({"integer": {"value": self.version_minor, "type": {"bits": 64, "signed": false}}}),
+            "version_plus": json!({"boolean": {"value": self.version_plus}}),
+            "version_seen": json!({"boolean": {"value": self.version_seen}}),
+            "version_valid": json!({"boolean": {"value": self.version_valid}}),
+        }}})
+    }
+}
+
+impl HeaderScanState {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let candidate_start = decode_u64(
+            fields
+                .get("candidate_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let first_token_length = decode_u64(
+            fields
+                .get("first_token_length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let first_token_matches = decode_bool(
+            fields
+                .get("first_token_matches")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_end = decode_u64(
+            fields
+                .get("header_end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_major = decode_u64(
+            fields
+                .get("header_major")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_minor = decode_u64(
+            fields
+                .get("header_minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_present = decode_bool(
+            fields
+                .get("header_present")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_start = decode_u64(
+            fields
+                .get("header_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let header_valid = decode_bool(
+            fields
+                .get("header_valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let mode = decode_u8(
+            fields
+                .get("mode")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let module_last_nonwhite = decode_u64(
+            fields
+                .get("module_last_nonwhite")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let module_prefix_invalid = decode_bool(
+            fields
+                .get("module_prefix_invalid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let module_prefix_length = decode_u8(
+            fields
+                .get("module_prefix_length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let module_seen = decode_bool(
+            fields
+                .get("module_seen")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let position = decode_u64(
+            fields
+                .get("position")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let slash_position = decode_u64(
+            fields
+                .get("slash_position")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_stage = decode_u8(
+            fields
+                .get("token_stage")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let utf8_codepoint = decode_u64(
+            fields
+                .get("utf8_codepoint")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let utf8_remaining = decode_u8(
+            fields
+                .get("utf8_remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_component = decode_u8(
+            fields
+                .get("version_component")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_digits = decode_u64(
+            fields
+                .get("version_digits")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_major = decode_u64(
+            fields
+                .get("version_major")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_minor = decode_u64(
+            fields
+                .get("version_minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_plus = decode_bool(
+            fields
+                .get("version_plus")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_seen = decode_bool(
+            fields
+                .get("version_seen")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let version_valid = decode_bool(
+            fields
+                .get("version_valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            candidate_start,
+            first_token_length,
+            first_token_matches,
+            header_end,
+            header_major,
+            header_minor,
+            header_present,
+            header_start,
+            header_valid,
+            mode,
+            module_last_nonwhite,
+            module_prefix_invalid,
+            module_prefix_length,
+            module_seen,
+            position,
+            slash_position,
+            token_stage,
+            utf8_codepoint,
+            utf8_remaining,
+            version_component,
+            version_digits,
+            version_major,
+            version_minor,
+            version_plus,
+            version_seen,
+            version_valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MergeInput {
     pub conflicts: u64,
 }
@@ -3239,6 +3541,82 @@ impl RetryPolicy {
         Ok(Self {
             base_delay_secs,
             max_delay_secs,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScannerStreamResult {
+    pub byte_state: Vec<u64>,
+    pub header_result: HeaderScanResult,
+}
+
+impl HostValue for ScannerStreamResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ScannerStreamResult", "fields": {
+            "byte_state": json!({"sequence": {"values": self.byte_state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
+            "header_result": self.header_result.host_value(),
+        }}})
+    }
+}
+
+impl ScannerStreamResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let byte_state = sequence_values(
+            fields
+                .get("byte_state")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let header_result = HeaderScanResult::from_host_value(
+            fields
+                .get("header_result")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            byte_state,
+            header_result,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScannerStreamState {
+    pub byte_state: Vec<u64>,
+    pub header_state: HeaderScanState,
+}
+
+impl HostValue for ScannerStreamState {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ScannerStreamState", "fields": {
+            "byte_state": json!({"sequence": {"values": self.byte_state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
+            "header_state": self.header_state.host_value(),
+        }}})
+    }
+}
+
+impl ScannerStreamState {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let byte_state = sequence_values(
+            fields
+                .get("byte_state")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u64(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let header_state = HeaderScanState::from_host_value(
+            fields
+                .get("header_state")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            byte_state,
+            header_state,
         })
     }
 }
@@ -5033,6 +5411,206 @@ pub fn fold_byte(
     Ok(decode_u64(&value)?)
 }
 
+pub fn header_begin_candidate(
+    session: &Session,
+    state: HeaderScanState,
+    start: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": start, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_begin_candidate",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_candidate_char(
+    session: &Session,
+    state: HeaderScanState,
+    value: u64,
+    start: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": value, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": start, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_candidate_char",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_feed(
+    session: &Session,
+    bytes: Vec<u8>,
+    state: HeaderScanState,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), state.host_value()]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_feed",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_finish(
+    session: &Session,
+    input: HeaderScanState,
+    options: CallOptions,
+) -> Result<HeaderScanResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_finish",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanResult::from_host_value(&value)?)
+}
+
+pub fn header_finish_candidate(
+    session: &Session,
+    state: HeaderScanState,
+    end: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": end, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_finish_candidate",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_head_byte(
+    session: &Session,
+    state: HeaderScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_head_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_init(session: &Session, options: CallOptions) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_init",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_scan_byte(
+    session: &Session,
+    state: HeaderScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_scan_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_unicode_char(
+    session: &Session,
+    state: HeaderScanState,
+    value: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": value, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_unicode_char",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn header_version_char(
+    session: &Session,
+    state: HeaderScanState,
+    value: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": value, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "header_version_char",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
 pub fn health_code(session: &Session, options: CallOptions) -> Result<Status, EmbedError> {
     let arguments = serde_json::to_string(&Vec::<Value>::new())
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
@@ -5092,7 +5670,7 @@ pub fn is_ascii_space(
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(
         session,
-        "mncs.core.bytes.v1",
+        "doctor.scanner.v1",
         "is_ascii_space",
         &arguments,
         options,
@@ -5261,6 +5839,26 @@ pub fn is_too_long(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_unicode_space(
+    session: &Session,
+    input: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "is_unicode_space",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn is_unknown(
     session: &Session,
     input: TransitionKind,
@@ -5356,6 +5954,48 @@ pub fn migration_code(
     )?;
     let value = returned_value(&output)?;
     Ok(MigrationVerdict::from_host_value(&value)?)
+}
+
+pub fn module_line_feed(
+    session: &Session,
+    state: HeaderScanState,
+    value: u64,
+    options: CallOptions,
+) -> Result<HeaderScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        json!({"integer": {"value": value, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "module_line_feed",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(HeaderScanState::from_host_value(&value)?)
+}
+
+pub fn module_prefix_char(
+    session: &Session,
+    input: u64,
+    options: CallOptions,
+) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "module_prefix_char",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
 }
 
 pub fn nibbles(
@@ -6003,6 +6643,59 @@ pub fn stop_rule(
     let output = typed_call(session, "doctor.fix.v1", "stop_rule", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(StopDecision::from_host_value(&value)?)
+}
+
+pub fn stream_feed(
+    session: &Session,
+    bytes: Vec<u8>,
+    state: ScannerStreamState,
+    options: CallOptions,
+) -> Result<ScannerStreamState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), state.host_value()]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "stream_feed",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScannerStreamState::from_host_value(&value)?)
+}
+
+pub fn stream_finish(
+    session: &Session,
+    input: ScannerStreamState,
+    options: CallOptions,
+) -> Result<ScannerStreamResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "stream_finish",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScannerStreamResult::from_host_value(&value)?)
+}
+
+pub fn stream_init(
+    session: &Session,
+    options: CallOptions,
+) -> Result<ScannerStreamState, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "stream_init",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScannerStreamState::from_host_value(&value)?)
 }
 
 pub fn symlink_decision(

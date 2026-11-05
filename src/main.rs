@@ -19,7 +19,7 @@ use std::process::ExitCode as ProcExit;
 
 use serde::{Deserialize, Serialize};
 
-use mncs_doctor::diagnostics::{scan_header, Diagnostic, LanguageBackend, ScannerBackend};
+use mncs_doctor::diagnostics::{Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
     discover_topology_with_policy, discover_with_policy, find_root, read_source_file,
     DiscoveryOptions, Inventory, SourceFile, SymlinkFacts, TopologySnapshot,
@@ -51,6 +51,7 @@ use mncs_doctor::toolchain::{
 };
 use mncs_doctor::transaction::{summarize_diff, CommitReport, DiffSummary, FileOp, Transaction};
 use mncs_doctor::verify::{run_external, verify_after_with_diagnostics, ExternalCheck};
+use mncs_doctor::version::LanguageVersion;
 use mncs_doctor::{DOCTOR_VERSION, REPORT_SCHEMA_VERSION};
 
 fn main() -> ProcExit {
@@ -567,9 +568,11 @@ fn diagnose_one_with_mncs_policy(
     let mut scanned_file = file.clone();
     scanned_file.has_bom = scan.has_bom;
     scanned_file.newline = scan.newline;
+    let header = scan.header;
     scanner
         .diagnose_with_policy(
             &scanned_file,
+            |_| Ok(header),
             |version| {
                 policy
                     .classify_version(version)
@@ -583,6 +586,20 @@ fn diagnose_one_with_mncs_policy(
                 file.relative
             )
         })
+}
+
+fn declared_version(
+    text: Option<&str>,
+    policy: &DoctorMncsRuntime,
+) -> Result<Option<LanguageVersion>, String> {
+    let Some(text) = text else {
+        return Ok(None);
+    };
+    let facts = policy
+        .scan_header(text.as_bytes())
+        .map_err(|error| format!("MNCS header scan failed: {error}"))?;
+    Ok((facts.header_present && facts.version_valid)
+        .then(|| LanguageVersion::new(facts.major, facts.minor)))
 }
 
 fn emit(report: &Report, json: bool, quiet: bool) {
@@ -1958,11 +1975,7 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     let mut file_plans: Vec<(SourceFile, mncs_doctor::migration::MigrationPlan)> = Vec::new();
     let mut unmigratable: Vec<String> = Vec::new();
     for file in &sources {
-        let declared = file
-            .text
-            .as_deref()
-            .map(scan_header)
-            .and_then(|facts| facts.declared);
+        let declared = declared_version(file.text.as_deref(), policy)?;
         let Some(from) = declared else {
             unmigratable.push(format!(
                 "{}: no declared version (add a header first)",
@@ -2137,11 +2150,7 @@ fn cmd_migrate(args: &[String]) -> Result<ExitCode, String> {
     // Idempotence: re-planning migrated files must yield no-op plans.
     let mut idempotent = true;
     for file in &fresh_sources {
-        let declared = file
-            .text
-            .as_deref()
-            .map(scan_header)
-            .and_then(|facts| facts.declared);
+        let declared = declared_version(file.text.as_deref(), policy)?;
         if let Some(from) = declared {
             if let Ok(replan) = plan_migration(from, target_version, &registry) {
                 if !replan.is_noop {

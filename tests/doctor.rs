@@ -40,10 +40,10 @@ fn healthy_repo_reports_two_files() {
         .any(|entrypoint| entrypoint == "doctor.version.v1::classify"));
     assert!(entrypoints
         .iter()
-        .any(|entrypoint| entrypoint == "doctor.scanner.v1::feed"));
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_feed"));
     assert!(entrypoints
         .iter()
-        .any(|entrypoint| entrypoint == "doctor.scanner.v1::finish"));
+        .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_finish"));
     assert!(entrypoints
         .iter()
         .any(|entrypoint| entrypoint == "doctor.scanner.v1::delimiter_feed"));
@@ -447,8 +447,8 @@ fn verify_command_uses_mncs_verification_and_report_policy() {
     for expected in [
         "doctor.discovery.v1::directory_decision",
         "doctor.discovery.v1::file_class",
-        "doctor.scanner.v1::feed",
-        "doctor.scanner.v1::finish",
+        "doctor.scanner.v1::stream_feed",
+        "doctor.scanner.v1::stream_finish",
         "doctor.verify.v1::delta_ok",
         "doctor.verify.v1::compose",
         "doctor.report.v1::exit_for",

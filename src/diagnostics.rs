@@ -15,18 +15,18 @@
 //! 3. [`ScannerBackend`] — a deliberately shallow, byte-level repository
 //!    hygiene scan (header presence, declared-version classification, module
 //!    declaration presence, delimiter balance, and detailed diagnostic
-//!    construction). Production BOM/newline facts are first obtained through
-//!    the stateful `doctor.scanner.v1` ingress. It mirrors the *documented*
-//!    header rule of upstream
-//!    `infer_source_profile` (first non-blank/non-comment `mncs X.Y;`) and
-//!    performs no semantic interpretation. Anything deeper belongs upstream
-//!    (see `pressure/DOC-P-001.md`).
+//!    construction). Production BOM/newline, header, module-presence, and
+//!    delimiter facts are obtained through the stateful `doctor.scanner.v1`
+//!    ingress. Header recognition remains Doctor's documented hygiene rule,
+//!    not Language's semantic `infer_source_profile` API; the reusable
+//!    cross-tool inference gap remains tracked in `pressure/DOC-P-005.md`.
+//!    Anything deeper belongs upstream (see `pressure/DOC-P-001.md`).
 
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::SourceFile;
 use crate::fix::Applicability;
-use crate::mncs_runtime::DoctorMncsRuntime;
+use crate::mncs_runtime::{DoctorMncsRuntime, HeaderScanResult};
 use crate::version::{LanguageVersion, VersionClass};
 
 /// Diagnostic severity.
@@ -141,17 +141,25 @@ pub trait LanguageBackend {
 pub struct HeaderFacts {
     /// Byte span of the header statement, if present.
     pub span: Option<(usize, usize)>,
-    /// Declared version text as written.
-    pub declared_text: Option<String>,
     /// Declared version when it parses as `X.Y`.
     pub declared: Option<LanguageVersion>,
     /// Whether a `module ...;` declaration is present.
     pub has_module_decl: bool,
 }
 
-/// Extract header facts using the documented upstream rule: the first
-/// non-blank, non-comment statement must be `mncs X.Y;`.
-pub fn scan_header(text: &str) -> HeaderFacts {
+fn header_facts_from_native(result: HeaderScanResult) -> HeaderFacts {
+    HeaderFacts {
+        span: result.header_present.then_some((result.start, result.end)),
+        declared: (result.header_present && result.version_valid)
+            .then_some(LanguageVersion::new(result.major, result.minor)),
+        has_module_decl: result.module_decl_present,
+    }
+}
+
+/// Independent host oracle retained for unit and parity tests only. Production
+/// source-header and module recognition runs through `doctor.scanner.v1`.
+#[cfg(test)]
+fn scan_header_reference(text: &str) -> HeaderFacts {
     let bytes = text.as_bytes();
     let mut i = 0usize;
     let mut declared_text = None;
@@ -182,12 +190,12 @@ pub fn scan_header(text: &str) -> HeaderFacts {
         .and_then(|t| t.parse::<LanguageVersion>().ok());
     HeaderFacts {
         span,
-        declared_text,
         declared,
         has_module_decl: module_decl_present(text),
     }
 }
 
+#[cfg(test)]
 fn skip_trivia(bytes: &[u8], i: &mut usize) {
     loop {
         while *i < bytes.len() && bytes[*i].is_ascii_whitespace() {
@@ -211,6 +219,7 @@ fn skip_trivia(bytes: &[u8], i: &mut usize) {
     }
 }
 
+#[cfg(test)]
 fn module_decl_present(text: &str) -> bool {
     // `trim` makes detection tolerant of trailing horizontal whitespace (a
     // fixable hygiene issue, not a missing module).
@@ -270,16 +279,18 @@ impl ScannerBackend {
         "scanner"
     }
 
-    /// Run the hygiene scan with native version and delimiter policies.
-    /// Host code retains byte acquisition, Unicode span projection, and
-    /// diagnostic rendering; the semantic scan decisions come from MNCS.
-    pub fn diagnose_with_policy<F, G>(
+    /// Run the hygiene scan with native header, version, and delimiter
+    /// policies. Host code retains byte acquisition, Unicode span projection,
+    /// and diagnostic rendering.
+    pub fn diagnose_with_policy<H, F, G>(
         &self,
         file: &SourceFile,
+        header_scanner: H,
         classifier: F,
         delimiter_scanner: G,
     ) -> Result<Vec<Diagnostic>, String>
     where
+        H: Fn(&[u8]) -> Result<HeaderScanResult, String>,
         F: Fn(LanguageVersion) -> Result<VersionClass, String>,
         G: Fn(&[u8]) -> Result<DelimiterScanResult, String>,
     {
@@ -320,8 +331,8 @@ impl ScannerBackend {
                 backend: self.name().to_owned(),
             });
         }
-        let facts = scan_header(text);
-        match (&facts.declared_text, facts.declared) {
+        let facts = header_facts_from_native(header_scanner(&file.bytes)?);
+        match (facts.span, facts.declared) {
             (None, _) => out.push(Diagnostic {
                 code: "DOC101".to_owned(),
                 severity: Severity::Warning,
@@ -508,20 +519,45 @@ impl ScannerBackend {
     where
         F: Fn(LanguageVersion) -> Result<VersionClass, String>,
     {
-        self.diagnose_with_policy(file, classifier, |bytes| {
-            let text = std::str::from_utf8(bytes)
-                .map_err(|error| format!("reference scanner received invalid UTF-8: {error}"))?;
-            Ok(match unbalanced_delimiter(text) {
-                Some(span) => DelimiterScanResult {
-                    status: DelimiterScanStatus::Unbalanced,
-                    offset: span.start,
-                },
-                None => DelimiterScanResult {
-                    status: DelimiterScanStatus::Balanced,
-                    offset: 0,
-                },
-            })
-        })
+        self.diagnose_with_policy(
+            file,
+            |bytes| {
+                let text = std::str::from_utf8(bytes).map_err(|error| {
+                    format!("reference scanner received invalid UTF-8: {error}")
+                })?;
+                let facts = scan_header_reference(text);
+                let (start, end) = facts.span.unwrap_or((0, 0));
+                let (major, minor) = facts
+                    .declared
+                    .map(|version| (version.major, version.minor))
+                    .unwrap_or((0, 0));
+                Ok(HeaderScanResult {
+                    header_present: facts.span.is_some(),
+                    version_valid: facts.declared.is_some(),
+                    major,
+                    minor,
+                    start,
+                    end,
+                    module_decl_present: facts.has_module_decl,
+                })
+            },
+            classifier,
+            |bytes| {
+                let text = std::str::from_utf8(bytes).map_err(|error| {
+                    format!("reference scanner received invalid UTF-8: {error}")
+                })?;
+                Ok(match unbalanced_delimiter(text) {
+                    Some(span) => DelimiterScanResult {
+                        status: DelimiterScanStatus::Unbalanced,
+                        offset: span.start,
+                    },
+                    None => DelimiterScanResult {
+                        status: DelimiterScanStatus::Balanced,
+                        offset: 0,
+                    },
+                })
+            },
+        )
     }
 }
 
@@ -535,6 +571,7 @@ impl LanguageBackend for ScannerBackend {
             return self
                 .diagnose_with_policy(
                     file,
+                    |_| unreachable!("invalid UTF-8 has no header scan"),
                     |_| unreachable!("invalid UTF-8 has no version"),
                     |_| unreachable!("invalid UTF-8 has no delimiter scan"),
                 )
@@ -544,6 +581,7 @@ impl LanguageBackend for ScannerBackend {
             let policy = DoctorMncsRuntime::production().map_err(|error| error.to_string())?;
             self.diagnose_with_policy(
                 file,
+                |bytes| policy.scan_header(bytes).map_err(|error| error.to_string()),
                 |version| {
                     policy
                         .classify_version(version)
@@ -729,6 +767,39 @@ mod tests {
             "// c\n/* multi\nline */\nmncs 0.16;\nmodule a;\n",
         ));
         assert!(!codes(&diags).contains(&"DOC101"), "{diags:?}");
+    }
+
+    #[test]
+    fn native_header_scan_matches_independent_host_reference() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let mut cases = vec![
+            String::new(),
+            "// c\n/* multi\nline */\nmncs 0.16;\nmodule a;\n".to_owned(),
+            " \t\r\nmncs\t0.18;\nmodule a;  \n".to_owned(),
+            "/* c */ mncs 0.18;\n  module a;\n".to_owned(),
+            "mncs latest;\nmodule a;\n".to_owned(),
+            "mncs +0.+18;\nmodule a;\n".to_owned(),
+            "mncs ;\nmodule a;\n".to_owned(),
+            "mncs 4294967296.18;\nmodule a;\n".to_owned(),
+            "\u{2003}mncs 0.18;\n\u{00a0}module a;\u{3000}\n".to_owned(),
+            "module\ta;\n".to_owned(),
+            "mncs 0.18\nmodule a;\n".to_owned(),
+            format!("{}\u{2003}mncs 0.18;\nmodule a;\n", " ".repeat(63)),
+            format!("{}module a;\n", " ".repeat(61)),
+        ];
+        let mut long_comment = String::from("/*");
+        long_comment.push_str(&"x".repeat(130));
+        long_comment.push_str("*/\nmncs 0.18;\nmodule a;\n");
+        cases.push(long_comment);
+
+        for text in cases {
+            let expected = scan_header_reference(&text);
+            let native = runtime
+                .scan_header(text.as_bytes())
+                .expect("native header scan");
+            let actual = header_facts_from_native(native);
+            assert_eq!(actual, expected, "header facts for {text:?}");
+        }
     }
 
     #[test]

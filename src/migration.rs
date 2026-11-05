@@ -21,9 +21,9 @@ use std::collections::{BTreeMap, VecDeque};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::diagnostics::scan_header;
 use crate::discovery::fingerprint;
 use crate::fix::Applicability;
+use crate::mncs_runtime::DoctorMncsRuntime;
 use crate::version::{current_version, LanguageVersion, TransitionId};
 
 /// What an edge is known to require.
@@ -374,12 +374,18 @@ pub struct MigrationRecord {
 /// header to `mncs C.D;`. Classified REVIEW at the plan level because the
 /// declared version gates semantics; the byte rewrite itself is exact.
 pub fn bump_header(text: &str, to: LanguageVersion) -> Result<(String, bool), MigrationError> {
-    let facts = scan_header(text);
-    let Some((start, end)) = facts.span else {
+    let policy = DoctorMncsRuntime::production().map_err(|error| {
+        MigrationError::HeaderBump(format!("native header scanner unavailable: {error}"))
+    })?;
+    let facts = policy.scan_header(text.as_bytes()).map_err(|error| {
+        MigrationError::HeaderBump(format!("native header scan failed: {error}"))
+    })?;
+    if !facts.header_present {
         return Err(MigrationError::HeaderBump(
             "no parseable header to rewrite".to_owned(),
         ));
-    };
+    }
+    let (start, end) = (facts.start, facts.end);
     let replacement = format!("mncs {to};");
     let current = text.get(start..end).unwrap_or("");
     if current.trim() == replacement {
@@ -615,6 +621,8 @@ mod tests {
         let (out2, changed2) = bump_header(&out, v(16)).unwrap();
         assert!(!changed2 && out2 == out);
         assert!(bump_header("module a;\n", v(16)).is_err());
+        let (repaired, changed3) = bump_header("mncs latest;\nmodule a;\n", v(16)).unwrap();
+        assert!(changed3 && repaired.starts_with("mncs 0.16;"));
     }
 
     #[test]

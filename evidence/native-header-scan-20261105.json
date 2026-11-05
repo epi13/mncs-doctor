@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "campaign": "cmp_luna_max_native_ecosystem_20261105_0400z",
+  "environment_session": "ses_9412365d16c31715",
+  "work_intent": "int_06839eff31521ee1",
+  "claim": "clm_e4a1f965e7f7be17",
+  "repository": "mncs-doctor",
+  "branch": "campaign/luna-max-doctor-header-scan-native-20261105",
+  "base_revision": "80afeef861795a79e7d68940d5a5902f5b92257e",
+  "migration": {
+    "native_module": "mncs/doctor/scanner.mncs",
+    "consumer": "src/diagnostics.rs::ScannerBackend::diagnose_with_policy",
+    "additional_consumers": [
+      "src/main.rs::diagnose_one_with_mncs_policy",
+      "src/main.rs::cmd_migrate",
+      "src/migration.rs::bump_header"
+    ],
+    "responsibilities_moved": [
+      "recognize the leading shallow mncs X.Y; header and its byte span",
+      "parse bounded numeric version coordinates and flag invalid or overflowing components",
+      "recognize module declaration presence across streamed lines",
+      "carry header and module recognition state across 64-byte windows"
+    ],
+    "production_host_code_retired": [
+      "the Rust production header and module scanner",
+      "the second header-only per-window pass after Doctor's existing byte ingress"
+    ],
+    "independent_reference": "The previous Rust scanner, skip_trivia, and module_decl_present remain behind cfg(test) for differential expectations.",
+    "ownership_boundary": "This remains Doctor hygiene policy. Language semantic source-profile inference is still separate and DOC-P-005 remains open."
+  },
+  "native_artifacts": {
+    "family_backend": "mncs/doctor/family.backend.json",
+    "family_backend_file_sha256": "2cface9ba9ca00ff7210eb32294bd78e459c55a119728cfcbafbab0dab7d421b",
+    "family_artifact_identity": "mncs:compiler:backend-artifact:520827b6d031d87c03c98e37fb6dc67e7075fd2280b91a08a2e0b2a006d7c941",
+    "compiler_artifact_identity": "mncs:compiler:compiler-artifact:c87b8518cb9e700b4b7e1bd17ec73255437c7fcc17e88fc03222b2f5f11bef60",
+    "generated_binding": "src/generated/doctor_version.rs",
+    "generated_binding_sha256": "1a7416aba75ae8d35b1444779c08df78374999257f097fa514a9b97c265b4f46",
+    "embedded_sha256_pin_updated": true,
+    "policy_backend": "mncs-research-bytecode",
+    "production_entrypoints": [
+      "doctor.scanner.v1::stream_init",
+      "doctor.scanner.v1::stream_feed",
+      "doctor.scanner.v1::stream_finish"
+    ]
+  },
+  "verification": {
+    "freeze_command": {
+      "command": "scripts/freeze-doctor-family.sh",
+      "status": "passed",
+      "family_corpus_cases": 10,
+      "family_backend_file_sha256": "2cface9ba9ca00ff7210eb32294bd78e459c55a119728cfcbafbab0dab7d421b"
+    },
+    "independent_header_parity": {
+      "command": "cargo test --offline --lib diagnostics::tests::native_header_scan_matches_independent_host_reference",
+      "status": "passed",
+      "cases": 14,
+      "coverage": [
+        "leading comments and whitespace",
+        "malformed and overflowing versions",
+        "Unicode whitespace",
+        "module lines split across scanner windows",
+        "long comments and missing semicolons"
+      ]
+    },
+    "combined_stream_contract": {
+      "command": "cargo test --offline --lib combined_source_stream_returns_header_and_module_facts",
+      "status": "passed",
+      "checks": [
+        "header coordinates and span are returned from the existing source stream",
+        "module declaration recognition crosses the 64-byte window boundary",
+        "runtime provenance records the composed stream entrypoint"
+      ]
+    },
+    "repository_suite": {
+      "command": "CARGO_TARGET_DIR=/home/epi13/Documents/Projects/mncs-doctor/target cargo test --offline",
+      "status": "passed",
+      "test_counts": {
+        "library": 98,
+        "doctor": 17,
+        "fix": 6,
+        "health_epoch": 17,
+        "migration": 5,
+        "mncs_filesystem": 1,
+        "mncs_parity": 21,
+        "remediate": 9,
+        "remediation_policy": 3,
+        "stdlib": 5,
+        "passed": 182,
+        "failed": 0
+      }
+    },
+    "format_and_diff": {
+      "rustfmt_check": "passed for manually maintained changed Rust files with generated children skipped",
+      "git_diff_check": "passed"
+    }
+  },
+  "resource_contract": {
+    "runtime": "existing embedded Doctor policy session; no new process or cache",
+    "window_bytes": 64,
+    "source_stream_calls": "one composed MNCS call per window, plus stream initialization and finalization",
+    "effect": "header facts are returned by the existing byte-ingress pass; production diagnostics no longer rescan each window for header facts",
+    "policy_step_budget_per_call": 32768,
+    "step_consumption_measured": false
+  },
+  "environment_verification": {
+    "capability": "mncs-doctor:test/doctor-tests",
+    "status": "completion_receipt_unavailable",
+    "note": "The final bound Environment MCP call exceeded its 300-second client wait. The child process later exited without a completion event visible in session_updates. The final exact worktree was then verified by the direct full repository suite above."
+  },
+  "limitations": [
+    "Doctor's native hygiene header contract remains distinct from Language's infer_source_profile; DOC-P-005 is not resolved by this migration.",
+    "The fixed source scanner accepts up-to-64-byte windows and relies on the existing source-file UTF-8 gate for semantic header use.",
+    "Compiler conservative CMP301 obligations remain unresolved; the frozen research-bytecode artifact is used by production as before.",
+    "No source-level timing or VM step-consumption comparison was collected."
+  ],
+  "source_sha256": {
+    "mncs/doctor/scanner.mncs": "1b9bae0dbfa8c4b3baea78a7244b71885efe7eade3ae3fafa470efab4e666671",
+    "src/diagnostics.rs": "32dfc955cbe3ecf17f05d02860c0b0d0956a1622d4792fcd4ea1077c2a8bca43",
+    "src/main.rs": "fd3c8e0b54fa914a136b0eb902d2e5c1c578548474da23fbcbd5720a13954f9e",
+    "src/migration.rs": "29658fd97350d570661711c854ad598ab34d15810baf91d6d596e18da12302d6",
+    "src/mncs_runtime.rs": "7f8f1d51d0934e3842a4ff7844c34ad961c616b0a4e733243013962183730850"
+  }
+}

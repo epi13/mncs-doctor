@@ -10,21 +10,26 @@ Frequency: occasional
 
 ## Doctor workload
 
-`scan_header` (first non-blank/non-comment `mncs X.Y;`) mirrors upstream
-`infer_source_profile`. Any divergence silently misclassifies versions and
-poisons migration plans.
+`scan_header` (first non-blank/non-comment `mncs X.Y;`) and upstream
+`infer_source_profile` concern related source facts. Doctor now runs its
+documented shallow header and module-presence scan in MNCS, but the scanner is
+still Doctor-owned and does not call or share Language's inference. Any
+behavioral divergence can silently misclassify versions and poison migration
+plans.
 
 ## Minimal reproducer
 
 Leading-comment headers (`/* c */ mncs 0.10; …`) already disagree between
-upstream layers (see `CP-0006`); Doctor's mirror adds a third
-implementation of the same rule.
+upstream layers (see `CP-0006`). Doctor's scanner is now independently
+implemented in MNCS, so it no longer adds a third host-language copy, but it
+does not eliminate the ownership and parity risk across tools.
 
 ## Current behavior
 
-Doctor reimplements the documented rule (~40 lines) with a regression test
-pinning comment/whitespace tolerance. Divergence risk is acknowledged in
-`src/diagnostics.rs` module docs.
+Doctor's `doctor.scanner.v1` implementation recognizes its documented rule;
+an independent host reference remains in tests for differential checks.
+Language's Rust `infer_source_profile` remains separate, so cross-tool
+divergence risk remains.
 
 ## Desired behavior
 

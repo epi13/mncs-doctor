@@ -169,8 +169,8 @@ fn fixture_migration_applies_and_converges() {
     for expected in [
         "doctor.discovery.v1::directory_decision",
         "doctor.discovery.v1::file_class",
-        "doctor.scanner.v1::feed",
-        "doctor.scanner.v1::finish",
+        "doctor.scanner.v1::stream_feed",
+        "doctor.scanner.v1::stream_finish",
         "doctor.version.v1::classify",
         "doctor.migration.v1::plan_verdict",
         "doctor.transaction.v1::validate_target",
