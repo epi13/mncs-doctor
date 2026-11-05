@@ -10,7 +10,7 @@ bootstrap with a concrete next conversion target.
 
 Bridge (proven 2026-09-12): `mncs-embed` is a pinned normal dependency.
 `DoctorMncsRuntime` opens the checked-in `mncs/doctor/family.backend.json`
-(`mncs-research-bytecode`) once per process, retains one session for all twelve
+(`mncs-research-bytecode`) once per process, retains one session for all thirteen
 imported policy modules, and uses the generated Rust binding for nominal
 records and finite values. The binding submits the expected interface
 identity on every call. The generated binding now also covers the
@@ -104,8 +104,14 @@ string-capable JSON encoding is absent (DOC-P-010).
 a real `verify_after` cross-check (`parity_verify_compose`). Delta and
 composition results are nominal `VerificationVerdict` values in the
 generated binding.
-Re-diagnosis execution stays host-side (D); process spawning stays host
-side (B: no spawn primitive — DOC-P-011).
+Re-diagnosis execution stays host-side (D). The host projects explicit argv,
+working directory, and environment values into the bounded process request;
+`doctor.verify_process.v1` owns the deadline, capture limits, and pass/fail/
+timeout/unknown classification, while `mncs.std.process.v1` owns the declared
+process effect. Provider errors and unproven zero exits remain `Unknown` at the
+`ExternalCheck` boundary, and `success` is true only for a native pass.
+Doctor's `Command::output` implementation is retired. Stdlib's bounded output
+windows and truncation flags remain visible in `ExternalCheck`.
 
 ### `transaction.rs` — A (policy) + C/D/B (mechanism)
 Target presence, identical-target, stale-base, symlink, and regular-file
@@ -165,7 +171,7 @@ control flow around those policy calls, not a hidden Rust policy fallback.
 ## Production-runtime result
 
 The runtime integration is now shipped. `mncs-embed` is a normal dependency;
-`OnceLock` verifies/opens the checked-in twelve-module family artifact once per
+`OnceLock` verifies/opens the checked-in thirteen-module family artifact once per
 process and reuses its session. Every call requires one returned value, checks
 the exact scalar/sequence shape, rejects unsupported/failing policy calls, and
 records the shared artifact identity/digest. Initialization and call failures

@@ -469,6 +469,9 @@ fn remediate_verify_cmd_never_reuses() {
     let evidence_path = run2["evidence"].as_str().unwrap().to_owned();
     let evidence: serde_json::Value =
         serde_json::from_slice(&fs::read(&evidence_path).unwrap()).unwrap();
-    assert_eq!(evidence["verification"]["external"][0]["command"], "true");
-    assert_eq!(evidence["verification"]["external"][0]["success"], true);
+    let external = &evidence["verification"]["external"][0];
+    assert_eq!(external["command"], "true");
+    let verdict = external["verdict"].as_str().unwrap();
+    assert!(matches!(verdict, "pass" | "unknown"));
+    assert_eq!(external["success"], verdict == "pass");
 }

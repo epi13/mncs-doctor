@@ -16,7 +16,7 @@ repository
   -> health      (7 registered checks -> MNCS status/aggregation policy)
   -> planning    (MNCS edit/migration policy; dry-run renders diffs)
   -> transaction (fingerprint-validated, temp+rename, rollback)
-  -> verification(MNCS composition, rescan, idempotence, external commands)
+  -> verification(MNCS composition, rescan, idempotence, bounded Stdlib process effect)
   -> report      (MNCS exit policy; host human/JSON rendering)
   -> epoch record(validated outcome + input fingerprints for the next run)
 ```
@@ -28,8 +28,13 @@ last validated world, the proven verdict is re-emitted with no policy
 startup and no subprocesses. Any doubt runs the full path, which then
 records a fresh epoch over the state it leaves behind.
 
+External verification projects explicit argv, a working directory, and the
+selected environment into Doctor's bounded MNCS process policy. The native
+verdict distinguishes pass, failure, timeout, and unknown; an unproven process
+observation never becomes a successful check.
+
 The live command path enters `DoctorMncsRuntime` before discovery. It verifies
-and opens the checked-in ten-module family artifact once per process, retains
+and opens the checked-in thirteen-module family artifact once per process, retains
 one session for all imported policy modules, validates every typed return,
 records entrypoints, and fails closed on initialization or call-contract
 errors. Semantic finite values and records are passed through generated Rust

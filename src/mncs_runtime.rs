@@ -1,10 +1,10 @@
 //! Production MNCS policy runtime.
 //!
 //! This is the one boundary between Doctor's trusted host mechanisms and its
-//! executable MNCS policy. The host owns discovery, byte acquisition,
-//! subprocesses, and rendering. This runtime owns loading verified policy
-//! artifacts, retaining sessions, validating scalar transport, and exposing
-//! policy decisions to command orchestration.
+//! executable MNCS policy. The host owns filesystem discovery, launch-input
+//! projection, and rendering; MNCS policy invokes the Stdlib process effect.
+//! This runtime owns loading verified policy artifacts, retaining sessions,
+//! validating typed transport, and exposing native decisions to orchestration.
 //!
 //! The twelve policy sources are frozen into one checked-in artifact generated
 //! by the upstream compiler's import-resolution path. The shipped crate opens
@@ -1190,6 +1190,35 @@ impl DoctorMncsRuntime {
         Ok(matches!(verdict, doctor_version::VerificationVerdict::Pass))
     }
 
+    /// Execute one verification request through the native Doctor policy and
+    /// Stdlib process effect. The host supplies only the bounded launch data;
+    /// MNCS builds the process request and classifies its observed outcome.
+    pub(crate) fn execute_verification_process(
+        &self,
+        input: doctor_version::ProcessInput,
+    ) -> Result<doctor_version::ProcessOutcome, RuntimeError> {
+        let program = String::from_utf8(input.program.clone()).map_err(|error| {
+            RuntimeError::new(
+                "mncs_process_request",
+                format!("process executable is not valid UTF-8: {error}"),
+            )
+        })?;
+        let mut options = mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET);
+        options.grants.push(mncs_embed::Grant {
+            capability: "process_capability".to_owned(),
+            locator: program,
+            bytes: Vec::new(),
+        });
+        let outcome = doctor_version::execute(&self.session, input, options).map_err(|error| {
+            RuntimeError::new(
+                "mncs_process_execution",
+                format!("native process verification failed: {error}"),
+            )
+        })?;
+        self.record_entrypoint("doctor.verify_process.v1", "execute")?;
+        Ok(outcome)
+    }
+
     fn record_entrypoint(&self, module: &str, function: &str) -> Result<(), RuntimeError> {
         let entrypoint = format!("{module}::{function}");
         let mut trace = self
@@ -1442,6 +1471,67 @@ mod tests {
             .all(|module| !module.source_sha256.is_empty()
                 && !module.artifact_identity.is_empty()
                 && !module.artifact_sha256.is_empty()));
+    }
+
+    #[test]
+    fn native_process_verdict_preserves_exit_deadline_and_unknown_states() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        let cases = [
+            (
+                doctor_version::StatusInput {
+                    exit_code: 0,
+                    has_exit_code: true,
+                    success: true,
+                    timed_out: false,
+                },
+                doctor_version::ProcessVerdict::Pass,
+            ),
+            (
+                doctor_version::StatusInput {
+                    exit_code: 7,
+                    has_exit_code: true,
+                    success: false,
+                    timed_out: false,
+                },
+                doctor_version::ProcessVerdict::Fail,
+            ),
+            (
+                doctor_version::StatusInput {
+                    exit_code: 137,
+                    has_exit_code: true,
+                    success: false,
+                    timed_out: true,
+                },
+                doctor_version::ProcessVerdict::TimedOut,
+            ),
+            (
+                doctor_version::StatusInput {
+                    exit_code: 0,
+                    has_exit_code: false,
+                    success: false,
+                    timed_out: false,
+                },
+                doctor_version::ProcessVerdict::Unknown,
+            ),
+            (
+                doctor_version::StatusInput {
+                    exit_code: 0,
+                    has_exit_code: true,
+                    success: false,
+                    timed_out: false,
+                },
+                doctor_version::ProcessVerdict::Unknown,
+            ),
+        ];
+        for (input, expected) in cases {
+            let actual = doctor_version::classify_process_verdict(
+                &runtime.session,
+                input,
+                mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+            )
+            .expect("native process verdict");
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "273e8d78931cff1a2d3d8c155141b878b32cf6628a720d4f1584d2e6eac3a392";
+    "0b9606397ef24c1d080c747952655b4f4e09aff9d210c0ff6806f4c9a9b550f4";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "2751c809de2a7f10c54f1ae37564f3d64535b76962960b2f44e46cf92dd0d53b";
+    "d0c61847e0d45654f2c933d24e0303b2f66917f9fec210b32f6e5f9520208081";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -661,6 +661,88 @@ impl MigrationVerdict {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown MigrationVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessStatus {
+    Running,
+    Exited,
+    Cancelled,
+    TimedOut,
+    ResourceExhausted,
+    OutputExhausted,
+    Unsupported,
+    Unknown,
+}
+
+impl HostValue for ProcessStatus {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Running => "Running",
+            Self::Exited => "Exited",
+            Self::Cancelled => "Cancelled",
+            Self::TimedOut => "TimedOut",
+            Self::ResourceExhausted => "ResourceExhausted",
+            Self::OutputExhausted => "OutputExhausted",
+            Self::Unsupported => "Unsupported",
+            Self::Unknown => "Unknown",
+        };
+        json!({"finite": {"type": "ProcessStatus", "variant": variant}})
+    }
+}
+
+impl ProcessStatus {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Running" => Ok(Self::Running),
+            "Exited" => Ok(Self::Exited),
+            "Cancelled" => Ok(Self::Cancelled),
+            "TimedOut" => Ok(Self::TimedOut),
+            "ResourceExhausted" => Ok(Self::ResourceExhausted),
+            "OutputExhausted" => Ok(Self::OutputExhausted),
+            "Unsupported" => Ok(Self::Unsupported),
+            "Unknown" => Ok(Self::Unknown),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown ProcessStatus variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessVerdict {
+    Pass,
+    Fail,
+    TimedOut,
+    Unknown,
+}
+
+impl HostValue for ProcessVerdict {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::Pass => "Pass",
+            Self::Fail => "Fail",
+            Self::TimedOut => "TimedOut",
+            Self::Unknown => "Unknown",
+        };
+        json!({"finite": {"type": "ProcessVerdict", "variant": variant}})
+    }
+}
+
+impl ProcessVerdict {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "Pass" => Ok(Self::Pass),
+            "Fail" => Ok(Self::Fail),
+            "TimedOut" => Ok(Self::TimedOut),
+            "Unknown" => Ok(Self::Unknown),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown ProcessVerdict variant {other}"),
             )),
         }
     }
@@ -2095,6 +2177,44 @@ impl EncodingFacts {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EnvironmentEntry {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+}
+
+impl HostValue for EnvironmentEntry {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "EnvironmentEntry", "fields": {
+            "key": json!({"sequence": {"values": self.key.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "value": json!({"sequence": {"values": self.value.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl EnvironmentEntry {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let key = sequence_values(
+            fields
+                .get("key")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let value = sequence_values(
+            fields
+                .get("value")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { key, value })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EscalationRecord {
     pub action: Vec<u8>,
     pub code: Vec<u8>,
@@ -2967,6 +3087,854 @@ impl PlanInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ProcessHandle {
+    pub token: Vec<u8>,
+}
+
+impl HostValue for ProcessHandle {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessHandle", "fields": {
+            "token": json!({"sequence": {"values": self.token.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl ProcessHandle {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let token = sequence_values(
+            fields
+                .get("token")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { token })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessInput {
+    pub argument_count: u64,
+    pub arguments: Vec<Vec<u8>>,
+    pub current_dir: Vec<u8>,
+    pub environment: Vec<EnvironmentEntry>,
+    pub environment_count: u64,
+    pub program: Vec<u8>,
+}
+
+impl HostValue for ProcessInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessInput", "fields": {
+            "argument_count": json!({"integer": {"value": self.argument_count, "type": {"bits": 64, "signed": false}}}),
+            "arguments": json!({"sequence": {"values": self.arguments.iter().map(|item| json!({"sequence": {"values": item.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}),
+            "current_dir": json!({"sequence": {"values": self.current_dir.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "environment": json!({"sequence": {"values": self.environment.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "environment_count": json!({"integer": {"value": self.environment_count, "type": {"bits": 64, "signed": false}}}),
+            "program": json!({"sequence": {"values": self.program.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+        }}})
+    }
+}
+
+impl ProcessInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let argument_count = decode_u64(
+            fields
+                .get("argument_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let arguments = sequence_values(
+            fields
+                .get("arguments")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| {
+            sequence_values(item)?
+                .iter()
+                .map(|item| decode_u8(item))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let current_dir = sequence_values(
+            fields
+                .get("current_dir")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let environment = sequence_values(
+            fields
+                .get("environment")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| EnvironmentEntry::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let environment_count = decode_u64(
+            fields
+                .get("environment_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let program = sequence_values(
+            fields
+                .get("program")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            argument_count,
+            arguments,
+            current_dir,
+            environment,
+            environment_count,
+            program,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessObservation {
+    pub cancellation_complete: bool,
+    pub cancellation_requested: bool,
+    pub cleanup_complete: bool,
+    pub containment_supported: bool,
+    pub deadline_exceeded: bool,
+    pub duration_ms: u64,
+    pub exit_code: i64,
+    pub has_cleanup_result: bool,
+    pub has_exit_code: bool,
+    pub has_memory_high_events: bool,
+    pub has_memory_max_events: bool,
+    pub has_memory_peak_bytes: bool,
+    pub has_oom_events: bool,
+    pub has_oom_kill_events: bool,
+    pub has_process_limit_events: bool,
+    pub has_process_peak: bool,
+    pub has_swap_peak_bytes: bool,
+    pub has_tree_empty: bool,
+    pub launcher_reaped: bool,
+    pub memory_high_events: u64,
+    pub memory_max_events: u64,
+    pub memory_peak_bytes: u64,
+    pub observation_complete: bool,
+    pub oom_events: u64,
+    pub oom_kill_events: u64,
+    pub output_exhausted: bool,
+    pub process_limit_events: u64,
+    pub process_peak: u64,
+    pub status: ProcessStatus,
+    pub stderr: Vec<u8>,
+    pub stderr_truncated: bool,
+    pub stdout: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub success: bool,
+    pub swap_peak_bytes: u64,
+    pub tree_empty: bool,
+}
+
+impl HostValue for ProcessObservation {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessObservation", "fields": {
+            "cancellation_complete": json!({"boolean": {"value": self.cancellation_complete}}),
+            "cancellation_requested": json!({"boolean": {"value": self.cancellation_requested}}),
+            "cleanup_complete": json!({"boolean": {"value": self.cleanup_complete}}),
+            "containment_supported": json!({"boolean": {"value": self.containment_supported}}),
+            "deadline_exceeded": json!({"boolean": {"value": self.deadline_exceeded}}),
+            "duration_ms": json!({"integer": {"value": self.duration_ms, "type": {"bits": 64, "signed": false}}}),
+            "exit_code": json!({"integer": {"value": self.exit_code}}),
+            "has_cleanup_result": json!({"boolean": {"value": self.has_cleanup_result}}),
+            "has_exit_code": json!({"boolean": {"value": self.has_exit_code}}),
+            "has_memory_high_events": json!({"boolean": {"value": self.has_memory_high_events}}),
+            "has_memory_max_events": json!({"boolean": {"value": self.has_memory_max_events}}),
+            "has_memory_peak_bytes": json!({"boolean": {"value": self.has_memory_peak_bytes}}),
+            "has_oom_events": json!({"boolean": {"value": self.has_oom_events}}),
+            "has_oom_kill_events": json!({"boolean": {"value": self.has_oom_kill_events}}),
+            "has_process_limit_events": json!({"boolean": {"value": self.has_process_limit_events}}),
+            "has_process_peak": json!({"boolean": {"value": self.has_process_peak}}),
+            "has_swap_peak_bytes": json!({"boolean": {"value": self.has_swap_peak_bytes}}),
+            "has_tree_empty": json!({"boolean": {"value": self.has_tree_empty}}),
+            "launcher_reaped": json!({"boolean": {"value": self.launcher_reaped}}),
+            "memory_high_events": json!({"integer": {"value": self.memory_high_events, "type": {"bits": 64, "signed": false}}}),
+            "memory_max_events": json!({"integer": {"value": self.memory_max_events, "type": {"bits": 64, "signed": false}}}),
+            "memory_peak_bytes": json!({"integer": {"value": self.memory_peak_bytes, "type": {"bits": 64, "signed": false}}}),
+            "observation_complete": json!({"boolean": {"value": self.observation_complete}}),
+            "oom_events": json!({"integer": {"value": self.oom_events, "type": {"bits": 64, "signed": false}}}),
+            "oom_kill_events": json!({"integer": {"value": self.oom_kill_events, "type": {"bits": 64, "signed": false}}}),
+            "output_exhausted": json!({"boolean": {"value": self.output_exhausted}}),
+            "process_limit_events": json!({"integer": {"value": self.process_limit_events, "type": {"bits": 64, "signed": false}}}),
+            "process_peak": json!({"integer": {"value": self.process_peak, "type": {"bits": 64, "signed": false}}}),
+            "status": self.status.host_value(),
+            "stderr": json!({"sequence": {"values": self.stderr.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stderr_truncated": json!({"boolean": {"value": self.stderr_truncated}}),
+            "stdout": json!({"sequence": {"values": self.stdout.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stdout_truncated": json!({"boolean": {"value": self.stdout_truncated}}),
+            "success": json!({"boolean": {"value": self.success}}),
+            "swap_peak_bytes": json!({"integer": {"value": self.swap_peak_bytes, "type": {"bits": 64, "signed": false}}}),
+            "tree_empty": json!({"boolean": {"value": self.tree_empty}}),
+        }}})
+    }
+}
+
+impl ProcessObservation {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let cancellation_complete = decode_bool(
+            fields
+                .get("cancellation_complete")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let cancellation_requested = decode_bool(
+            fields
+                .get("cancellation_requested")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let cleanup_complete = decode_bool(
+            fields
+                .get("cleanup_complete")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let containment_supported = decode_bool(
+            fields
+                .get("containment_supported")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let deadline_exceeded = decode_bool(
+            fields
+                .get("deadline_exceeded")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let duration_ms = decode_u64(
+            fields
+                .get("duration_ms")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let exit_code = decode_i64(
+            fields
+                .get("exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_cleanup_result = decode_bool(
+            fields
+                .get("has_cleanup_result")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_exit_code = decode_bool(
+            fields
+                .get("has_exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_memory_high_events = decode_bool(
+            fields
+                .get("has_memory_high_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_memory_max_events = decode_bool(
+            fields
+                .get("has_memory_max_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_memory_peak_bytes = decode_bool(
+            fields
+                .get("has_memory_peak_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_oom_events = decode_bool(
+            fields
+                .get("has_oom_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_oom_kill_events = decode_bool(
+            fields
+                .get("has_oom_kill_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_process_limit_events = decode_bool(
+            fields
+                .get("has_process_limit_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_process_peak = decode_bool(
+            fields
+                .get("has_process_peak")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_swap_peak_bytes = decode_bool(
+            fields
+                .get("has_swap_peak_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_tree_empty = decode_bool(
+            fields
+                .get("has_tree_empty")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let launcher_reaped = decode_bool(
+            fields
+                .get("launcher_reaped")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let memory_high_events = decode_u64(
+            fields
+                .get("memory_high_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let memory_max_events = decode_u64(
+            fields
+                .get("memory_max_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let memory_peak_bytes = decode_u64(
+            fields
+                .get("memory_peak_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let observation_complete = decode_bool(
+            fields
+                .get("observation_complete")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let oom_events = decode_u64(
+            fields
+                .get("oom_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let oom_kill_events = decode_u64(
+            fields
+                .get("oom_kill_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let output_exhausted = decode_bool(
+            fields
+                .get("output_exhausted")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let process_limit_events = decode_u64(
+            fields
+                .get("process_limit_events")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let process_peak = decode_u64(
+            fields
+                .get("process_peak")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let status = ProcessStatus::from_host_value(
+            fields
+                .get("status")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stderr = sequence_values(
+            fields
+                .get("stderr")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stderr_truncated = decode_bool(
+            fields
+                .get("stderr_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stdout = sequence_values(
+            fields
+                .get("stdout")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stdout_truncated = decode_bool(
+            fields
+                .get("stdout_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let success = decode_bool(
+            fields
+                .get("success")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let swap_peak_bytes = decode_u64(
+            fields
+                .get("swap_peak_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let tree_empty = decode_bool(
+            fields
+                .get("tree_empty")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            cancellation_complete,
+            cancellation_requested,
+            cleanup_complete,
+            containment_supported,
+            deadline_exceeded,
+            duration_ms,
+            exit_code,
+            has_cleanup_result,
+            has_exit_code,
+            has_memory_high_events,
+            has_memory_max_events,
+            has_memory_peak_bytes,
+            has_oom_events,
+            has_oom_kill_events,
+            has_process_limit_events,
+            has_process_peak,
+            has_swap_peak_bytes,
+            has_tree_empty,
+            launcher_reaped,
+            memory_high_events,
+            memory_max_events,
+            memory_peak_bytes,
+            observation_complete,
+            oom_events,
+            oom_kill_events,
+            output_exhausted,
+            process_limit_events,
+            process_peak,
+            status,
+            stderr,
+            stderr_truncated,
+            stdout,
+            stdout_truncated,
+            success,
+            swap_peak_bytes,
+            tree_empty,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessOutcome {
+    pub duration_ms: u64,
+    pub exit_code: i64,
+    pub has_exit_code: bool,
+    pub stderr: Vec<u8>,
+    pub stderr_truncated: bool,
+    pub stdout: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub timed_out: bool,
+    pub verdict: ProcessVerdict,
+}
+
+impl HostValue for ProcessOutcome {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessOutcome", "fields": {
+            "duration_ms": json!({"integer": {"value": self.duration_ms, "type": {"bits": 64, "signed": false}}}),
+            "exit_code": json!({"integer": {"value": self.exit_code}}),
+            "has_exit_code": json!({"boolean": {"value": self.has_exit_code}}),
+            "stderr": json!({"sequence": {"values": self.stderr.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stderr_truncated": json!({"boolean": {"value": self.stderr_truncated}}),
+            "stdout": json!({"sequence": {"values": self.stdout.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stdout_truncated": json!({"boolean": {"value": self.stdout_truncated}}),
+            "timed_out": json!({"boolean": {"value": self.timed_out}}),
+            "verdict": self.verdict.host_value(),
+        }}})
+    }
+}
+
+impl ProcessOutcome {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let duration_ms = decode_u64(
+            fields
+                .get("duration_ms")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let exit_code = decode_i64(
+            fields
+                .get("exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_exit_code = decode_bool(
+            fields
+                .get("has_exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stderr = sequence_values(
+            fields
+                .get("stderr")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stderr_truncated = decode_bool(
+            fields
+                .get("stderr_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stdout = sequence_values(
+            fields
+                .get("stdout")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stdout_truncated = decode_bool(
+            fields
+                .get("stdout_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let timed_out = decode_bool(
+            fields
+                .get("timed_out")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let verdict = ProcessVerdict::from_host_value(
+            fields
+                .get("verdict")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            duration_ms,
+            exit_code,
+            has_exit_code,
+            stderr,
+            stderr_truncated,
+            stdout,
+            stdout_truncated,
+            timed_out,
+            verdict,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessRequest {
+    pub argv: Vec<Vec<u8>>,
+    pub argv_count: u64,
+    pub current_dir: Vec<u8>,
+    pub deadline_ms: u64,
+    pub environment: Vec<EnvironmentEntry>,
+    pub environment_count: u64,
+    pub program: Vec<u8>,
+    pub resources: ProcessResourceEnvelope,
+    pub stderr_limit: u64,
+    pub stdin: Vec<u8>,
+    pub stdout_limit: u64,
+}
+
+impl HostValue for ProcessRequest {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessRequest", "fields": {
+            "argv": json!({"sequence": {"values": self.argv.iter().map(|item| json!({"sequence": {"values": item.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}),
+            "argv_count": json!({"integer": {"value": self.argv_count, "type": {"bits": 64, "signed": false}}}),
+            "current_dir": json!({"sequence": {"values": self.current_dir.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "deadline_ms": json!({"integer": {"value": self.deadline_ms, "type": {"bits": 64, "signed": false}}}),
+            "environment": json!({"sequence": {"values": self.environment.iter().map(|item| item.host_value()).collect::<Vec<_>>()}}),
+            "environment_count": json!({"integer": {"value": self.environment_count, "type": {"bits": 64, "signed": false}}}),
+            "program": json!({"sequence": {"values": self.program.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "resources": self.resources.host_value(),
+            "stderr_limit": json!({"integer": {"value": self.stderr_limit, "type": {"bits": 64, "signed": false}}}),
+            "stdin": json!({"sequence": {"values": self.stdin.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stdout_limit": json!({"integer": {"value": self.stdout_limit, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl ProcessRequest {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let argv = sequence_values(
+            fields
+                .get("argv")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| {
+            sequence_values(item)?
+                .iter()
+                .map(|item| decode_u8(item))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let argv_count = decode_u64(
+            fields
+                .get("argv_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let current_dir = sequence_values(
+            fields
+                .get("current_dir")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let deadline_ms = decode_u64(
+            fields
+                .get("deadline_ms")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let environment = sequence_values(
+            fields
+                .get("environment")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| EnvironmentEntry::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let environment_count = decode_u64(
+            fields
+                .get("environment_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let program = sequence_values(
+            fields
+                .get("program")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let resources = ProcessResourceEnvelope::from_host_value(
+            fields
+                .get("resources")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stderr_limit = decode_u64(
+            fields
+                .get("stderr_limit")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stdin = sequence_values(
+            fields
+                .get("stdin")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stdout_limit = decode_u64(
+            fields
+                .get("stdout_limit")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            argv,
+            argv_count,
+            current_dir,
+            deadline_ms,
+            environment,
+            environment_count,
+            program,
+            resources,
+            stderr_limit,
+            stdin,
+            stdout_limit,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessResourceEnvelope {
+    pub has_swap_max: bool,
+    pub memory_high_bytes: u64,
+    pub memory_max_bytes: u64,
+    pub process_max: u64,
+    pub swap_max_bytes: u64,
+}
+
+impl HostValue for ProcessResourceEnvelope {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessResourceEnvelope", "fields": {
+            "has_swap_max": json!({"boolean": {"value": self.has_swap_max}}),
+            "memory_high_bytes": json!({"integer": {"value": self.memory_high_bytes, "type": {"bits": 64, "signed": false}}}),
+            "memory_max_bytes": json!({"integer": {"value": self.memory_max_bytes, "type": {"bits": 64, "signed": false}}}),
+            "process_max": json!({"integer": {"value": self.process_max, "type": {"bits": 64, "signed": false}}}),
+            "swap_max_bytes": json!({"integer": {"value": self.swap_max_bytes, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl ProcessResourceEnvelope {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let has_swap_max = decode_bool(
+            fields
+                .get("has_swap_max")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let memory_high_bytes = decode_u64(
+            fields
+                .get("memory_high_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let memory_max_bytes = decode_u64(
+            fields
+                .get("memory_max_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let process_max = decode_u64(
+            fields
+                .get("process_max")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let swap_max_bytes = decode_u64(
+            fields
+                .get("swap_max_bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            has_swap_max,
+            memory_high_bytes,
+            memory_max_bytes,
+            process_max,
+            swap_max_bytes,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessResult {
+    pub duration_ms: u64,
+    pub exit_code: i64,
+    pub has_exit_code: bool,
+    pub stderr: Vec<u8>,
+    pub stderr_truncated: bool,
+    pub stdout: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub success: bool,
+    pub timed_out: bool,
+}
+
+impl HostValue for ProcessResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessResult", "fields": {
+            "duration_ms": json!({"integer": {"value": self.duration_ms, "type": {"bits": 64, "signed": false}}}),
+            "exit_code": json!({"integer": {"value": self.exit_code}}),
+            "has_exit_code": json!({"boolean": {"value": self.has_exit_code}}),
+            "stderr": json!({"sequence": {"values": self.stderr.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stderr_truncated": json!({"boolean": {"value": self.stderr_truncated}}),
+            "stdout": json!({"sequence": {"values": self.stdout.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stdout_truncated": json!({"boolean": {"value": self.stdout_truncated}}),
+            "success": json!({"boolean": {"value": self.success}}),
+            "timed_out": json!({"boolean": {"value": self.timed_out}}),
+        }}})
+    }
+}
+
+impl ProcessResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let duration_ms = decode_u64(
+            fields
+                .get("duration_ms")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let exit_code = decode_i64(
+            fields
+                .get("exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_exit_code = decode_bool(
+            fields
+                .get("has_exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stderr = sequence_values(
+            fields
+                .get("stderr")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stderr_truncated = decode_bool(
+            fields
+                .get("stderr_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stdout = sequence_values(
+            fields
+                .get("stdout")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let stdout_truncated = decode_bool(
+            fields
+                .get("stdout_truncated")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let success = decode_bool(
+            fields
+                .get("success")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let timed_out = decode_bool(
+            fields
+                .get("timed_out")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            duration_ms,
+            exit_code,
+            has_exit_code,
+            stderr,
+            stderr_truncated,
+            stdout,
+            stdout_truncated,
+            success,
+            timed_out,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessStartResult {
+    pub handle: ProcessHandle,
+    pub has_handle: bool,
+    pub observation: ProcessObservation,
+}
+
+impl HostValue for ProcessStartResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ProcessStartResult", "fields": {
+            "handle": self.handle.host_value(),
+            "has_handle": json!({"boolean": {"value": self.has_handle}}),
+            "observation": self.observation.host_value(),
+        }}})
+    }
+}
+
+impl ProcessStartResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let handle = ProcessHandle::from_host_value(
+            fields
+                .get("handle")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_handle = decode_bool(
+            fields
+                .get("has_handle")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let observation = ProcessObservation::from_host_value(
+            fields
+                .get("observation")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            handle,
+            has_handle,
+            observation,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct RemediationEnvelope {
     pub budget: BudgetResult,
     pub dry_run: bool,
@@ -3707,6 +4675,57 @@ impl ShapeInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct StatusInput {
+    pub exit_code: i64,
+    pub has_exit_code: bool,
+    pub success: bool,
+    pub timed_out: bool,
+}
+
+impl HostValue for StatusInput {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "StatusInput", "fields": {
+            "exit_code": json!({"integer": {"value": self.exit_code}}),
+            "has_exit_code": json!({"boolean": {"value": self.has_exit_code}}),
+            "success": json!({"boolean": {"value": self.success}}),
+            "timed_out": json!({"boolean": {"value": self.timed_out}}),
+        }}})
+    }
+}
+
+impl StatusInput {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let exit_code = decode_i64(
+            fields
+                .get("exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let has_exit_code = decode_bool(
+            fields
+                .get("has_exit_code")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let success = decode_bool(
+            fields
+                .get("success")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let timed_out = decode_bool(
+            fields
+                .get("timed_out")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            exit_code,
+            has_exit_code,
+            success,
+            timed_out,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StopDisposition {
     pub escalate: bool,
     pub severity: RemediationSeverity,
@@ -4185,6 +5204,24 @@ pub fn architecture_code(session: &Session, options: CallOptions) -> Result<Vec<
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn cancel(
+    session: &Session,
+    input: ProcessHandle,
+    options: CallOptions,
+) -> Result<ProcessObservation, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.process.v1",
+        "cancel",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ProcessObservation::from_host_value(&value)?)
+}
+
 pub fn candidate_compare(
     session: &Session,
     left: Vec<u8>,
@@ -4503,6 +5540,24 @@ pub fn classify(
     )?;
     let value = returned_value(&output)?;
     Ok(VersionClass::from_host_value(&value)?)
+}
+
+pub fn classify_process_verdict(
+    session: &Session,
+    input: StatusInput,
+    options: CallOptions,
+) -> Result<ProcessVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.verify_process.v1",
+        "classify_process_verdict",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ProcessVerdict::from_host_value(&value)?)
 }
 
 pub fn classify_repair(
@@ -5265,6 +6320,24 @@ pub fn excluded_directory_name(
     Ok(decode_bool(&value)?)
 }
 
+pub fn execute(
+    session: &Session,
+    input: ProcessInput,
+    options: CallOptions,
+) -> Result<ProcessOutcome, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.verify_process.v1",
+        "execute",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ProcessOutcome::from_host_value(&value)?)
+}
+
 pub fn exit_for(
     session: &Session,
     input: ExitInput,
@@ -6016,6 +7089,24 @@ pub fn nibbles(
     Ok(Pair::from_host_value(&value)?)
 }
 
+pub fn observe(
+    session: &Session,
+    input: ProcessHandle,
+    options: CallOptions,
+) -> Result<ProcessObservation, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.process.v1",
+        "observe",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ProcessObservation::from_host_value(&value)?)
+}
+
 pub fn optional_relation64(
     session: &Session,
     left: Text64,
@@ -6150,6 +7241,18 @@ pub fn rank(
     let output = typed_call(session, "doctor.health.v1", "rank", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(Severity::from_host_value(&value)?)
+}
+
+pub fn reap(
+    session: &Session,
+    input: ProcessHandle,
+    options: CallOptions,
+) -> Result<ProcessObservation, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.process.v1", "reap", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ProcessObservation::from_host_value(&value)?)
 }
 
 pub fn relation128(
@@ -6427,6 +7530,18 @@ pub fn retry_verdict(
     Ok(RetryVerdict::from_host_value(&value)?)
 }
 
+pub fn run(
+    session: &Session,
+    input: ProcessRequest,
+    options: CallOptions,
+) -> Result<ProcessResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.process.v1", "run", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ProcessResult::from_host_value(&value)?)
+}
+
 pub fn scan_kinds(
     session: &Session,
     kinds: Vec<TransitionKind>,
@@ -6591,6 +7706,18 @@ pub fn span_verdict(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_i64(&value)?)
+}
+
+pub fn start(
+    session: &Session,
+    input: ProcessRequest,
+    options: CallOptions,
+) -> Result<ProcessStartResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.process.v1", "start", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ProcessStartResult::from_host_value(&value)?)
 }
 
 pub fn starts_with(
@@ -6820,6 +7947,23 @@ pub fn verify_code(
     )?;
     let value = returned_value(&output)?;
     Ok(VerificationVerdict::from_host_value(&value)?)
+}
+
+pub fn verify_process_code(
+    session: &Session,
+    options: CallOptions,
+) -> Result<ProcessVerdict, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.family.v1",
+        "verify_process_code",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ProcessVerdict::from_host_value(&value)?)
 }
 
 pub fn version_code(session: &Session, options: CallOptions) -> Result<VersionClass, EmbedError> {

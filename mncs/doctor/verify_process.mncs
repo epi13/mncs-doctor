@@ -1,0 +1,101 @@
+mncs 0.19;
+module doctor.verify_process.v1;
+use mncs.std.process.v1;
+
+// Doctor's external verification contract. Host code supplies the exact
+// explicit argv, working directory, and environment; MNCS owns the bounded
+// execution request and the result classification.
+enum ProcessVerdict { Pass, Fail, TimedOut, Unknown }
+
+record StatusInput {
+    exit_code: i64,
+    has_exit_code: bool,
+    success: bool,
+    timed_out: bool
+}
+
+record ProcessInput {
+    program: [byte; up_to 1024],
+    arguments: [[byte; up_to 1024]; up_to 256],
+    argument_count: u64,
+    current_dir: [byte; up_to 1024],
+    environment: [EnvironmentEntry; up_to 256],
+    environment_count: u64
+}
+
+record ProcessOutcome {
+    verdict: ProcessVerdict,
+    exit_code: i64,
+    has_exit_code: bool,
+    timed_out: bool,
+    stdout: [byte; up_to 1024],
+    stderr: [byte; up_to 1024],
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    duration_ms: u64
+}
+
+// Exit status and deadline are independent evidence. A deadline always fails,
+// a missing status remains unknown, and only an observed zero exit passes.
+fn classify_process_verdict(input: StatusInput) -> (result: ProcessVerdict) {
+    if input.timed_out {
+        return ProcessVerdict.TimedOut;
+    }
+    if !input.has_exit_code {
+        return ProcessVerdict.Unknown;
+    }
+    // The process provider may retain an exit code while withholding a
+    // successful-execution verdict when containment was not observable.
+    // A zero code with no success proof is therefore indeterminate.
+    if input.exit_code == 0 && !input.success {
+        return ProcessVerdict.Unknown;
+    }
+    if input.success && input.exit_code == 0 {
+        return ProcessVerdict.Pass;
+    }
+    return ProcessVerdict.Fail;
+}
+
+// Execute explicit argv under Doctor's fixed resource policy. The provider is
+// selected by the process capability grant at the host boundary.
+fn execute(input: ProcessInput) -> (result: ProcessOutcome)
+    capability process_capability
+    effect process_run authorized_by process_capability
+{
+    let request: ProcessRequest = ProcessRequest {
+        program: input.program,
+        argv: input.arguments,
+        argv_count: input.argument_count,
+        current_dir: input.current_dir,
+        environment: input.environment,
+        environment_count: input.environment_count,
+        resources: ProcessResourceEnvelope {
+            memory_high_bytes: 0,
+            memory_max_bytes: 0,
+            swap_max_bytes: 0,
+            has_swap_max: false,
+            process_max: 0
+        },
+        stdin: [0; 0],
+        stdout_limit: 65536,
+        stderr_limit: 65536,
+        deadline_ms: 300000
+    };
+    let observed: ProcessResult = process_run(request);
+    return ProcessOutcome {
+        verdict: classify_process_verdict(StatusInput {
+            exit_code: observed.exit_code,
+            has_exit_code: observed.has_exit_code,
+            success: observed.success,
+            timed_out: observed.timed_out
+        }),
+        exit_code: observed.exit_code,
+        has_exit_code: observed.has_exit_code,
+        timed_out: observed.timed_out,
+        stdout: observed.stdout,
+        stderr: observed.stderr,
+        stdout_truncated: observed.stdout_truncated,
+        stderr_truncated: observed.stderr_truncated,
+        duration_ms: observed.duration_ms
+    };
+}

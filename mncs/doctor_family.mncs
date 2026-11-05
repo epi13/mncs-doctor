@@ -1,4 +1,4 @@
-mncs 0.16;
+mncs 0.19;
 module doctor.family.v1;
 
 // Freeze root for the production Doctor policy family. The wrappers keep
@@ -15,6 +15,7 @@ use doctor.remediate.v1 as remediate;
 use doctor.scanner.v1 as scanner;
 use doctor.transaction.v1 as transaction;
 use doctor.verify.v1 as verify;
+use doctor.verify_process.v1 as verify_process;
 use doctor.version.v1 as version;
 
 fn discovery_code() -> (result: discovery.FileClass) {
@@ -94,6 +95,15 @@ fn verify_code() -> (result: verify.VerificationVerdict) {
         delta: verify.VerificationVerdict.Pass,
         idempotent: true,
         external_pass: true,
+    });
+}
+
+fn verify_process_code() -> (result: verify_process.ProcessVerdict) {
+    return verify_process.classify_process_verdict(verify_process.StatusInput {
+        exit_code: 0,
+        has_exit_code: true,
+        success: true,
+        timed_out: false
     });
 }
 

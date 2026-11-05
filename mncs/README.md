@@ -3,23 +3,27 @@
 Real Doctor policy implemented in MNCS, executed on the
 `mncs-research-bytecode` backend via `mncs-embed`. This is not fixture
 corpus: these modules decide version classification, health aggregation,
-migration structure, edit conflicts, convergence, exit policy, and
-verification composition. The Rust side keeps I/O mechanism (filesystem,
-processes, rendering) plus the reference implementations the parity
-suite compares against.
+migration structure, edit conflicts, convergence, exit policy, verification
+composition, and bounded process outcomes. The Rust side keeps filesystem
+observation, launch-input projection, rendering, and reference implementations
+for the parity suite; process launch and result classification use Stdlib's
+typed process effect.
 
 Eleven Doctor-owned modules declare profile 0.16. The remediation adapter
 declares profile 0.18 and imports `mncs.commons.family.remediation.v1`, so
 Commons owns the shared repair-class, stop-disposition, residual-escalation,
 degradation, and blocker decisions used by the production `remediate`
-command. The architecture policy imports Stdlib's bounded text comparison
+command. The process policy imports Stdlib's typed process effect at profile
+0.19. It classifies pass, failure, timeout, and indeterminate observations in
+MNCS; `ExternalCheck` exposes the verdict and keeps `success` true only for a
+native pass. The architecture policy imports Stdlib's bounded text comparison
 kernel and owns schema, content-identity, capability-claim, path/shadow, and
 wire-contract decisions for Doctor's Commons projection.
 
 ## Layout
 
 `mncs/doctor/<area>.mncs` — one policy module per area. The
-`mncs/doctor_family.mncs` freeze root imports all twelve modules; its checked-in
+`mncs/doctor_family.mncs` freeze root imports all thirteen modules; its checked-in
 `mncs/doctor/family.backend.json` is generated with the upstream compiler and
 opened by the production runtime. See DOC-P-018 and
 `docs/BACKEND-MATRIX-2026-09.md`. Semantic decisions that have a native
@@ -56,6 +60,7 @@ strings render host-side.
 | stop rule | generated `StopDecision` finite value |
 | exit policy | generated `ExitDecision` finite value, rendered as process codes by the host |
 | verification | generated `VerificationVerdict` finite value |
+| external verification | generated `ProcessVerdict` and bounded process result record |
 | edit/fix verdicts | generated nominal finite values for conflict, shape, merge, and seen decisions |
 | discovery facts | generated `DirectoryName`, `FileName`, and `FileExtension` finite values |
 | remediation classification | shared Commons `RemediationClass`, `StopDisposition`, and `ResidualDisposition` values |
@@ -71,8 +76,9 @@ Opened and called through the normal `mncs-embed` dependency (pinned rev;
 see `Cargo.toml`, `src/mncs_runtime.rs`, and `tests/mncs_parity.rs`).
 `DoctorMncsRuntime` verifies and opens the frozen family once per process,
 then production `doctor`, `fix`, `migrate`, and `verify` reuse that session.
-Regenerate the family with `scripts/freeze-doctor-family.sh`. Direct CLI
-typecheck:
+Regenerate the family with `scripts/freeze-doctor-family.sh`; linked worktrees
+resolve sibling repositories through the shared Git checkout, and `MNCS_BIN`
+can select another native compiler. Direct CLI typecheck:
 
 ```sh
 mncs source-study mncs/doctor/version.mncs
@@ -93,6 +99,7 @@ parity test executes through them green.
 - `fix.mncs` — eligibility gate, merge verdict, stop rule, seen-before.
 - `report.mncs` — exit-code policy.
 - `verify.mncs` — error-delta and three-channel composition verdicts.
+- `verify_process.mncs` — explicit-argv request policy, deadline/capture bounds, and process result classification through `mncs.std.process.v1`.
 - `transaction.mncs` — target presence, symlink, stale-base, and identical
   target validation policy.
 - `discovery.mncs` — directory traversal and file classification policy.

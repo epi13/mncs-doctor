@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![recursion_limit = "256"]
 
 //! `mncs-doctor`: repository health inspection, automated repair, and
 //! version-aware source migration for MNCS projects.

@@ -1,0 +1,78 @@
+{
+  "schema_version": "mncs.doctor.native-process-verification/1",
+  "identity": "doctor-native-process-verification-20261105",
+  "campaign_identity": "cmp_luna_max_native_ecosystem_20261105_0400z",
+  "work_intent_id": "int_06839eff31521ee1",
+  "environment_session_id": "ses_3b9cd8f90acc5d85",
+  "repository": "mncs-doctor",
+  "branch": "campaign/luna-doctor-native-process-verification-20261105",
+  "base_revision": "77ab903a2e3d9b58dbe91dd27e70fdb0c35a0dfa",
+  "dependency_revision": {
+    "repository": "mncs-language",
+    "revision": "c385efbcb11184943c002d7e3da4ea2884b1c7ab",
+    "reason": "ProcessRequest stdin ABI compatibility for the published Stdlib profile 0.19 contract"
+  },
+  "native_source_roots": [
+    {
+      "repository": "mncs-stdlib",
+      "revision": "6059627d9ac3b0fd7b8fb1a7e2b581e4497812ab"
+    },
+    {
+      "repository": "MNCS-Commons",
+      "revision": "c53ae0b864046b8fef6c899de8fad5f882a68ecb"
+    }
+  ],
+  "native_implementation": {
+    "module": "doctor.verify_process.v1",
+    "stdlib_module": "mncs.std.process.v1",
+    "responsibilities": [
+      "Build bounded process requests with explicit argv, working directory, and environment",
+      "Apply Doctor's five-minute deadline and bounded output capture policy",
+      "Classify pass, failure, timeout, and unknown process observations"
+    ],
+    "consumer_integration": "Production verify, fix, migrate, and remediate verification use the MNCS process effect through run_external.",
+    "host_displacement": "Doctor verify.rs no longer executes std::process::Command::output; Rust retains PATH resolution, UTF-8 projection, MNCS ABI bounds, report rendering, and environment effect dispatch.",
+    "unknown_semantics": "A missing exit observation, unproven zero exit, provider error, or unavailable runtime remains unknown and never sets success true."
+  },
+  "artifacts": {
+    "family_backend_sha256": "396040b2c922987f2ecdb27973f693cce44782fda6f3888c1cc05de8c0590349",
+    "stdlib_sha256_backend_sha256": "733d5cd21758b9fc29d9e619e26d3eb1eb63d78efdabc0074148907eb7d6d455"
+  },
+  "verification": [
+    {
+      "command": "scripts/freeze-doctor-family.sh with native compiler and sibling roots discovered from the shared Git checkout",
+      "result": "passed",
+      "details": "Compiled the 13-module family and SHA-256 backend; both independent execution corpora passed."
+    },
+    {
+      "command": "cargo test --offline",
+      "result": "passed",
+      "counts": {
+        "unit": 101,
+        "doctor": 17,
+        "fix": 6,
+        "health_epoch": 17,
+        "migrate": 5,
+        "mncs_filesystem": 1,
+        "mncs_parity": 21,
+        "remediate": 9,
+        "remediation_policy": 3,
+        "stdlib": 5,
+        "total": 185
+      }
+    },
+    {
+      "contracts": [
+        "Native classifier distinguishes zero-success, nonzero failure, timeout, and unknown",
+        "Bounded explicit argv and environment projection",
+        "Production consumer captures process output and truncation metadata",
+        "Integration exercises verify, fix verification, remediation verification, and health-epoch behavior"
+      ],
+      "result": "passed"
+    }
+  ],
+  "publication": {
+    "status": "pending",
+    "required": "Commit, merge into main, push origin/main, then record the final revision in Environment campaign delivery metadata."
+  }
+}

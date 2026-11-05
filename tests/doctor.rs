@@ -51,8 +51,9 @@ fn healthy_repo_reports_two_files() {
         .iter()
         .any(|entrypoint| entrypoint == "doctor.scanner.v1::delimiter_finish"));
     let modules = report["policy"]["modules"].as_object().unwrap();
-    assert_eq!(modules.len(), 12);
+    assert_eq!(modules.len(), 13);
     assert!(modules.contains_key("remediate"));
+    assert!(modules.contains_key("verify_process"));
     // No error diagnostics anywhere.
     for (_path, diags) in report["file_diagnostics"].as_object().unwrap() {
         for diag in diags.as_array().unwrap() {
