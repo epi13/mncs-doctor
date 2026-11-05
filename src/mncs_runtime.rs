@@ -50,7 +50,7 @@ const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_SOURCE: &str = include_str!("../mncs/doctor_family.mncs");
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
 const FAMILY_ARTIFACT_SHA256: &str =
-    "7d4fefb9bea2a0ebda2509b1278e48bc4b99bf176026e790d5ffa22f1b172b19";
+    "8669069608a5865ace7f7dc3296dc77be02b3bbcbbd6df62b2626a159f73bb5c";
 
 struct ModuleSpec {
     key: &'static str,
@@ -159,6 +159,14 @@ pub struct ScanSummary {
     pub crlf: u64,
     pub bare_cr: u64,
     pub chunks: usize,
+}
+
+/// Decoder and scanner facts used by the native file-encoding health policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncodingHealthFacts {
+    pub valid_utf8: bool,
+    pub has_bom: bool,
+    pub mixed_newlines: bool,
 }
 
 /// Residual diagnostic policy returned by the shared Commons law.
@@ -640,6 +648,36 @@ impl DoctorMncsRuntime {
         .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
         self.record_entrypoint("doctor.health.v1", "check_status")?;
         Ok(host_status(status))
+    }
+
+    /// Classify the UTF-8, BOM, and mixed-newline observations with MNCS.
+    /// Info means that the corresponding fact does not produce a finding.
+    pub fn encoding_health_severities(
+        &self,
+        facts: EncodingHealthFacts,
+    ) -> Result<[Severity; 3], RuntimeError> {
+        let severities = doctor_version::encoding_severities(
+            &self.session,
+            doctor_version::EncodingFacts {
+                valid_utf8: facts.valid_utf8,
+                has_bom: facts.has_bom,
+                mixed_newlines: facts.mixed_newlines,
+            },
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.health.v1", "encoding_severities")?;
+        let severities: [doctor_version::Severity; 3] =
+            severities.try_into().map_err(|values: Vec<_>| {
+                RuntimeError::new(
+                    "mncs_value_contract",
+                    format!(
+                        "health encoding policy returned {} severities; expected 3",
+                        values.len()
+                    ),
+                )
+            })?;
+        Ok(severities.map(host_health_severity))
     }
 
     /// Apply MNCS health-status policy to host-collected findings and return
@@ -1299,6 +1337,14 @@ fn severity_code(severity: Severity) -> i64 {
         Severity::Error => 0,
         Severity::Warning => 1,
         Severity::Info => 2,
+    }
+}
+
+fn host_health_severity(severity: doctor_version::Severity) -> Severity {
+    match severity {
+        doctor_version::Severity::Info => Severity::Info,
+        doctor_version::Severity::Warning => Severity::Warning,
+        doctor_version::Severity::Error => Severity::Error,
     }
 }
 

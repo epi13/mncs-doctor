@@ -20,6 +20,12 @@ enum HealthCheckKind {
     MigrationAvailability
 }
 
+record EncodingFacts {
+    valid_utf8: bool,
+    has_bom: bool,
+    mixed_newlines: bool
+}
+
 record CheckStatusInput {
     error_count: u64,
     warning_count: u64
@@ -36,6 +42,25 @@ record CheckStatusWithSkipInput {
 record OverallInput {
     statuses: [Status; 8],
     count: u64
+}
+
+// The host supplies scanner and decoder observations. MNCS decides whether
+// each observation is an actionable health finding and its severity. Info
+// means no finding for that dimension.
+fn encoding_severities(input: EncodingFacts) -> (result: [Severity; 3]) {
+    let utf8: Severity = match input.valid_utf8 {
+        true => Severity.Info,
+        false => Severity.Error,
+    };
+    let bom: Severity = match input.has_bom {
+        true => Severity.Warning,
+        false => Severity.Info,
+    };
+    let newlines: Severity = match input.mixed_newlines {
+        true => Severity.Warning,
+        false => Severity.Info,
+    };
+    return [utf8, bom, newlines];
 }
 
 fn is_fail(status: Status) -> (result: bool) {

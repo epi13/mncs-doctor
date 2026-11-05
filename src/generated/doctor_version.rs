@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "84cd75461b6a7c82f432ec9b03fd05f647fa044d82433eb97f02ebf3fc759889";
+    "9c58209fe0b9b2e981df4c52969502349f9b484a925f94b6ff9dc195ed37b991";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "dba19e2a204b3caf57e135013b1c68f359aa1a514c564faf31029b42f0156c43";
+    "325e454eb4b8de39cb9f59c2fcb88d9d597a5cc3e13471f3df84d8330f64035d";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -2047,6 +2047,49 @@ impl EligibilityInput {
             allow_proven,
             allow_safe,
             level,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodingFacts {
+    pub has_bom: bool,
+    pub mixed_newlines: bool,
+    pub valid_utf8: bool,
+}
+
+impl HostValue for EncodingFacts {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "EncodingFacts", "fields": {
+            "has_bom": json!({"boolean": {"value": self.has_bom}}),
+            "mixed_newlines": json!({"boolean": {"value": self.mixed_newlines}}),
+            "valid_utf8": json!({"boolean": {"value": self.valid_utf8}}),
+        }}})
+    }
+}
+
+impl EncodingFacts {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let has_bom = decode_bool(
+            fields
+                .get("has_bom")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let mixed_newlines = decode_bool(
+            fields
+                .get("mixed_newlines")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let valid_utf8 = decode_bool(
+            fields
+                .get("valid_utf8")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            has_bom,
+            mixed_newlines,
+            valid_utf8,
         })
     }
 }
@@ -4639,6 +4682,27 @@ pub fn eligible(
     let output = typed_call(session, "doctor.fix.v1", "eligible", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn encoding_severities(
+    session: &Session,
+    input: EncodingFacts,
+    options: CallOptions,
+) -> Result<Vec<Severity>, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.health.v1",
+        "encoding_severities",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| Severity::from_host_value(item))
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn ends_with(

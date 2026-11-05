@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "campaign": "cmp_luna_max_native_stdlib_extension_20261104_2252z",
+  "environment_session": "ses_58ab672f2d467703",
+  "work_intent": "int_06839eff31521ee1",
+  "claim": "clm_08d41fe7f97c9090",
+  "repository": "mncs-doctor",
+  "base_revision": "b520a331832f7c7f7039c69af6802d7cf685b0ab",
+  "migration": {
+    "native_module": "mncs/doctor/health.mncs",
+    "native_module_sha256": "beb19c2ec6bb8594590875e3765bba9212f9c516be84cfd443b532092d269ef0",
+    "consumer": "src/health.rs::check_newline_encoding",
+    "responsibilities_moved": [
+      "classify invalid UTF-8 observations as Error findings",
+      "classify UTF-8 BOM observations as Warning findings",
+      "classify mixed-newline observations as Warning findings",
+      "decide when each observation produces no finding"
+    ],
+    "host_boundary_retained": [
+      "source byte decoding and scanner observations",
+      "path association and stable message rendering",
+      "typed result transport with an exact three-severity bound check"
+    ]
+  },
+  "native_artifacts": {
+    "family_backend": "mncs/doctor/family.backend.json",
+    "family_backend_sha256": "8669069608a5865ace7f7dc3296dc77be02b3bbcbbd6df62b2626a159f73bb5c",
+    "generated_binding": "src/generated/doctor_version.rs",
+    "generated_binding_sha256": "fca89a9e3607b92da0a6c420a4eeade8a3355c228c3f5b0f54c37959e4944a62",
+    "family_artifact_sha256_pin_updated": true,
+    "compiler_revision": "6a3f6907e4acd4a98afd4a9421548a978ff266e6",
+    "policy_backend": "mncs-research-bytecode"
+  },
+  "verification": {
+    "freeze_command": {
+      "command": "scripts/freeze-doctor-family.sh",
+      "status": "passed",
+      "family_corpus_cases": 10,
+      "backend_artifact_sha256": "8669069608a5865ace7f7dc3296dc77be02b3bbcbbd6df62b2626a159f73bb5c"
+    },
+    "independent_native_parity": {
+      "command": "cargo test --locked encoding",
+      "status": "passed",
+      "cases": 8,
+      "selected_tests": 2,
+      "dimensions": ["valid_utf8", "has_bom", "mixed_newlines"],
+      "expected_severities": "independent fixed table covering every boolean combination"
+    },
+    "production_consumer": {
+      "command": "cargo test --locked encoding",
+      "status": "passed",
+      "cases": 4,
+      "expected_findings": 3,
+      "observed": [
+        "invalid UTF-8 -> Error",
+        "UTF-8 BOM -> Warning",
+        "mixed line endings -> Warning",
+        "clean UTF-8/LF -> no finding"
+      ]
+    },
+    "repository_suite": {
+      "command": "cargo test --locked",
+      "status": "passed",
+      "test_counts": {
+        "library": 96,
+        "doctor": 17,
+        "fix": 6,
+        "health_epoch": 17,
+        "migration": 5,
+        "mncs_filesystem": 1,
+        "mncs_parity": 21,
+        "remediate": 9,
+        "remediation_policy": 3,
+        "stdlib": 5,
+        "passed": 180,
+        "failed": 0
+      }
+    }
+  },
+  "resource_contract": {
+    "runtime": "existing embedded Doctor policy session; no new subprocess or cache",
+    "step_budget_per_policy_call": 32768,
+    "result_width": 3,
+    "result_width_checked_before_use": true,
+    "step_consumption_measured": false
+  },
+  "limitations": [
+    "The Environment test command requires a separate mncs.test-verify/1 capability absent from this Doctor session. The repository-declared cargo test command was run directly and passed in full.",
+    "The Environment capability projection contained no recorded pressure observations for this intent; no causal pressure claim is made."
+  ],
+  "source_sha256": {
+    "src/health.rs": "efec1c0f7bd473724deaf3900762b82681a394a5a0bdca2dbba74f40967ee333",
+    "src/mncs_runtime.rs": "27d923d674f9dafb4893cd2507f982e7cb24d048db6ea77f49e266fb85dd0187",
+    "tests/mncs_parity.rs": "9c0085e21ed0eb3a7372b3e1293d4d2e3e89ac61d909bb6203cfdcf16d845d03"
+  }
+}

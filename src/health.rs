@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::discovery::{Inventory, ManifestKind};
-use crate::mncs_runtime::{DoctorMncsRuntime, RuntimeError};
+use crate::mncs_runtime::{DoctorMncsRuntime, EncodingHealthFacts, RuntimeError};
 use crate::toolchain::ToolchainStatus;
 use crate::version::current_version;
 
@@ -78,7 +78,7 @@ pub fn run_all_checks(
         check_source_parse_health(ctx),
         check_header_health(ctx),
         check_version_drift(ctx),
-        check_newline_encoding(ctx),
+        check_newline_encoding(ctx, policy)?,
         check_manifest_health(ctx),
         check_toolchain_health(ctx),
         check_language_knowledge(ctx),
@@ -174,39 +174,55 @@ fn check_version_drift(ctx: &HealthContext<'_>) -> CheckResult {
     unclassified_check("version-drift", "Language version drift", findings)
 }
 
-fn check_newline_encoding(ctx: &HealthContext<'_>) -> CheckResult {
+fn check_newline_encoding(
+    ctx: &HealthContext<'_>,
+    policy: &DoctorMncsRuntime,
+) -> Result<CheckResult, RuntimeError> {
     let mut findings = Vec::new();
     for source in &ctx.inventory.sources {
-        if source.text.is_none() {
+        let severities = policy.encoding_health_severities(EncodingHealthFacts {
+            valid_utf8: source.text.is_some(),
+            has_bom: source.has_bom,
+            mixed_newlines: source.newline == crate::discovery::NewlineStyle::Mixed,
+        })?;
+        let messages = [
+            (
+                "file is not valid UTF-8",
+                "Cannot be analyzed or safely rewritten.",
+                "Re-encode as UTF-8.",
+            ),
+            (
+                "UTF-8 BOM present",
+                "Risks confusing header recognition.",
+                "Remove the BOM (`fix` handles this as safe).",
+            ),
+            (
+                "mixed line endings",
+                "Mixed LF/CRLF endings complicate diffs and spans.",
+                "Normalize to LF.",
+            ),
+        ];
+        for (severity, (message, explanation, suggested_action)) in
+            severities.into_iter().zip(messages)
+        {
+            if severity == Severity::Info {
+                continue;
+            }
             findings.push(Finding {
-                severity: Severity::Error,
-                message: "file is not valid UTF-8".to_owned(),
+                severity,
+                message: message.to_owned(),
                 path: Some(source.relative.clone()),
-                explanation: "Cannot be analyzed or safely rewritten.".to_owned(),
-                suggested_action: "Re-encode as UTF-8.".to_owned(),
-            });
-        }
-        if source.has_bom {
-            findings.push(Finding {
-                severity: Severity::Warning,
-                message: "UTF-8 BOM present".to_owned(),
-                path: Some(source.relative.clone()),
-                explanation: "Risks confusing header recognition.".to_owned(),
-                suggested_action: "Remove the BOM (`fix` handles this as safe).".to_owned(),
-            });
-        }
-        if source.newline == crate::discovery::NewlineStyle::Mixed {
-            findings.push(Finding {
-                severity: Severity::Warning,
-                message: "mixed line endings".to_owned(),
-                path: Some(source.relative.clone()),
-                explanation: "Mixed LF/CRLF endings complicate diffs and spans.".to_owned(),
-                suggested_action: "Normalize to LF.".to_owned(),
+                explanation: explanation.to_owned(),
+                suggested_action: suggested_action.to_owned(),
             });
         }
     }
     findings.sort_by(|a, b| a.path.cmp(&b.path));
-    unclassified_check("newline-encoding", "Newline and encoding health", findings)
+    Ok(unclassified_check(
+        "newline-encoding",
+        "Newline and encoding health",
+        findings,
+    ))
 }
 
 fn check_manifest_health(ctx: &HealthContext<'_>) -> CheckResult {
@@ -1002,7 +1018,7 @@ fn check_migration_availability(ctx: &HealthContext<'_>) -> CheckResult {
 mod tests {
     use super::*;
     use crate::diagnostics::{DiagnosticSource, Span};
-    use crate::discovery::{DiscoveryOptions, Inventory};
+    use crate::discovery::{DiscoveryOptions, Inventory, NewlineStyle, SourceFile};
     use crate::fix::Applicability;
     use std::path::PathBuf;
 
@@ -1029,6 +1045,27 @@ mod tests {
             BTreeMap::new(),
             ToolchainStatus::default(),
         )
+    }
+
+    fn source_file(
+        relative: &str,
+        bytes: &[u8],
+        text: Option<&str>,
+        has_bom: bool,
+        newline: NewlineStyle,
+    ) -> SourceFile {
+        SourceFile {
+            path: PathBuf::from("/x").join(relative),
+            relative: relative.to_owned(),
+            bytes: bytes.to_vec(),
+            text: text.map(str::to_owned),
+            sha256: String::new(),
+            len: bytes.len() as u64,
+            newline,
+            has_bom,
+            mode: None,
+            is_symlink: false,
+        }
     }
 
     #[test]
@@ -1096,6 +1133,77 @@ mod tests {
             .find(|r| r.id == "source-parse-health")
             .unwrap();
         assert_eq!(parse.status, Status::Fail);
+    }
+
+    #[test]
+    fn newline_encoding_findings_use_native_severity_policy() {
+        let (mut inventory, diagnostics, toolchain) = empty_ctx();
+        inventory.sources = vec![
+            source_file("00-invalid.mncs", &[0xff], None, false, NewlineStyle::None),
+            source_file(
+                "01-bom.mncs",
+                b"\xef\xbb\xbfmncs 0.18;\n",
+                Some("\u{feff}mncs 0.18;\n"),
+                true,
+                NewlineStyle::Lf,
+            ),
+            source_file(
+                "02-mixed.mncs",
+                b"mncs 0.18;\nmodule x;\r\n",
+                Some("mncs 0.18;\nmodule x;\r\n"),
+                false,
+                NewlineStyle::Mixed,
+            ),
+            source_file(
+                "03-clean.mncs",
+                b"mncs 0.18;\nmodule x;\n",
+                Some("mncs 0.18;\nmodule x;\n"),
+                false,
+                NewlineStyle::Lf,
+            ),
+        ];
+        let ctx = HealthContext {
+            inventory: &inventory,
+            diagnostics: &diagnostics,
+            toolchain: &toolchain,
+        };
+        let check = native_checks(&ctx)
+            .into_iter()
+            .find(|result| result.id == "newline-encoding")
+            .expect("newline and encoding check");
+
+        assert_eq!(check.status, Status::Fail);
+        let observed: Vec<(String, Severity, String)> = check
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.path.clone().expect("source path"),
+                    finding.severity,
+                    finding.message.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            observed,
+            vec![
+                (
+                    "00-invalid.mncs".to_owned(),
+                    Severity::Error,
+                    "file is not valid UTF-8".to_owned(),
+                ),
+                (
+                    "01-bom.mncs".to_owned(),
+                    Severity::Warning,
+                    "UTF-8 BOM present".to_owned(),
+                ),
+                (
+                    "02-mixed.mncs".to_owned(),
+                    Severity::Warning,
+                    "mixed line endings".to_owned(),
+                ),
+            ]
+        );
     }
 
     #[test]

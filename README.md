@@ -60,7 +60,9 @@ research bytecode backend via the production `mncs-embed` runtime. Natural
 numeric facts such as version coordinates, byte counts, offsets, and scanner
 windows remain numeric. The scanner now owns delimiter matching and comment
 or string exclusion; it reports `DOC109` when its bounded nesting capacity is
-exhausted. Semantic finite values and records cross through the
+exhausted. The health module also classifies UTF-8 validity, BOM presence, and
+mixed line endings into finding severities; Rust retains the byte/decoder
+observations and finding text. Semantic finite values and records cross through the
 generated Rust binding `src/generated/doctor_version.rs`; strings render
 host-side. The binding is content-addressed and submits the expected MNCS
 interface identity on every call, so a stale generated binding fails closed.

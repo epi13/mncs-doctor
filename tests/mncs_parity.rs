@@ -446,6 +446,44 @@ fn parity_health_check_status_with_advisories() {
 }
 
 #[test]
+fn parity_health_encoding_policy() {
+    // This table is independent of the MNCS classifier. The host observations
+    // are decoder/scanner facts; policy chooses Error, Warning, or no finding.
+    let cases: &[((bool, bool, bool), [&str; 3])] = &[
+        ((true, false, false), ["Info", "Info", "Info"]),
+        ((false, false, false), ["Error", "Info", "Info"]),
+        ((true, true, false), ["Info", "Warning", "Info"]),
+        ((true, false, true), ["Info", "Info", "Warning"]),
+        ((false, true, false), ["Error", "Warning", "Info"]),
+        ((false, false, true), ["Error", "Info", "Warning"]),
+        ((true, true, true), ["Info", "Warning", "Warning"]),
+        ((false, true, true), ["Error", "Warning", "Warning"]),
+    ];
+    for ((valid_utf8, has_bom, mixed_newlines), expected) in cases {
+        let facts = record_arg(
+            "EncodingFacts",
+            &[
+                ("valid_utf8", bool_arg(*valid_utf8)),
+                ("has_bom", bool_arg(*has_bom)),
+                ("mixed_newlines", bool_arg(*mixed_newlines)),
+            ],
+        );
+        let got = typed_call(
+            family_session(),
+            "doctor.health.v1",
+            "encoding_severities",
+            &facts,
+        );
+        let observed: Vec<String> = as_seq(&got).iter().map(as_variant).collect();
+        let expected: Vec<String> = expected.iter().map(|value| (*value).to_owned()).collect();
+        assert_eq!(
+            observed, expected,
+            "{valid_utf8} {has_bom} {mixed_newlines}"
+        );
+    }
+}
+
+#[test]
 fn parity_transaction_target_policy() {
     let cases = [
         (
