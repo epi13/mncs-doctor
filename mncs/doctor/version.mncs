@@ -1,7 +1,7 @@
 mncs 0.16;
 module doctor.version.v1;
 
-use mncs.std.text_utf8.v1 as text_utf8;
+use mncs.std.utf8_scalar.v1 as utf8_scalar;
 
 // doctor.version — language-version policy in MNCS.
 //
@@ -62,14 +62,14 @@ fn parse_version_step<N: Nat>(input: [byte; up_to N], input_length: u64, state: 
     if state.failed || lane < state.position || lane >= input_length {
         return state;
     }
-    let decoded: text_utf8.ScalarStep = text_utf8.step_scalar_generic<N>(
+    let decoded: utf8_scalar.ScalarStep = utf8_scalar.step_scalar_generic<N>(
         input, input_length, state.position
     );
     if !decoded.valid {
         return VersionParseState { ..state, position: state.position + 1, failed: true };
     }
     let scalar: u64 = decoded.scalar as u64;
-    let whitespace: bool = text_utf8.is_whitespace_scalar(decoded.scalar);
+    let whitespace: bool = utf8_scalar.is_whitespace_scalar(decoded.scalar);
     let digit: bool = scalar >= 48 && scalar <= 57;
     if state.phase == 0 {
         if whitespace {
