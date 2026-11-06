@@ -101,10 +101,17 @@
     "runtime": "Existing cached Doctor production policy session; no extra process or cache.",
     "input_shapes": "16-byte and 64-byte native kernels, with host chunking only at valid UTF-8 boundaries.",
     "native_call_budget": 32768,
-    "step_consumption_measured": false
+    "step_consumption_measured": false,
+    "family_backend_bytes_before": 41180651,
+    "family_backend_bytes_after": 82878273,
+    "family_backend_growth_bytes": 41697622,
+    "follow_up": "Importing the full text_utf8 module adds 65 callable exports and doubles the family backend. GitHub accepted the push with a 79.04 MB large-file warning. Extract a smaller shared UTF-8 scalar/whitespace kernel in Stdlib and re-freeze Doctor as the next migration."
   },
   "publication": {
-    "status": "pending",
-    "required": "Commit, merge into main, push origin/main, then update the final revision here."
+    "status": "published",
+    "implementation_commit": "902ba172b90cedafb75d3c1ca223a0e028df46db",
+    "origin_main_revision_at_push": "902ba172b90cedafb75d3c1ca223a0e028df46db",
+    "merge": "Fast-forward from 4a2d5493059dbb4fddaea5b7b769a5254f7763cf",
+    "remote": "origin/main"
   }
 }
