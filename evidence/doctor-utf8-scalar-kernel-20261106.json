@@ -1,0 +1,150 @@
+{
+  "schema_version": "mncs.doctor.native-shared-utf8-kernel/1",
+  "identity": "doctor-utf8-scalar-kernel-20261106",
+  "campaign_identity": "cmp_luna_max_native_ecosystem_20261105_0400z",
+  "work_intent_id": "int_06839eff31521ee1",
+  "environment_session_id": "ses_463e433296e583f5",
+  "environment_id": "renv_c1797f02e684ffd3",
+  "implementation_claim": "claim:mncs-doctor:worktree:827f1f327c8f",
+  "main_claim": "claim:mncs-doctor:worktree:b712da08d00c",
+  "scope_grants": [
+    "scope_ad1f4a7226a806fd",
+    "scope_754bb58f2c955a14"
+  ],
+  "repository": "mncs-doctor",
+  "branch": "campaign/luna-doctor-utf8-scalar-kernel-20261106",
+  "base_revision": "474cc1382e267738b06adc7a75fd22e826584e6a",
+  "implementation_revision": "88c65f0fce24c7e7e8eb85baaa5974f7126143cd",
+  "dependency_revisions": [
+    {
+      "repository": "mncs-stdlib",
+      "revision": "a09bf1927e985b957fd91e7d84ead294e7014c16",
+      "bundle_identity": "mncs:stdlib-bundle:363c0966b4414604f6a9a730ebcdf10dbdf6ff21f64e6f4c0d9bcf171546dcf9",
+      "modules": [
+        {
+          "name": "mncs.std.utf8_primitives.v1",
+          "sha256": "6f6cf43073cbd7d0e2fe22977845b38311dc3a61e2b8806607b4c4ab8c267a45"
+        },
+        {
+          "name": "mncs.std.utf8_scalar.v1",
+          "sha256": "43821c9e71cd5ac64d49baed55501ceacbfe4290c54bf3068f23474c4abae28c"
+        }
+      ],
+      "evidence_ref": "mncs-stdlib/evidence/native-utf8-scalar-kernel-20261106.json"
+    },
+    {
+      "repository": "mncs-language",
+      "project_pinned_revision": "99077372dcec92e072b3cc515bb274336cd58cd2",
+      "selected_source_revision": "f8212ed8b7478196b5293a84152154be5e0bea3f",
+      "compiler_binary_sha256": "cc06a0576e04378131af28a75098895638e322118ab8bb6d3ff7f94c87ca1dcd"
+    },
+    {
+      "repository": "MNCS-Commons",
+      "selected_source_revision": "c53ae0b864046b8fef6c899de8fad5f882a68ecb"
+    }
+  ],
+  "migration": {
+    "native_module": "doctor.version.v1",
+    "production_consumer": "src/version.rs::FromStr for LanguageVersion, used by src/migration.rs::resolve_target for migrate --to X.Y",
+    "shared_import_before": "mncs.std.text_utf8.v1",
+    "shared_import_after": "mncs.std.utf8_scalar.v1",
+    "dependency_closure_before": [
+      "mncs.std.json.v1",
+      "mncs.std.json_cursor.v1",
+      "mncs.std.text_utf8.v1"
+    ],
+    "dependency_closure_after": [
+      "mncs.std.utf8_primitives.v1",
+      "mncs.std.utf8_scalar.v1"
+    ],
+    "generated_host_glue_retired": "The refreshed typed binding no longer emits Rust marshalling code for the transitive JSON cursor, JSON syntax, and text validation records that the version parser does not use.",
+    "native_semantics_preserved": "Scalar stepping, malformed UTF-8 progress, and Unicode White_Space classification remain in MNCS and are exercised through the actual Doctor version parser. The independent Rust parser remains cfg(test)-only."
+  },
+  "artifacts": {
+    "native_source": {
+      "path": "mncs/doctor/version.mncs",
+      "sha256": "5dd66b74ff0176d1915c470c2a032fa0e1c74c1d3f744138b821e546455a67a8"
+    },
+    "family_backend": {
+      "path": "mncs/doctor/family.backend.json",
+      "sha256": "cca97df594426c423d9cb603fc5bf93c162d6d25e52cbb6a4ebffd15d7b94576",
+      "status": "PASS"
+    },
+    "source_hash_inputs": {
+      "path": "mncs/doctor/source-hash-inputs.json",
+      "sha256": "af11ba55cd43d259bd38a7485bdfa52c5ff2fcef682d2cb7fa770efa4f9547f3"
+    },
+    "generated_binding": {
+      "path": "src/generated/doctor_version.rs",
+      "sha256": "044347f618e83fee456758675ec2ce969a9147b4488db839bfa8782d3ba63ee5"
+    },
+    "stdlib_sha256_backend": {
+      "path": "mncs/doctor/source-sha256.backend.json",
+      "sha256": "733d5cd21758b9fc29d9e619e26d3eb1eb63d78efdabc0074148907eb7d6d455"
+    }
+  },
+  "resource_contract": {
+    "family_backend_bytes_before": 82878273,
+    "family_backend_bytes_after": 51875096,
+    "family_backend_bytes_reduced": 31003177,
+    "family_backend_reduction_percent": 37.41,
+    "exports_before": 222,
+    "exports_after": 174,
+    "callable_bindings_before": 216,
+    "callable_bindings_after": 161,
+    "generated_binding_bytes_before": 347613,
+    "generated_binding_bytes_after": 303927,
+    "generated_binding_bytes_reduced": 43686,
+    "pre_parser_family_backend_bytes": 41180651,
+    "push_result": "implementation fast-forward accepted by origin/main without a large-file warning"
+  },
+  "verification": {
+    "freeze": {
+      "command": "scripts/freeze-doctor-family.sh with explicit MNCS compiler, Language, Stdlib, and Commons roots",
+      "result": "passed",
+      "details": "The family backend reports PASS; the script also executed the family corpus and the Stdlib SHA-256 corpus before updating the source-artifact pin."
+    },
+    "repository_test_matrix": {
+      "command": "CARGO_TARGET_DIR=<canonical mncs-doctor target> cargo test --locked --offline",
+      "result": "passed",
+      "counts": {
+        "library": 103,
+        "doctor": 17,
+        "fix": 6,
+        "health_epoch": 17,
+        "migration": 5,
+        "mncs_filesystem": 1,
+        "mncs_parity": 21,
+        "remediate": 9,
+        "remediation_policy": 3,
+        "stdlib": 5,
+        "passed": 187,
+        "failed": 0
+      }
+    },
+    "independent_version_reference": {
+      "test": "version::tests::native_text_parser_matches_independent_host_reference",
+      "result": "passed",
+      "cases": 96
+    },
+    "production_consumer": {
+      "test": "migration::tests::resolve_target_uses_native_version_text_policy",
+      "result": "passed"
+    },
+    "format_and_diff": {
+      "cargo_fmt_check": "passed",
+      "git_diff_check": "passed"
+    }
+  },
+  "publication": {
+    "status": "published",
+    "implementation_commit": "88c65f0fce24c7e7e8eb85baaa5974f7126143cd",
+    "origin_main_revision_at_implementation_push": "88c65f0fce24c7e7e8eb85baaa5974f7126143cd",
+    "merge": "Fast-forward from 474cc1382e267738b06adc7a75fd22e826584e6a",
+    "remote": "origin/main"
+  },
+  "limits": [
+    "The family artifact remains 51,875,096 bytes, about 26% above its 41,180,651-byte pre-version-parser baseline, although the unnecessary JSON and text module closure is gone.",
+    "The earlier Stdlib direct execution reports match all 61 text-UTF-8 and 28 JSON-cursor corpus expectations but retain aggregate UNKNOWN because compiler obligations remain unresolved; see the referenced Stdlib evidence."
+  ]
+}
