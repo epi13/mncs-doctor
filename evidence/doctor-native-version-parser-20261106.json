@@ -1,0 +1,110 @@
+{
+  "schema_version": "mncs.doctor.native-version-parser/1",
+  "identity": "doctor-native-version-parser-20261106",
+  "campaign_identity": "cmp_luna_max_native_ecosystem_20261105_0400z",
+  "work_intent_id": "int_06839eff31521ee1",
+  "environment_session_id": "ses_38f9ee09ce3c0c93",
+  "claim": "claim:mncs-doctor:worktree:57e985e595d4",
+  "repository": "mncs-doctor",
+  "branch": "campaign/luna-doctor-native-version-parse-20261106",
+  "base_revision": "4a2d5493059dbb4fddaea5b7b769a5254f7763cf",
+  "dependency_revisions": [
+    {
+      "repository": "mncs-stdlib",
+      "revision": "497dfc626350801a58bed977946afd24495dbfaa",
+      "reason": "Shared UTF-8 scalar decoding and Unicode White_Space classification."
+    },
+    {
+      "repository": "mncs-language",
+      "revision": "99077372dcec92e072b3cc515bb274336cd58cd2",
+      "reason": "The published embedded runtime and model now decode the chunked ProcessRequest shape used by Doctor's frozen Stdlib process contract."
+    }
+  ],
+  "migration": {
+    "native_module": "doctor.version.v1",
+    "shared_capability": "mncs.std.text_utf8.v1::is_whitespace_scalar",
+    "production_consumers": [
+      "src/version.rs::FromStr for LanguageVersion",
+      "src/migration.rs::resolve_target for migrate --to X.Y"
+    ],
+    "responsibilities_moved": [
+      "Trim the full token and both dot-separated components using the shared Unicode White_Space classifier",
+      "Recognize X.Y structure and Rust's optional leading plus sign for each numeric component",
+      "Parse ASCII decimal components with u32 overflow detection",
+      "Carry grammar and decimal state across fixed-size UTF-8-aligned input chunks"
+    ],
+    "production_host_code_retired": "The Rust trim, split_once, and u32 parse chain was removed from FromStr. Rust now frames UTF-8 boundaries, transports bytes and native state, and converts the native coordinates to LanguageVersion.",
+    "independent_reference": "The previous Rust parser remains only under cfg(test), and the header scanner parity oracle calls it directly rather than the migrated FromStr implementation.",
+    "compatibility": "Differential cases include unbounded whitespace and zero padding beyond a chunk, optional signs, malformed forms, overflow, every Unicode White_Space scalar, nearby exclusions, and chunk-boundary Unicode whitespace.",
+    "domain_boundary": "Profile registry data stays host-loaded under DOC-P-007."
+  },
+  "artifacts": {
+    "family_backend": {
+      "path": "mncs/doctor/family.backend.json",
+      "sha256": "0acb7eae073bef958591d1087080986abf4e3e46750f2d927d38e308ac410e87"
+    },
+    "stdlib_sha256_backend": {
+      "path": "mncs/doctor/source-sha256.backend.json",
+      "sha256": "733d5cd21758b9fc29d9e619e26d3eb1eb63d78efdabc0074148907eb7d6d455"
+    },
+    "generated_binding": {
+      "path": "src/generated/doctor_version.rs",
+      "sha256": "994705455a5ab80183cfe8fd5203d031cd99471dfc8d5614e5d20209550eb215"
+    },
+    "native_source": {
+      "path": "mncs/doctor/version.mncs",
+      "sha256": "2d2403d31523bb6d9b54cc148718bda48459fb343998d0c2181be3da5a7e5e22"
+    },
+    "language_revision_pin": "99077372dcec92e072b3cc515bb274336cd58cd2"
+  },
+  "verification": {
+    "freeze": {
+      "command": "scripts/freeze-doctor-family.sh with explicit MNCS compiler, Language, Stdlib, and Commons roots",
+      "result": "passed",
+      "details": "Compiled the Doctor native family, regenerated the typed host binding and frozen family backend, and executed the family and Stdlib SHA-256 corpora."
+    },
+    "differential_parser": {
+      "command": "cargo test --lib native_text_parser_matches_independent_host_reference",
+      "result": "passed",
+      "cases": 96,
+      "details": "The independent old Rust parser matched the production native parser across syntax, whitespace, overflow, malformed values, long inputs, and UTF-8 chunk boundaries. Native provenance recorded parse_chunk16 or parse_chunk64 and finish_parse."
+    },
+    "consumer_integration": {
+      "command": "cargo test --lib migration::tests::resolve_target_uses_native_version_text_policy",
+      "result": "passed",
+      "details": "The public migration target resolver parsed a Unicode-whitespace and signed X.Y target through LanguageVersion::FromStr and rejected overflow."
+    },
+    "repository_test_matrix": {
+      "result": "passed across all targets",
+      "counts": {
+        "library": 103,
+        "doctor": 17,
+        "fix": 6,
+        "health_epoch": 17,
+        "migration": 5,
+        "mncs_filesystem": 1,
+        "mncs_parity": 21,
+        "remediate": 9,
+        "remediation_policy": 3,
+        "stdlib": 5,
+        "passed": 187,
+        "failed": 0
+      },
+      "reconciliation": "The first locked full-suite invocation exposed two parity harness compile failures because the version module now imports Stdlib. The test helper was updated to load the same frozen Doctor family artifact used by production. The full 21-test parity target then passed, as did all remaining targets; the combined final target matrix above is complete."
+    },
+    "format_and_diff": {
+      "rustfmt_check": "passed",
+      "git_diff_check": "passed"
+    }
+  },
+  "resource_contract": {
+    "runtime": "Existing cached Doctor production policy session; no extra process or cache.",
+    "input_shapes": "16-byte and 64-byte native kernels, with host chunking only at valid UTF-8 boundaries.",
+    "native_call_budget": 32768,
+    "step_consumption_measured": false
+  },
+  "publication": {
+    "status": "pending",
+    "required": "Commit, merge into main, push origin/main, then update the final revision here."
+  }
+}

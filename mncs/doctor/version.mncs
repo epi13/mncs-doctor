@@ -1,15 +1,16 @@
 mncs 0.16;
 module doctor.version.v1;
 
+use mncs.std.text_utf8.v1 as text_utf8;
+
 // doctor.version — language-version policy in MNCS.
 //
-// Boundary: the profile *registry data* (which versions exist, which is
-// current) is host-loaded knowledge (DOC-P-007). This module encodes the
-// *reasoning rules* over versions supplied as plain scalars, so no registry
-// table is mirrored here: the caller passes the current profile in, and
-// classification follows the sealed-line rule (0.x with 1 <= minor <
-// current is sealed). Comparison is total and uses no arithmetic on the
-// compared values, so no overflow obligation can arise.
+// Boundary: the profile registry data (which versions exist and which is
+// current) remains host-loaded knowledge (DOC-P-007). This module owns
+// streamed X.Y text parsing and reasoning over parsed scalar values. Fixed
+// byte chunks keep the native buffer bounded without limiting accepted text.
+// Edge whitespace uses the shared Stdlib Unicode White_Space classifier.
+// The host passes the current profile only to classification.
 //
 // Typed contract: version coordinates remain natural numeric data, while the
 // classification result is a nominal finite value. Generated host bindings
@@ -25,6 +26,163 @@ record VersionInput {
     minor: i64,
     current_major: i64,
     current_minor: i64,
+}
+
+record VersionText16 { bytes: [byte; 16], length: u64 }
+
+record VersionText64 { bytes: [byte; 64], length: u64 }
+
+record VersionParseResult { valid: bool, major: u64, minor: u64 }
+
+record VersionParseState {
+    position: u64,
+    phase: u64,
+    major: u64,
+    minor: u64,
+    major_digits: bool,
+    minor_digits: bool,
+    failed: bool,
+}
+
+record DecimalStep { value: u64, valid: bool }
+
+// Append one ASCII decimal digit while preserving the Rust u32 parse limit.
+fn append_decimal(value: u64, scalar: u32) -> (result: DecimalStep) {
+    let digit: u64 = (scalar as u64) - 48;
+    if value > 429496729 || (value == 429496729 && digit > 5) {
+        return DecimalStep { value: value, valid: false };
+    }
+    return DecimalStep { value: value * 10 + digit, valid: true };
+}
+
+// Consume one Unicode scalar per live byte lane. The phase machine preserves
+// Rust's trimming around the whole value and each dot-separated component,
+// permits its optional leading `+`, and rejects signs or junk elsewhere.
+fn parse_version_step<N: Nat>(input: [byte; up_to N], input_length: u64, state: VersionParseState, lane: u64) -> (result: VersionParseState) {
+    if state.failed || lane < state.position || lane >= input_length {
+        return state;
+    }
+    let decoded: text_utf8.ScalarStep = text_utf8.step_scalar_generic<N>(
+        input, input_length, state.position
+    );
+    if !decoded.valid {
+        return VersionParseState { ..state, position: state.position + 1, failed: true };
+    }
+    let scalar: u64 = decoded.scalar as u64;
+    let whitespace: bool = text_utf8.is_whitespace_scalar(decoded.scalar);
+    let digit: bool = scalar >= 48 && scalar <= 57;
+    if state.phase == 0 {
+        if whitespace {
+            return VersionParseState { ..state, position: decoded.next };
+        }
+        if scalar == 43 {
+            return VersionParseState { ..state, position: decoded.next, phase: 1 };
+        }
+        if digit {
+            let appended: DecimalStep = append_decimal(0, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next, phase: 2,
+                major: appended.value, major_digits: true, failed: !appended.valid };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 1 {
+        if digit {
+            let appended: DecimalStep = append_decimal(state.major, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next, phase: 2,
+                major: appended.value, major_digits: true, failed: !appended.valid };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 2 {
+        if digit {
+            let appended: DecimalStep = append_decimal(state.major, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next,
+                major: appended.value, failed: !appended.valid };
+        }
+        if whitespace {
+            return VersionParseState { ..state, position: decoded.next, phase: 3 };
+        }
+        if scalar == 46 {
+            return VersionParseState { ..state, position: decoded.next, phase: 4 };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 3 {
+        if whitespace {
+            return VersionParseState { ..state, position: decoded.next };
+        }
+        if scalar == 46 {
+            return VersionParseState { ..state, position: decoded.next, phase: 4 };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 4 {
+        if whitespace {
+            return VersionParseState { ..state, position: decoded.next };
+        }
+        if scalar == 43 {
+            return VersionParseState { ..state, position: decoded.next, phase: 5 };
+        }
+        if digit {
+            let appended: DecimalStep = append_decimal(0, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next, phase: 6,
+                minor: appended.value, minor_digits: true, failed: !appended.valid };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 5 {
+        if digit {
+            let appended: DecimalStep = append_decimal(state.minor, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next, phase: 6,
+                minor: appended.value, minor_digits: true, failed: !appended.valid };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 6 {
+        if digit {
+            let appended: DecimalStep = append_decimal(state.minor, decoded.scalar);
+            return VersionParseState { ..state, position: decoded.next,
+                minor: appended.value, failed: !appended.valid };
+        }
+        if whitespace {
+            return VersionParseState { ..state, position: decoded.next, phase: 7 };
+        }
+        return VersionParseState { ..state, position: decoded.next, failed: true };
+    }
+    if state.phase == 7 && whitespace {
+        return VersionParseState { ..state, position: decoded.next };
+    }
+    return VersionParseState { ..state, position: decoded.next, failed: true };
+}
+
+// Parse one UTF-8-boundary-aligned chunk while carrying the native grammar
+// state across chunks. An invalid oversized chunk fails closed.
+fn parse_chunk_generic<N: Nat>(input: [byte; up_to N], input_length: u64, initial: VersionParseState) -> (result: VersionParseState) {
+    if input_length > input.len {
+        return VersionParseState { ..initial, position: 0, failed: true };
+    }
+    iterate lane over input carrying state: VersionParseState = initial {
+        next state = parse_version_step<N>(input, input_length, state, lane);
+    }
+    return VersionParseState { ..state, position: 0 };
+}
+
+fn parse_chunk16(input: VersionText16, initial: VersionParseState) -> (result: VersionParseState) {
+    let view: [byte; up_to 16] = input.bytes[0..16];
+    return parse_chunk_generic<16>(view, input.length, initial);
+}
+
+fn parse_chunk64(input: VersionText64, initial: VersionParseState) -> (result: VersionParseState) {
+    let view: [byte; up_to 64] = input.bytes[0..64];
+    return parse_chunk_generic<64>(view, input.length, initial);
+}
+
+// Finalize after all chunks. Decimal bounds and syntax were decided in the
+// native state machine; the host only converts the returned u32 coordinates.
+fn finish_parse(state: VersionParseState) -> (result: VersionParseResult) {
+    let valid: bool = !state.failed && state.major_digits && state.minor_digits
+        && (state.phase == 6 || state.phase == 7);
+    return VersionParseResult { valid: valid, major: state.major, minor: state.minor };
 }
 
 // Total order on (major, minor) pairs. No subtraction anywhere.

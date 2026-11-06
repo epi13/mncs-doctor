@@ -551,6 +551,15 @@ mod tests {
     }
 
     #[test]
+    fn resolve_target_uses_native_version_text_policy() {
+        assert_eq!(
+            resolve_target("\u{00A0}+0\u{00A0}.\u{00A0}+17\u{00A0}").unwrap(),
+            v(17)
+        );
+        assert!(resolve_target("0.4294967296").is_err());
+    }
+
+    #[test]
     fn production_registry_covers_adjacent_edges_as_unknown() {
         let registry = default_registry();
         assert_eq!(registry.len(), 17);

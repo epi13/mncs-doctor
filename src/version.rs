@@ -1,10 +1,11 @@
 //! Language version model.
 //!
 //! `mncs-language` owns the authoritative profile registry
-//! (`crates/mncs-syntax/src/profile.rs`, RFC 0036). This module mirrors only
-//! the *registry shape* needed for repository-level planning: an ordered list
-//! of known source profiles plus their lifecycle status. It performs no
-//! parsing and encodes no semantic meaning of any profile.
+//! (`crates/mncs-syntax/src/profile.rs`, RFC 0036). This module retains the
+//! host-facing version value and the registry shape needed for
+//! repository-level planning. Production `X.Y` text parsing and classification
+//! run through Doctor's verified MNCS version policy; the host keeps only the
+//! byte/string boundary and registry data.
 //!
 //! This remains a compatibility fallback for shallow header planning. When a
 //! project root is available, toolchain probing consumes the authoritative
@@ -15,6 +16,10 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Native parser widths; small tokens use fewer interpreter lanes.
+pub(crate) const VERSION_TEXT_SMALL_BYTES: usize = 16;
+pub(crate) const VERSION_TEXT_CHUNK_BYTES: usize = 64;
 
 /// A source language version such as `0.18`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -44,27 +49,46 @@ impl fmt::Display for LanguageVersion {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-#[error("invalid language version {0:?}: expected X.Y with numeric components")]
-pub struct VersionParseError(String);
+pub enum VersionParseError {
+    #[error("invalid language version {0:?}: expected X.Y with numeric components")]
+    Invalid(String),
+    #[error("native language version parser failed: {0}")]
+    Runtime(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeVersionParseOutcome {
+    Parsed(LanguageVersion),
+    Invalid,
+}
 
 impl FromStr for LanguageVersion {
     type Err = VersionParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.trim();
-        let (major, minor) = s
-            .split_once('.')
-            .ok_or_else(|| VersionParseError(s.to_owned()))?;
-        let major: u32 = major
-            .trim()
-            .parse()
-            .map_err(|_| VersionParseError(s.to_owned()))?;
-        let minor: u32 = minor
-            .trim()
-            .parse()
-            .map_err(|_| VersionParseError(s.to_owned()))?;
-        Ok(Self { major, minor })
+        let runtime = crate::mncs_runtime::DoctorMncsRuntime::production()
+            .map_err(|error| VersionParseError::Runtime(error.to_string()))?;
+        match runtime
+            .parse_version_text(s)
+            .map_err(|error| VersionParseError::Runtime(error.to_string()))?
+        {
+            NativeVersionParseOutcome::Parsed(version) => Ok(version),
+            NativeVersionParseOutcome::Invalid => Err(VersionParseError::Invalid(s.to_owned())),
+        }
     }
+}
+
+/// Independent host oracle retained only for parity tests. It preserves the
+/// previous parser, including its unbounded input syntax, as an independent
+/// reference for native behavior.
+#[cfg(test)]
+pub(crate) fn parse_language_version_reference(s: &str) -> Option<LanguageVersion> {
+    let s = s.trim();
+    let (major, minor) = s.split_once('.')?;
+    Some(LanguageVersion {
+        major: major.trim().parse().ok()?,
+        minor: minor.trim().parse().ok()?,
+    })
 }
 
 /// Lifecycle of a known source profile, mirroring upstream `ProfileStatus`.
@@ -178,6 +202,81 @@ mod tests {
         assert!("0".parse::<LanguageVersion>().is_err());
         assert!("0.x".parse::<LanguageVersion>().is_err());
         assert!("".parse::<LanguageVersion>().is_err());
+    }
+
+    #[test]
+    fn native_text_parser_matches_independent_host_reference() {
+        let whitespace = [
+            '\u{0009}', '\u{000A}', '\u{000B}', '\u{000C}', '\u{000D}', '\u{0020}', '\u{0085}',
+            '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}',
+            '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}', '\u{200A}', '\u{2028}',
+            '\u{2029}', '\u{202F}', '\u{205F}', '\u{3000}',
+        ];
+        let exclusions = [
+            '\u{0084}', '\u{00A1}', '\u{1681}', '\u{200B}', '\u{2027}', '\u{202A}', '\u{2060}',
+            '\u{FEFF}',
+        ];
+        let mut cases = vec![
+            "0.17".to_owned(),
+            " +0 . +17 ".to_owned(),
+            "00.0008".to_owned(),
+            "1.0".to_owned(),
+            "4294967295.4294967295".to_owned(),
+            "0".to_owned(),
+            "0.".to_owned(),
+            ".1".to_owned(),
+            "0.17.1".to_owned(),
+            "-0.17".to_owned(),
+            "0.-1".to_owned(),
+            "4294967296.1".to_owned(),
+            "0.4294967296".to_owned(),
+            "0.١".to_owned(),
+            "\u{200B}0.17".to_owned(),
+            "0.17\u{FEFF}".to_owned(),
+            "+ 0.17".to_owned(),
+            "0. +17".to_owned(),
+        ];
+        for character in whitespace {
+            cases.push(format!("{character}0.17{character}"));
+            cases.push(format!("0{character}.{character}17"));
+        }
+        for character in exclusions {
+            cases.push(format!("{character}0.17"));
+            cases.push(format!("0.17{character}"));
+            cases.push(format!("0{character}.17"));
+        }
+        cases.push(format!("{}0.17", " ".repeat(300)));
+        cases.push(format!("{}.{}", "0".repeat(300), "0".repeat(300)));
+        cases.push(format!("{}0.17", " ".repeat(63) + "\u{2003}"));
+        cases.push(format!("0.{}17", " ".repeat(61) + "\u{2003}"));
+
+        for input in cases {
+            let expected = parse_language_version_reference(&input);
+            let actual = match input.parse::<LanguageVersion>() {
+                Ok(version) => Some(version),
+                Err(VersionParseError::Invalid(_)) => None,
+                Err(error) => panic!("native parser failed for {input:?}: {error}"),
+            };
+            assert_eq!(actual, expected, "input {input:?}");
+        }
+
+        let runtime = crate::mncs_runtime::DoctorMncsRuntime::production()
+            .expect("production policy runtime");
+        assert!(runtime
+            .provenance()
+            .expect("native version parse provenance")
+            .entrypoints
+            .iter()
+            .any(|entrypoint| {
+                entrypoint == "doctor.version.v1::parse_chunk16"
+                    || entrypoint == "doctor.version.v1::parse_chunk64"
+            }));
+        assert!(runtime
+            .provenance()
+            .expect("native version finalization provenance")
+            .entrypoints
+            .iter()
+            .any(|entrypoint| entrypoint == "doctor.version.v1::finish_parse"));
     }
 
     #[test]

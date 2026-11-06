@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "0b9606397ef24c1d080c747952655b4f4e09aff9d210c0ff6806f4c9a9b550f4";
+    "12b4be529ba14b94453c4f66d55bc61c068aedea9003e5cf8bde92d9bba1c205";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "d0c61847e0d45654f2c933d24e0303b2f66917f9fec210b32f6e5f9520208081";
+    "14b39264e0dccb7ea956d3b537cd0c1676b0da9a6ec14a423011f8f4b260dfe8";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -1949,6 +1949,295 @@ impl ContractInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Cursor {
+    pub atom_active: bool,
+    pub atom_kind: u8,
+    pub atom_remaining: u8,
+    pub depth: u8,
+    pub escaped: bool,
+    pub event: u8,
+    pub expect_key: bool,
+    pub in_string: bool,
+    pub key: Vec<u8>,
+    pub key_length: u64,
+    pub pending_high_surrogate: bool,
+    pub pending_key: bool,
+    pub position: u64,
+    pub root_seen: bool,
+    pub stack: Vec<u8>,
+    pub string_end: u64,
+    pub string_is_key: bool,
+    pub string_length: u64,
+    pub string_start: u64,
+    pub token_depth: u8,
+    pub token_end: u64,
+    pub token_event: bool,
+    pub token_kind: u8,
+    pub token_start: u64,
+    pub unicode_remaining: u8,
+    pub unicode_value: u64,
+    pub utf8_lead: u8,
+    pub utf8_remaining: u8,
+    pub valid: bool,
+}
+
+impl HostValue for Cursor {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "Cursor", "fields": {
+            "atom_active": json!({"boolean": {"value": self.atom_active}}),
+            "atom_kind": json!({"byte": {"value": self.atom_kind}}),
+            "atom_remaining": json!({"byte": {"value": self.atom_remaining}}),
+            "depth": json!({"byte": {"value": self.depth}}),
+            "escaped": json!({"boolean": {"value": self.escaped}}),
+            "event": json!({"byte": {"value": self.event}}),
+            "expect_key": json!({"boolean": {"value": self.expect_key}}),
+            "in_string": json!({"boolean": {"value": self.in_string}}),
+            "key": json!({"sequence": {"values": self.key.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "key_length": json!({"integer": {"value": self.key_length, "type": {"bits": 64, "signed": false}}}),
+            "pending_high_surrogate": json!({"boolean": {"value": self.pending_high_surrogate}}),
+            "pending_key": json!({"boolean": {"value": self.pending_key}}),
+            "position": json!({"integer": {"value": self.position, "type": {"bits": 64, "signed": false}}}),
+            "root_seen": json!({"boolean": {"value": self.root_seen}}),
+            "stack": json!({"sequence": {"values": self.stack.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "string_end": json!({"integer": {"value": self.string_end, "type": {"bits": 64, "signed": false}}}),
+            "string_is_key": json!({"boolean": {"value": self.string_is_key}}),
+            "string_length": json!({"integer": {"value": self.string_length, "type": {"bits": 64, "signed": false}}}),
+            "string_start": json!({"integer": {"value": self.string_start, "type": {"bits": 64, "signed": false}}}),
+            "token_depth": json!({"byte": {"value": self.token_depth}}),
+            "token_end": json!({"integer": {"value": self.token_end, "type": {"bits": 64, "signed": false}}}),
+            "token_event": json!({"boolean": {"value": self.token_event}}),
+            "token_kind": json!({"byte": {"value": self.token_kind}}),
+            "token_start": json!({"integer": {"value": self.token_start, "type": {"bits": 64, "signed": false}}}),
+            "unicode_remaining": json!({"byte": {"value": self.unicode_remaining}}),
+            "unicode_value": json!({"integer": {"value": self.unicode_value, "type": {"bits": 64, "signed": false}}}),
+            "utf8_lead": json!({"byte": {"value": self.utf8_lead}}),
+            "utf8_remaining": json!({"byte": {"value": self.utf8_remaining}}),
+            "valid": json!({"boolean": {"value": self.valid}}),
+        }}})
+    }
+}
+
+impl Cursor {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let atom_active = decode_bool(
+            fields
+                .get("atom_active")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let atom_kind = decode_u8(
+            fields
+                .get("atom_kind")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let atom_remaining = decode_u8(
+            fields
+                .get("atom_remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let depth = decode_u8(
+            fields
+                .get("depth")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let escaped = decode_bool(
+            fields
+                .get("escaped")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let event = decode_u8(
+            fields
+                .get("event")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let expect_key = decode_bool(
+            fields
+                .get("expect_key")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let in_string = decode_bool(
+            fields
+                .get("in_string")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let key = sequence_values(
+            fields
+                .get("key")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let key_length = decode_u64(
+            fields
+                .get("key_length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let pending_high_surrogate = decode_bool(
+            fields
+                .get("pending_high_surrogate")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let pending_key = decode_bool(
+            fields
+                .get("pending_key")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let position = decode_u64(
+            fields
+                .get("position")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let root_seen = decode_bool(
+            fields
+                .get("root_seen")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stack = sequence_values(
+            fields
+                .get("stack")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let string_end = decode_u64(
+            fields
+                .get("string_end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let string_is_key = decode_bool(
+            fields
+                .get("string_is_key")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let string_length = decode_u64(
+            fields
+                .get("string_length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let string_start = decode_u64(
+            fields
+                .get("string_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_depth = decode_u8(
+            fields
+                .get("token_depth")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_end = decode_u64(
+            fields
+                .get("token_end")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_event = decode_bool(
+            fields
+                .get("token_event")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_kind = decode_u8(
+            fields
+                .get("token_kind")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let token_start = decode_u64(
+            fields
+                .get("token_start")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let unicode_remaining = decode_u8(
+            fields
+                .get("unicode_remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let unicode_value = decode_u64(
+            fields
+                .get("unicode_value")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let utf8_lead = decode_u8(
+            fields
+                .get("utf8_lead")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let utf8_remaining = decode_u8(
+            fields
+                .get("utf8_remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let valid = decode_bool(
+            fields
+                .get("valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            atom_active,
+            atom_kind,
+            atom_remaining,
+            depth,
+            escaped,
+            event,
+            expect_key,
+            in_string,
+            key,
+            key_length,
+            pending_high_surrogate,
+            pending_key,
+            position,
+            root_seen,
+            stack,
+            string_end,
+            string_is_key,
+            string_length,
+            string_start,
+            token_depth,
+            token_end,
+            token_event,
+            token_kind,
+            token_start,
+            unicode_remaining,
+            unicode_value,
+            utf8_lead,
+            utf8_remaining,
+            valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecimalStep {
+    pub valid: bool,
+    pub value: u64,
+}
+
+impl HostValue for DecimalStep {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "DecimalStep", "fields": {
+            "valid": json!({"boolean": {"value": self.valid}}),
+            "value": json!({"integer": {"value": self.value, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl DecimalStep {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let valid = decode_bool(
+            fields
+                .get("valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let value = decode_u64(
+            fields
+                .get("value")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { valid, value })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct DelimiterResult {
     pub offset: u64,
     pub status: DelimiterStatus,
@@ -3620,6 +3909,8 @@ pub struct ProcessRequest {
     pub resources: ProcessResourceEnvelope,
     pub stderr_limit: u64,
     pub stdin: Vec<u8>,
+    pub stdin_chunk_count: u64,
+    pub stdin_chunks: Vec<Vec<u8>>,
     pub stdout_limit: u64,
 }
 
@@ -3636,6 +3927,8 @@ impl HostValue for ProcessRequest {
             "resources": self.resources.host_value(),
             "stderr_limit": json!({"integer": {"value": self.stderr_limit, "type": {"bits": 64, "signed": false}}}),
             "stdin": json!({"sequence": {"values": self.stdin.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "stdin_chunk_count": json!({"integer": {"value": self.stdin_chunk_count, "type": {"bits": 64, "signed": false}}}),
+            "stdin_chunks": json!({"sequence": {"values": self.stdin_chunks.iter().map(|item| json!({"sequence": {"values": item.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}),
             "stdout_limit": json!({"integer": {"value": self.stdout_limit, "type": {"bits": 64, "signed": false}}}),
         }}})
     }
@@ -3714,6 +4007,24 @@ impl ProcessRequest {
         .iter()
         .map(|item| decode_u8(item))
         .collect::<Result<Vec<_>, _>>()?;
+        let stdin_chunk_count = decode_u64(
+            fields
+                .get("stdin_chunk_count")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stdin_chunks = sequence_values(
+            fields
+                .get("stdin_chunks")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| {
+            sequence_values(item)?
+                .iter()
+                .map(|item| decode_u8(item))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
         let stdout_limit = decode_u64(
             fields
                 .get("stdout_limit")
@@ -3730,6 +4041,8 @@ impl ProcessRequest {
             resources,
             stderr_limit,
             stdin,
+            stdin_chunk_count,
+            stdin_chunks,
             stdout_limit,
         })
     }
@@ -4514,6 +4827,183 @@ impl RetryPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ScalarStep {
+    pub next: u64,
+    pub scalar: u64,
+    pub valid: bool,
+}
+
+impl HostValue for ScalarStep {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ScalarStep", "fields": {
+            "next": json!({"integer": {"value": self.next, "type": {"bits": 64, "signed": false}}}),
+            "scalar": json!({"integer": {"value": self.scalar, "type": {"bits": 64, "signed": false}}}),
+            "valid": json!({"boolean": {"value": self.valid}}),
+        }}})
+    }
+}
+
+impl ScalarStep {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let next = decode_u64(
+            fields
+                .get("next")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let scalar = decode_u64(
+            fields
+                .get("scalar")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let valid = decode_bool(
+            fields
+                .get("valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            next,
+            scalar,
+            valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScanState {
+    pub arrays: u64,
+    pub depth: u64,
+    pub error: u8,
+    pub escape: bool,
+    pub expect: u8,
+    pub literal: u8,
+    pub mode: u8,
+    pub number: u8,
+    pub objects: u64,
+    pub position: u8,
+    pub stack: Vec<u8>,
+    pub strings: u64,
+    pub unicode: u8,
+    pub valid: bool,
+}
+
+impl HostValue for ScanState {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ScanState", "fields": {
+            "arrays": json!({"integer": {"value": self.arrays, "type": {"bits": 64, "signed": false}}}),
+            "depth": json!({"integer": {"value": self.depth, "type": {"bits": 64, "signed": false}}}),
+            "error": json!({"byte": {"value": self.error}}),
+            "escape": json!({"boolean": {"value": self.escape}}),
+            "expect": json!({"byte": {"value": self.expect}}),
+            "literal": json!({"byte": {"value": self.literal}}),
+            "mode": json!({"byte": {"value": self.mode}}),
+            "number": json!({"byte": {"value": self.number}}),
+            "objects": json!({"integer": {"value": self.objects, "type": {"bits": 64, "signed": false}}}),
+            "position": json!({"byte": {"value": self.position}}),
+            "stack": json!({"sequence": {"values": self.stack.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "strings": json!({"integer": {"value": self.strings, "type": {"bits": 64, "signed": false}}}),
+            "unicode": json!({"byte": {"value": self.unicode}}),
+            "valid": json!({"boolean": {"value": self.valid}}),
+        }}})
+    }
+}
+
+impl ScanState {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let arrays = decode_u64(
+            fields
+                .get("arrays")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let depth = decode_u64(
+            fields
+                .get("depth")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let error = decode_u8(
+            fields
+                .get("error")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let escape = decode_bool(
+            fields
+                .get("escape")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let expect = decode_u8(
+            fields
+                .get("expect")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let literal = decode_u8(
+            fields
+                .get("literal")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let mode = decode_u8(
+            fields
+                .get("mode")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let number = decode_u8(
+            fields
+                .get("number")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let objects = decode_u64(
+            fields
+                .get("objects")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let position = decode_u8(
+            fields
+                .get("position")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let stack = sequence_values(
+            fields
+                .get("stack")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let strings = decode_u64(
+            fields
+                .get("strings")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let unicode = decode_u8(
+            fields
+                .get("unicode")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let valid = decode_bool(
+            fields
+                .get("valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            arrays,
+            depth,
+            error,
+            escape,
+            expect,
+            literal,
+            mode,
+            number,
+            objects,
+            position,
+            stack,
+            strings,
+            unicode,
+            valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScannerStreamResult {
     pub byte_state: Vec<u64>,
     pub header_result: HeaderScanResult,
@@ -4809,6 +5299,38 @@ impl StopRuleInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct StrictCursor {
+    pub cursor: Cursor,
+    pub syntax: ScanState,
+}
+
+impl HostValue for StrictCursor {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "StrictCursor", "fields": {
+            "cursor": self.cursor.host_value(),
+            "syntax": self.syntax.host_value(),
+        }}})
+    }
+}
+
+impl StrictCursor {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let cursor = Cursor::from_host_value(
+            fields
+                .get("cursor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let syntax = ScanState::from_host_value(
+            fields
+                .get("syntax")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { cursor, syntax })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SymlinkDecisionInput {
     pub cycle: bool,
     pub depth: u64,
@@ -5035,6 +5557,49 @@ impl TransactionTargetInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ValidateState {
+    pub error: i64,
+    pub lead: u8,
+    pub remaining: u64,
+}
+
+impl HostValue for ValidateState {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "ValidateState", "fields": {
+            "error": json!({"integer": {"value": self.error}}),
+            "lead": json!({"byte": {"value": self.lead}}),
+            "remaining": json!({"integer": {"value": self.remaining, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl ValidateState {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let error = decode_i64(
+            fields
+                .get("error")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let lead = decode_u8(
+            fields
+                .get("lead")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let remaining = decode_u64(
+            fields
+                .get("remaining")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            error,
+            lead,
+            remaining,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ValidationResult {
     pub errors_after: u64,
     pub errors_before: u64,
@@ -5145,6 +5710,194 @@ impl VersionInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct VersionParseResult {
+    pub major: u64,
+    pub minor: u64,
+    pub valid: bool,
+}
+
+impl HostValue for VersionParseResult {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "VersionParseResult", "fields": {
+            "major": json!({"integer": {"value": self.major, "type": {"bits": 64, "signed": false}}}),
+            "minor": json!({"integer": {"value": self.minor, "type": {"bits": 64, "signed": false}}}),
+            "valid": json!({"boolean": {"value": self.valid}}),
+        }}})
+    }
+}
+
+impl VersionParseResult {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let major = decode_u64(
+            fields
+                .get("major")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let minor = decode_u64(
+            fields
+                .get("minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let valid = decode_bool(
+            fields
+                .get("valid")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            major,
+            minor,
+            valid,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VersionParseState {
+    pub failed: bool,
+    pub major: u64,
+    pub major_digits: bool,
+    pub minor: u64,
+    pub minor_digits: bool,
+    pub phase: u64,
+    pub position: u64,
+}
+
+impl HostValue for VersionParseState {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "VersionParseState", "fields": {
+            "failed": json!({"boolean": {"value": self.failed}}),
+            "major": json!({"integer": {"value": self.major, "type": {"bits": 64, "signed": false}}}),
+            "major_digits": json!({"boolean": {"value": self.major_digits}}),
+            "minor": json!({"integer": {"value": self.minor, "type": {"bits": 64, "signed": false}}}),
+            "minor_digits": json!({"boolean": {"value": self.minor_digits}}),
+            "phase": json!({"integer": {"value": self.phase, "type": {"bits": 64, "signed": false}}}),
+            "position": json!({"integer": {"value": self.position, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl VersionParseState {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let failed = decode_bool(
+            fields
+                .get("failed")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let major = decode_u64(
+            fields
+                .get("major")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let major_digits = decode_bool(
+            fields
+                .get("major_digits")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let minor = decode_u64(
+            fields
+                .get("minor")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let minor_digits = decode_bool(
+            fields
+                .get("minor_digits")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let phase = decode_u64(
+            fields
+                .get("phase")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let position = decode_u64(
+            fields
+                .get("position")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self {
+            failed,
+            major,
+            major_digits,
+            minor,
+            minor_digits,
+            phase,
+            position,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VersionText16 {
+    pub bytes: Vec<u8>,
+    pub length: u64,
+}
+
+impl HostValue for VersionText16 {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "VersionText16", "fields": {
+            "bytes": json!({"sequence": {"values": self.bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "length": json!({"integer": {"value": self.length, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl VersionText16 {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let bytes = sequence_values(
+            fields
+                .get("bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let length = decode_u64(
+            fields
+                .get("length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { bytes, length })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VersionText64 {
+    pub bytes: Vec<u8>,
+    pub length: u64,
+}
+
+impl HostValue for VersionText64 {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "VersionText64", "fields": {
+            "bytes": json!({"sequence": {"values": self.bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "length": json!({"integer": {"value": self.length, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl VersionText64 {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let bytes = sequence_values(
+            fields
+                .get("bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let length = decode_u64(
+            fields
+                .get("length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { bytes, length })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct WordScan {
     pub count: u64,
     pub in_word: bool,
@@ -5185,6 +5938,46 @@ pub fn typed_call(
 ) -> Result<mncs_embed::CallOutput, EmbedError> {
     options.expected_interface_identity = Some(INTERFACE_IDENTITY.to_owned());
     session.call_typed_json(module, function, arguments, &options)
+}
+
+pub fn after_value(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<serde_json::Value, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "after_value",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Ok((*&value).clone())?)
+}
+
+pub fn append_decimal(
+    session: &Session,
+    value: u64,
+    scalar: u64,
+    options: CallOptions,
+) -> Result<DecimalStep, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": value, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": scalar, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "append_decimal",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(DecimalStep::from_host_value(&value)?)
 }
 
 pub fn architecture_code(session: &Session, options: CallOptions) -> Result<Vec<u64>, EmbedError> {
@@ -5379,6 +6172,20 @@ pub fn candidate_find(
     Ok(decode_i64(&value)?)
 }
 
+pub fn candidate_fold(session: &Session, options: CallOptions) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "candidate_fold",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
 pub fn candidate_starts_with(
     session: &Session,
     hay: Vec<u8>,
@@ -5397,6 +6204,63 @@ pub fn candidate_starts_with(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn candidate_step(
+    session: &Session,
+    buf: Vec<u8>,
+    view_length: u64,
+    at: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": buf.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": at, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "candidate_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn candidate_validate(
+    session: &Session,
+    buf: Vec<u8>,
+    view_length: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": buf.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "candidate_validate",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn candidate_whitespace(
+    session: &Session,
+    input: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "candidate_whitespace",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
 }
 
 pub fn check_capability(
@@ -6365,6 +7229,81 @@ pub fn feed(
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn feed_atom(
+    session: &Session,
+    state: Cursor,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "feed_atom",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
+}
+
+pub fn feed_byte(
+    session: &Session,
+    state: Cursor,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "feed_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
+}
+
+pub fn feed_chunk(
+    session: &Session,
+    state: ScanState,
+    input: Vec<u8>,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "feed_chunk",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn feed_plain(
+    session: &Session,
+    state: Cursor,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "feed_plain",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
+}
+
 pub fn file_class(
     session: &Session,
     input: FileClassInput,
@@ -6454,6 +7393,46 @@ pub fn finish(
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn finish_parse(
+    session: &Session,
+    input: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseResult, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "finish_parse",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseResult::from_host_value(&value)?)
+}
+
+pub fn first_error(
+    session: &Session,
+    current: i64,
+    index: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": current}}),
+        json!({"integer": {"value": index, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "first_error",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
 pub fn fix_code(session: &Session, options: CallOptions) -> Result<MergeVerdict, EmbedError> {
     let arguments = serde_json::to_string(&Vec::<Value>::new())
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
@@ -6477,6 +7456,22 @@ pub fn fold_byte(
         session,
         "mncs.core.bytes.v1",
         "fold_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
+}
+
+pub fn fold_scalar(session: &Session, input: u64, options: CallOptions) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "fold_scalar",
         &arguments,
         options,
     )?;
@@ -6698,6 +7693,32 @@ pub fn health_code(session: &Session, options: CallOptions) -> Result<Status, Em
     Ok(Status::from_host_value(&value)?)
 }
 
+pub fn hex_value(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "hex_value",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
+}
+
+pub fn init(session: &Session, options: CallOptions) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "init", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
 pub fn is_ascii_alpha(
     session: &Session,
     input: serde_json::Value,
@@ -6850,6 +7871,18 @@ pub fn is_healthy(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_hex(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "is_hex", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn is_hex_digit(
     session: &Session,
     input: serde_json::Value,
@@ -6868,10 +7901,58 @@ pub fn is_hex_digit(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_json_space(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "is_json_space",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_number_delimiter(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "is_number_delimiter",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn is_pass(session: &Session, input: Status, options: CallOptions) -> Result<bool, EmbedError> {
     let arguments = serde_json::to_string(&vec![input.host_value()])
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(session, "doctor.health.v1", "is_pass", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_space(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "is_space", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
 }
@@ -6950,6 +8031,36 @@ pub fn is_unknown(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_utf8_continuation(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "is_utf8_continuation",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn is_valid(
+    session: &Session,
+    input: ScanState,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "is_valid", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn is_warning(
     session: &Session,
     input: Status,
@@ -6968,6 +8079,26 @@ pub fn is_warning(
     Ok(decode_bool(&value)?)
 }
 
+pub fn is_whitespace_scalar(
+    session: &Session,
+    input: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "is_whitespace_scalar",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn join(
     session: &Session,
     left: serde_json::Value,
@@ -6977,6 +8108,43 @@ pub fn join(
     let arguments = serde_json::to_string(&vec![left, right])
         .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
     let output = typed_call(session, "mncs.core.bytes.v1", "join", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(Ok((*&value).clone())?)
+}
+
+pub fn literal_byte(
+    session: &Session,
+    kind: serde_json::Value,
+    position: serde_json::Value,
+    options: CallOptions,
+) -> Result<serde_json::Value, EmbedError> {
+    let arguments = serde_json::to_string(&vec![kind, position])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "literal_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Ok((*&value).clone())?)
+}
+
+pub fn literal_end(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<serde_json::Value, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "literal_end",
+        &arguments,
+        options,
+    )?;
     let value = returned_value(&output)?;
     Ok(Ok((*&value).clone())?)
 }
@@ -7169,6 +8337,172 @@ pub fn pair_conflict(
     Ok(ConflictVerdict::from_host_value(&value)?)
 }
 
+pub fn parse_chunk16(
+    session: &Session,
+    input: VersionText16,
+    initial: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value(), initial.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_chunk16",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_chunk64(
+    session: &Session,
+    input: VersionText64,
+    initial: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value(), initial.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_chunk64",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_chunk_generic(
+    session: &Session,
+    input: serde_json::Value,
+    input_length: u64,
+    initial: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        input,
+        json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}),
+        initial.host_value(),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_chunk_generic",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_chunk_generic__spec_34fd8930(
+    session: &Session,
+    input: Vec<u8>,
+    input_length: u64,
+    initial: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}), initial.host_value()]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_chunk_generic__spec_34fd8930",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_chunk_generic__spec_4dd6cbd1(
+    session: &Session,
+    input: Vec<u8>,
+    input_length: u64,
+    initial: VersionParseState,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}), initial.host_value()]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_chunk_generic__spec_4dd6cbd1",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_version_step(
+    session: &Session,
+    input: serde_json::Value,
+    input_length: u64,
+    state: VersionParseState,
+    lane: u64,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        input,
+        json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}),
+        state.host_value(),
+        json!({"integer": {"value": lane, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_version_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_version_step__spec_34fd8930(
+    session: &Session,
+    input: Vec<u8>,
+    input_length: u64,
+    state: VersionParseState,
+    lane: u64,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}), state.host_value(), json!({"integer": {"value": lane, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_version_step__spec_34fd8930",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
+pub fn parse_version_step__spec_4dd6cbd1(
+    session: &Session,
+    input: Vec<u8>,
+    input_length: u64,
+    state: VersionParseState,
+    lane: u64,
+    options: CallOptions,
+) -> Result<VersionParseState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": input_length, "type": {"bits": 64, "signed": false}}}), state.host_value(), json!({"integer": {"value": lane, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.version.v1",
+        "parse_version_step__spec_4dd6cbd1",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(VersionParseState::from_host_value(&value)?)
+}
+
 pub fn plan_span(
     session: &Session,
     from_major: i64,
@@ -7213,6 +8547,26 @@ pub fn plan_verdict(
     Ok(MigrationVerdict::from_host_value(&value)?)
 }
 
+pub fn pop(
+    session: &Session,
+    state: Cursor,
+    kind: serde_json::Value,
+    event: serde_json::Value,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), kind, event])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "pop",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
+}
+
 pub fn promotes_info(
     session: &Session,
     input: HealthCheckKind,
@@ -7229,6 +8583,32 @@ pub fn promotes_info(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn push(
+    session: &Session,
+    state: Cursor,
+    kind: serde_json::Value,
+    event: serde_json::Value,
+    expect_key: bool,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        kind,
+        event,
+        json!({"boolean": {"value": expect_key}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "push",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
 }
 
 pub fn rank(
@@ -7542,6 +8922,118 @@ pub fn run(
     Ok(ProcessResult::from_host_value(&value)?)
 }
 
+pub fn scan(session: &Session, input: Vec<u8>, options: CallOptions) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "scan", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn scan_bad(
+    session: &Session,
+    state: ScanState,
+    error: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), error])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(session, "mncs.std.json.v1", "scan_bad", &arguments, options)?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_begin_container(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_begin_container",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_begin_string(
+    session: &Session,
+    input: ScanState,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_begin_string",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_close_value(
+    session: &Session,
+    input: ScanState,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_close_value",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_end_container(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_end_container",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_finish_end(
+    session: &Session,
+    input: ScanState,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_finish_end",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
 pub fn scan_kinds(
     session: &Session,
     kinds: Vec<TransitionKind>,
@@ -7558,6 +9050,120 @@ pub fn scan_kinds(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn scan_literal_step(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_literal_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_number_delimiter(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_number_delimiter",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_number_step(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_number_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_step(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_string_step(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_string_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
+}
+
+pub fn scan_structural(
+    session: &Session,
+    state: ScanState,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<ScanState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "scan_structural",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScanState::from_host_value(&value)?)
 }
 
 pub fn scanner_code(session: &Session, options: CallOptions) -> Result<Vec<u64>, EmbedError> {
@@ -7708,6 +9314,26 @@ pub fn span_verdict(
     Ok(decode_i64(&value)?)
 }
 
+pub fn stack_weight(
+    session: &Session,
+    input: u64,
+    options: CallOptions,
+) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "stack_weight",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
+}
+
 pub fn start(
     session: &Session,
     input: ProcessRequest,
@@ -7758,6 +9384,68 @@ pub fn starts_with__spec_f10cf230(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn step_scalar_generic(
+    session: &Session,
+    view: serde_json::Value,
+    view_length: u64,
+    at: u64,
+    options: CallOptions,
+) -> Result<ScalarStep, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        view,
+        json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}}),
+        json!({"integer": {"value": at, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "step_scalar_generic",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScalarStep::from_host_value(&value)?)
+}
+
+pub fn step_scalar_generic__spec_34fd8930(
+    session: &Session,
+    view: Vec<u8>,
+    view_length: u64,
+    at: u64,
+    options: CallOptions,
+) -> Result<ScalarStep, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": view.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": at, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "step_scalar_generic__spec_34fd8930",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScalarStep::from_host_value(&value)?)
+}
+
+pub fn step_scalar_generic__spec_4dd6cbd1(
+    session: &Session,
+    view: Vec<u8>,
+    view_length: u64,
+    at: u64,
+    options: CallOptions,
+) -> Result<ScalarStep, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": view.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": at, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "step_scalar_generic__spec_4dd6cbd1",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScalarStep::from_host_value(&value)?)
 }
 
 pub fn stop_rule(
@@ -7825,6 +9513,94 @@ pub fn stream_init(
     Ok(ScannerStreamState::from_host_value(&value)?)
 }
 
+pub fn strict_feed_byte(
+    session: &Session,
+    state: StrictCursor,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<StrictCursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "strict_feed_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(StrictCursor::from_host_value(&value)?)
+}
+
+pub fn strict_feed_chunk(
+    session: &Session,
+    state: StrictCursor,
+    input: Vec<u8>,
+    options: CallOptions,
+) -> Result<StrictCursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), json!({"sequence": {"values": input.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "strict_feed_chunk",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(StrictCursor::from_host_value(&value)?)
+}
+
+pub fn strict_init(session: &Session, options: CallOptions) -> Result<StrictCursor, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "strict_init",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(StrictCursor::from_host_value(&value)?)
+}
+
+pub fn strict_is_complete(
+    session: &Session,
+    input: StrictCursor,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "strict_is_complete",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn string_byte(
+    session: &Session,
+    state: Cursor,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<Cursor, EmbedError> {
+    let arguments = serde_json::to_string(&vec![state.host_value(), value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "string_byte",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Cursor::from_host_value(&value)?)
+}
+
 pub fn symlink_decision(
     session: &Session,
     input: SymlinkDecisionInput,
@@ -7879,6 +9655,24 @@ pub fn to_ascii_upper(
     Ok(Ok((*&value).clone())?)
 }
 
+pub fn top(
+    session: &Session,
+    input: Cursor,
+    options: CallOptions,
+) -> Result<serde_json::Value, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "top",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Ok((*&value).clone())?)
+}
+
 pub fn transaction_code(
     session: &Session,
     options: CallOptions,
@@ -7894,6 +9688,59 @@ pub fn transaction_code(
     )?;
     let value = returned_value(&output)?;
     Ok(TransactionTargetVerdict::from_host_value(&value)?)
+}
+
+pub fn utf8_first_continuation_valid(
+    session: &Session,
+    lead: serde_json::Value,
+    value: serde_json::Value,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![lead, value])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "utf8_first_continuation_valid",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn utf8_lead_need(
+    session: &Session,
+    input: serde_json::Value,
+    options: CallOptions,
+) -> Result<serde_json::Value, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "utf8_lead_need",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(Ok((*&value).clone())?)
+}
+
+pub fn utf8_width(session: &Session, input: u64, options: CallOptions) -> Result<u64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        json!({"integer": {"value": input, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "utf8_width",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_u64(&value)?)
 }
 
 pub fn valid_content_identity(
@@ -7912,6 +9759,72 @@ pub fn valid_content_identity(
     )?;
     let value = returned_value(&output)?;
     Ok(decode_bool(&value)?)
+}
+
+pub fn validate_generic(
+    session: &Session,
+    view: serde_json::Value,
+    view_length: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        view,
+        json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "validate_generic",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn validate_generic__spec_34fd8930(
+    session: &Session,
+    view: Vec<u8>,
+    view_length: u64,
+    options: CallOptions,
+) -> Result<i64, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": view.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": view_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "validate_generic__spec_34fd8930",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_i64(&value)?)
+}
+
+pub fn validate_step(
+    session: &Session,
+    state: ValidateState,
+    value: serde_json::Value,
+    index: u64,
+    live: bool,
+    options: CallOptions,
+) -> Result<ValidateState, EmbedError> {
+    let arguments = serde_json::to_string(&vec![
+        state.host_value(),
+        value,
+        json!({"integer": {"value": index, "type": {"bits": 64, "signed": false}}}),
+        json!({"boolean": {"value": live}}),
+    ])
+    .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_utf8.v1",
+        "validate_step",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ValidateState::from_host_value(&value)?)
 }
 
 pub fn validate_target(
@@ -8033,6 +9946,40 @@ pub fn xor(
     let output = typed_call(session, "mncs.core.bytes.v1", "xor", &arguments, options)?;
     let value = returned_value(&output)?;
     Ok(Ok((*&value).clone())?)
+}
+
+pub fn zero_key(session: &Session, options: CallOptions) -> Result<Vec<u8>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json_cursor.v1",
+        "zero_key",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn zero_stack(session: &Session, options: CallOptions) -> Result<Vec<u8>, EmbedError> {
+    let arguments = serde_json::to_string(&Vec::<Value>::new())
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.json.v1",
+        "zero_stack",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(sequence_values(&value)?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 pub const BINDING_METADATA: (&str, &str, &str, &str, &str) = (

@@ -44,6 +44,8 @@ python3 "$language_root/scripts/generate_host_bindings.py" \
   --abi "$tmp_dir/doctor.abi.json" \
   --language rust \
   --output "$tmp_dir/doctor_version.rs"
+rustfmt --edition 2021 --config-path "$repo_root/rustfmt.toml" \
+  "$tmp_dir/doctor_version.rs"
 python3 - "$tmp_dir/doctor_version.rs" "$repo_root/src/generated/doctor_version.rs" <<'PY'
 import pathlib
 import re

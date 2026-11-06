@@ -34,7 +34,7 @@ JSON reports, and fail-closed mutation semantics.
 
 ## What it is not
 
-- Not a parser, typechecker, or migration-rule author: language knowledge
+- Not a source parser, typechecker, or migration-rule author: language knowledge
   lives in `mncs-language` (see [Boundary](#boundary)). Doctor orchestrates.
 - Not a formatter with opinions beyond normalization; not a VCS.
 - Not production-complete for historical migration: transition rules are
@@ -66,6 +66,9 @@ observations and finding text. Semantic finite values and records cross through 
 generated Rust binding `src/generated/doctor_version.rs`; strings render
 host-side. The binding is content-addressed and submits the expected MNCS
 interface identity on every call, so a stale generated binding fails closed.
+Version target tokens use native `doctor.version.v1` parsing in fixed UTF-8
+chunks, preserving Rust's accepted `X.Y` syntax without a host parser; the
+registry remains host-loaded under DOC-P-007.
 `tests/
 mncs_parity.rs` proves the MNCS core agrees with the Rust reference on
 every probed input, and pins fail-closed transport (length/signedness/

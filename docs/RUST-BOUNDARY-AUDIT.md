@@ -29,7 +29,9 @@ with 1:1 parity (`parity_version_*`). Registry *data* (which profiles
 exist, which is current) stays host-loaded by design: it is upstream
 knowledge (DOC-P-007), and MNCS takes `cur_major/cur_minor` as arguments
 so no current-version assumption is baked in. Rust retains only the registry
-data and host-facing version parsing; production classification is MNCS.
+data and host-facing version value. Production `X.Y` parsing, including the
+shared Stdlib Unicode whitespace classification, and version classification
+are MNCS; Rust only frames UTF-8-aligned chunks and passes registry facts.
 
 ### `health.rs` — D (fact collection and text; verdicts are native)
 `combine`/`overall`/`check_status`/`rank` live in

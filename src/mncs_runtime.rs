@@ -30,7 +30,10 @@ use crate::migration::{MigrationVerdict, TransitionKind};
 use crate::remediate::RemediationClass;
 use crate::report::ExitCode;
 use crate::verify::VerificationOutcome;
-use crate::version::{LanguageVersion, VersionClass};
+use crate::version::{
+    LanguageVersion, NativeVersionParseOutcome, VersionClass, VERSION_TEXT_CHUNK_BYTES,
+    VERSION_TEXT_SMALL_BYTES,
+};
 
 #[allow(non_camel_case_types, non_snake_case)]
 #[path = "generated/doctor_version.rs"]
@@ -763,6 +766,98 @@ impl DoctorMncsRuntime {
             doctor_version::ExitDecision::ReviewRequired => ExitCode::ReviewRequired,
             doctor_version::ExitDecision::VerificationFailed => ExitCode::VerificationFailed,
         })
+    }
+
+    /// Parse one X.Y version token through the production policy session.
+    /// The host splits only at UTF-8 boundaries; grammar and classification of
+    /// every chunk remain in the native policy state machine.
+    pub(crate) fn parse_version_text(
+        &self,
+        value: &str,
+    ) -> Result<NativeVersionParseOutcome, RuntimeError> {
+        let mut state = doctor_version::VersionParseState {
+            position: 0,
+            phase: 0,
+            major: 0,
+            minor: 0,
+            major_digits: false,
+            minor_digits: false,
+            failed: false,
+        };
+        let mut start = 0usize;
+        while start < value.len() {
+            let remaining = value.len() - start;
+            let width = if remaining <= VERSION_TEXT_SMALL_BYTES {
+                VERSION_TEXT_SMALL_BYTES
+            } else {
+                VERSION_TEXT_CHUNK_BYTES
+            };
+            let mut end = start.saturating_add(width).min(value.len());
+            while !value.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end == start {
+                return Err(RuntimeError::new(
+                    "mncs_value_contract",
+                    "native version parser could not advance at a UTF-8 boundary",
+                ));
+            }
+            let (bytes, length) = native_text_bytes(Some(&value[start..end]), width);
+            state = if width == VERSION_TEXT_SMALL_BYTES {
+                doctor_version::parse_chunk16(
+                    &self.session,
+                    doctor_version::VersionText16 { bytes, length },
+                    state,
+                    mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+                )
+                .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?
+            } else {
+                doctor_version::parse_chunk64(
+                    &self.session,
+                    doctor_version::VersionText64 { bytes, length },
+                    state,
+                    mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+                )
+                .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?
+            };
+            self.record_entrypoint(
+                "doctor.version.v1",
+                if width == VERSION_TEXT_SMALL_BYTES {
+                    "parse_chunk16"
+                } else {
+                    "parse_chunk64"
+                },
+            )?;
+            if state.failed {
+                break;
+            }
+            start = end;
+        }
+        let parsed = doctor_version::finish_parse(
+            &self.session,
+            state,
+            mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
+        )
+        .map_err(|error| RuntimeError::new("mncs_value_contract", error.to_string()))?;
+        self.record_entrypoint("doctor.version.v1", "finish_parse")?;
+        if !parsed.valid {
+            return Ok(NativeVersionParseOutcome::Invalid);
+        }
+        let major = u32::try_from(parsed.major).map_err(|_| {
+            RuntimeError::new(
+                "mncs_value_contract",
+                "native version major is outside the host u32 domain",
+            )
+        })?;
+        let minor = u32::try_from(parsed.minor).map_err(|_| {
+            RuntimeError::new(
+                "mncs_value_contract",
+                "native version minor is outside the host u32 domain",
+            )
+        })?;
+        Ok(NativeVersionParseOutcome::Parsed(LanguageVersion::new(
+            major, minor,
+        )))
     }
 
     /// Run version classification through the production policy session.

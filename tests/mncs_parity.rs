@@ -1,10 +1,11 @@
 //! Rust ↔ MNCS differential parity tests.
 //!
 //! Each test runs the same inputs through the Rust reference implementation
-//! and the MNCS policy module (compiled once per module via `mncs-embed`,
-//! pinned rev) and asserts identical verdicts. Semantic finite values cross
-//! the embedded boundary by nominal identity; numeric transport remains only
-//! for natural measurements such as byte offsets and scanner counters.
+//! and the MNCS policy module (loaded from the frozen family artifact or
+//! compiled once per standalone module via `mncs-embed`) and asserts identical
+//! verdicts. Semantic finite values cross the embedded boundary by nominal
+//! identity; numeric transport remains only for natural measurements such as
+//! byte offsets and scanner counters.
 
 use std::sync::OnceLock;
 
@@ -36,11 +37,15 @@ macro_rules! module_session {
     };
 }
 
-module_session!(
-    version_session,
-    "../mncs/doctor/version.mncs",
-    "doctor.version.v1"
-);
+fn version_session() -> &'static mncs_embed::Session {
+    static SESSION: OnceLock<mncs_embed::Session> = OnceLock::new();
+    SESSION.get_or_init(|| {
+        let artifact =
+            mncs_embed::Artifact::from_json(include_bytes!("../mncs/doctor/family.backend.json"))
+                .expect("load frozen Doctor family artifact");
+        mncs_embed::Session::open(artifact).expect("open frozen Doctor family artifact")
+    })
+}
 module_session!(
     health_session,
     "../mncs/doctor/health.mncs",

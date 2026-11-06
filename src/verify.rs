@@ -466,7 +466,7 @@ mod tests {
             check.verdict == ExternalCheckVerdict::Pass,
             "success must agree with the native verdict"
         );
-        assert_eq!(check.status_code, Some(0));
+        assert_eq!(check.status_code, Some(0), "process result: {check:?}");
         assert_eq!(check.stdout_tail, "hello");
         assert!(!check.timed_out);
         assert!(check.duration_ms > 0);

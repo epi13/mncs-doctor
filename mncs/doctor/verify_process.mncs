@@ -77,6 +77,8 @@ fn execute(input: ProcessInput) -> (result: ProcessOutcome)
             process_max: 0
         },
         stdin: [0; 0],
+        stdin_chunks: [],
+        stdin_chunk_count: 0,
         stdout_limit: 65536,
         stderr_limit: 65536,
         deadline_ms: 300000

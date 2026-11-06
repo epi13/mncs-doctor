@@ -187,7 +187,7 @@ fn scan_header_reference(text: &str) -> HeaderFacts {
     }
     let declared = declared_text
         .as_deref()
-        .and_then(|t| t.parse::<LanguageVersion>().ok());
+        .and_then(crate::version::parse_language_version_reference);
     HeaderFacts {
         span,
         declared,

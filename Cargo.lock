@@ -486,7 +486,7 @@ dependencies = [
 [[package]]
 name = "mncs-codegen"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=c385efbcb11184943c002d7e3da4ea2884b1c7ab#c385efbcb11184943c002d7e3da4ea2884b1c7ab"
+source = "git+https://github.com/epi13/mncs-language?rev=99077372dcec92e072b3cc515bb274336cd58cd2#99077372dcec92e072b3cc515bb274336cd58cd2"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -505,7 +505,7 @@ dependencies = [
 [[package]]
 name = "mncs-compiler"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=c385efbcb11184943c002d7e3da4ea2884b1c7ab#c385efbcb11184943c002d7e3da4ea2884b1c7ab"
+source = "git+https://github.com/epi13/mncs-language?rev=99077372dcec92e072b3cc515bb274336cd58cd2#99077372dcec92e072b3cc515bb274336cd58cd2"
 dependencies = [
  "mncs-codegen",
  "mncs-model",
@@ -530,7 +530,7 @@ dependencies = [
 [[package]]
 name = "mncs-embed"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=c385efbcb11184943c002d7e3da4ea2884b1c7ab#c385efbcb11184943c002d7e3da4ea2884b1c7ab"
+source = "git+https://github.com/epi13/mncs-language?rev=99077372dcec92e072b3cc515bb274336cd58cd2#99077372dcec92e072b3cc515bb274336cd58cd2"
 dependencies = [
  "mncs-codegen",
  "mncs-compiler",
@@ -543,7 +543,7 @@ dependencies = [
 [[package]]
 name = "mncs-model"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=c385efbcb11184943c002d7e3da4ea2884b1c7ab#c385efbcb11184943c002d7e3da4ea2884b1c7ab"
+source = "git+https://github.com/epi13/mncs-language?rev=99077372dcec92e072b3cc515bb274336cd58cd2#99077372dcec92e072b3cc515bb274336cd58cd2"
 dependencies = [
  "ed25519-dalek",
  "getrandom",
@@ -557,7 +557,7 @@ dependencies = [
 [[package]]
 name = "mncs-syntax"
 version = "0.1.0"
-source = "git+https://github.com/epi13/mncs-language?rev=c385efbcb11184943c002d7e3da4ea2884b1c7ab#c385efbcb11184943c002d7e3da4ea2884b1c7ab"
+source = "git+https://github.com/epi13/mncs-language?rev=99077372dcec92e072b3cc515bb274336cd58cd2#99077372dcec92e072b3cc515bb274336cd58cd2"
 dependencies = [
  "serde",
  "serde_json",
