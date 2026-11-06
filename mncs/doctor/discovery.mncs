@@ -5,9 +5,12 @@ module doctor.discovery.v1;
 //
 // The host still performs recursive enumeration, metadata acquisition, path
 // joining, cycle identity, and byte reads. Names and extensions cross this
-// boundary as nominal finite values so the host cannot silently invent or
-// renumber semantic classifications. This module decides what those facts
-// mean.
+// boundary as bounded byte views. The shared Stdlib scanner owns the
+// spelling and suffix decisions; this module owns the resulting policy.
+use mncs.std.text_scan.v1 as text_scan;
+
+record TextView { bytes: [byte; up_to 64], length: u64 }
+record NameView { prefix: TextView, suffix: TextView }
 
 enum DirectoryName {
     Other,
@@ -32,7 +35,7 @@ enum DirectoryName {
 enum DirectoryDecision { Descend, SkipDepth, SkipExcluded, SkipCycle, SkipSymlink }
 
 record DirectoryDecisionInput {
-    name: DirectoryName,
+    name: NameView,
     extra_excluded: bool,
     is_symlink: bool,
     follow_symlink: bool,
@@ -64,11 +67,67 @@ fn excluded_directory_name(name: DirectoryName) -> (result: bool) {
     };
 }
 
+fn equals_directory_text(value: TextView, target: [byte; 21], target_length: u64) -> (result: bool) {
+    return text_scan.equals<21>(value.bytes, value.length, target, target_length);
+}
+
+fn equals_file_text(value: TextView, target: [byte; 19], target_length: u64) -> (result: bool) {
+    return text_scan.equals<19>(value.bytes, value.length, target, target_length);
+}
+
+fn ends_with_text(value: TextView, target: [byte; 10], target_length: u64) -> (result: bool) {
+    return text_scan.ends_with<10>(value.bytes, value.length, target, target_length);
+}
+
+fn equals_folded_text(value: TextView, target: [byte; 4], target_length: u64) -> (result: bool) {
+    return text_scan.equals_folded<4>(value.bytes, value.length, target, target_length);
+}
+
+fn classify_directory_name(name: NameView) -> (result: DirectoryName) {
+    // One 21-byte needle shape shares a single Stdlib specialization. The
+    // explicit lengths exclude zero padding from the spelling comparison.
+    let git: [byte; 21] = [46, 103, 105, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let hg: [byte; 21] = [46, 104, 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let svn: [byte; 21] = [46, 115, 118, 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let target: [byte; 21] = [116, 97, 114, 103, 101, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let node_modules: [byte; 21] = [110, 111, 100, 101, 95, 109, 111, 100, 117, 108, 101, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let venv: [byte; 21] = [118, 101, 110, 118, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let pycache: [byte; 21] = [95, 95, 112, 121, 99, 97, 99, 104, 101, 95, 95, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let pytest_cache: [byte; 21] = [46, 112, 121, 116, 101, 115, 116, 95, 99, 97, 99, 104, 101, 0, 0, 0, 0, 0, 0, 0, 0];
+    let ruff_cache: [byte; 21] = [46, 114, 117, 102, 102, 95, 99, 97, 99, 104, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mypy_cache: [byte; 21] = [46, 109, 121, 112, 121, 95, 99, 97, 99, 104, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let dist: [byte; 21] = [100, 105, 115, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let worktrees: [byte; 21] = [46, 119, 111, 114, 107, 116, 114, 101, 101, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let tox: [byte; 21] = [46, 116, 111, 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let idea: [byte; 21] = [46, 105, 100, 101, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let vscode: [byte; 21] = [46, 118, 115, 99, 111, 100, 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let atlas_baseline: [byte; 21] = [46, 97, 116, 108, 97, 115, 45, 106, 111, 101, 114, 110, 45, 98, 97, 115, 101, 108, 105, 110, 101];
+    let dot_venv: [byte; 21] = [46, 118, 101, 110, 118, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    if equals_directory_text(name.prefix, git, 4) { return DirectoryName.Git; }
+    if equals_directory_text(name.prefix, hg, 3) { return DirectoryName.Hg; }
+    if equals_directory_text(name.prefix, svn, 4) { return DirectoryName.Svn; }
+    if equals_directory_text(name.prefix, target, 6) { return DirectoryName.Target; }
+    if equals_directory_text(name.prefix, node_modules, 12) { return DirectoryName.NodeModules; }
+    if equals_directory_text(name.prefix, venv, 4) { return DirectoryName.Venv; }
+    if equals_directory_text(name.prefix, pycache, 11) { return DirectoryName.Pycache; }
+    if equals_directory_text(name.prefix, pytest_cache, 13) { return DirectoryName.PytestCache; }
+    if equals_directory_text(name.prefix, ruff_cache, 11) { return DirectoryName.RuffCache; }
+    if equals_directory_text(name.prefix, mypy_cache, 11) { return DirectoryName.MypyCache; }
+    if equals_directory_text(name.prefix, dist, 4) { return DirectoryName.Dist; }
+    if equals_directory_text(name.prefix, worktrees, 10) { return DirectoryName.Worktrees; }
+    if equals_directory_text(name.prefix, tox, 4) { return DirectoryName.Tox; }
+    if equals_directory_text(name.prefix, idea, 5) { return DirectoryName.Idea; }
+    if equals_directory_text(name.prefix, vscode, 7) { return DirectoryName.Vscode; }
+    if equals_directory_text(name.prefix, atlas_baseline, 21) { return DirectoryName.AtlasJoernBaseline; }
+    if equals_directory_text(name.prefix, dot_venv, 5) { return DirectoryName.DotVenv; }
+    return DirectoryName.Other;
+}
+
 fn directory_decision(input: DirectoryDecisionInput) -> (result: DirectoryDecision) {
     if input.depth > input.max_depth {
         return DirectoryDecision.SkipDepth;
     }
-    if !input.is_symlink && (input.extra_excluded || excluded_directory_name(input.name)) {
+    if !input.is_symlink && (input.extra_excluded || excluded_directory_name(classify_directory_name(input.name))) {
         return DirectoryDecision.SkipExcluded;
     }
     if input.is_symlink && input.cycle {
@@ -107,7 +166,10 @@ fn symlink_decision(input: SymlinkDecisionInput) -> (result: SymlinkDecision) {
             false => SymlinkDecision.SkipFile,
         },
         SymlinkTargetKind.Directory => match directory_decision(DirectoryDecisionInput {
-            name: DirectoryName.Other,
+            name: NameView {
+                prefix: TextView { bytes: [0; 64], length: 0 },
+                suffix: TextView { bytes: [0; 64], length: 0 },
+            },
             extra_excluded: false,
             is_symlink: true,
             follow_symlink: input.follow_directory,
@@ -126,24 +188,33 @@ fn symlink_decision(input: SymlinkDecisionInput) -> (result: SymlinkDecision) {
     };
 }
 
-enum FileName { Other, ForgeManifest, WorkspaceManifest, Cargo, ManifestJson }
-enum FileExtension { Other, Mncs }
 enum FileClass { Ignore, Source, ForgeManifest, WorkspaceManifest, ManifestJson, Cargo }
 
 record FileClassInput {
-    name: FileName,
-    extension: FileExtension,
+    name: NameView,
+    extension: TextView,
 }
 
 fn file_class(input: FileClassInput) -> (result: FileClass) {
-    return match input.name {
-        FileName.ForgeManifest => FileClass.ForgeManifest,
-        FileName.WorkspaceManifest => FileClass.WorkspaceManifest,
-        FileName.Cargo => FileClass.Cargo,
-        FileName.ManifestJson => FileClass.ManifestJson,
-        FileName.Other => match input.extension {
-            FileExtension.Mncs => FileClass.Source,
-            FileExtension.Other => FileClass.Ignore,
-        },
-    };
+    let forge_manifest: [byte; 19] = [109, 110, 99, 115, 45, 102, 111, 114, 103, 101, 46, 116, 111, 109, 108, 0, 0, 0, 0];
+    let workspace_manifest: [byte; 19] = [109, 110, 99, 115, 45, 119, 111, 114, 107, 115, 112, 97, 99, 101, 46, 116, 111, 109, 108];
+    let cargo_manifest: [byte; 19] = [67, 97, 114, 103, 111, 46, 116, 111, 109, 108, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let manifest_suffix: [byte; 10] = [46, 109, 110, 99, 115, 46, 106, 115, 111, 110];
+    let mncs_extension: [byte; 4] = [109, 110, 99, 115];
+    if equals_file_text(input.name.prefix, forge_manifest, 15) {
+        return FileClass.ForgeManifest;
+    }
+    if equals_file_text(input.name.prefix, workspace_manifest, 19) {
+        return FileClass.WorkspaceManifest;
+    }
+    if equals_file_text(input.name.prefix, cargo_manifest, 10) {
+        return FileClass.Cargo;
+    }
+    if ends_with_text(input.name.suffix, manifest_suffix, 10) {
+        return FileClass.ManifestJson;
+    }
+    if equals_folded_text(input.extension, mncs_extension, 4) {
+        return FileClass.Source;
+    }
+    return FileClass.Ignore;
 }

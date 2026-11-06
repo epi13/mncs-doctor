@@ -10,7 +10,7 @@ semantics, canonicalization, or transition knowledge.
 ```text
 repository
   -> epoch       (validated-input fingerprints; hit re-emits, miss runs on)
-  -> discovery   (root, walk, exclusions, deterministic inventory)
+  -> discovery   (root, walk, MNCS bounded-name classification, deterministic inventory)
   -> inventory   (bytes, fingerprints, newline/BOM/mode facts)
   -> diagnosis   (host text diagnostics + MNCS scanner/version policy)
   -> health      (7 registered checks -> MNCS status/aggregation policy)

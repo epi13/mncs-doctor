@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "b7e3f9ff6237184aba83a27c3f805a1dd03c505aa1c965ed0409adda2e76b10e";
+    "5e2df94f05514d2168158e0aa97b83fb29273832b79f65bcdf8331f2c539c13c";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "8b9987a13a3626e0a333bdfc547ffe7d84637533ee34efdbd2690e3c8aec3292";
+    "97c9b24533b9ca01ae522402beb535539f3be1a92a4d74ac65877e0a972df0b9";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -480,73 +480,6 @@ impl FileClass {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown FileClass variant {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileExtension {
-    Other,
-    Mncs,
-}
-
-impl HostValue for FileExtension {
-    fn host_value(&self) -> Value {
-        let variant = match self {
-            Self::Other => "Other",
-            Self::Mncs => "Mncs",
-        };
-        json!({"finite": {"type": "FileExtension", "variant": variant}})
-    }
-}
-
-impl FileExtension {
-    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
-        match finite_variant(value)? {
-            "Other" => Ok(Self::Other),
-            "Mncs" => Ok(Self::Mncs),
-            other => Err(EmbedError::new(
-                "binding_decode",
-                format!("unknown FileExtension variant {other}"),
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileName {
-    Other,
-    ForgeManifest,
-    WorkspaceManifest,
-    Cargo,
-    ManifestJson,
-}
-
-impl HostValue for FileName {
-    fn host_value(&self) -> Value {
-        let variant = match self {
-            Self::Other => "Other",
-            Self::ForgeManifest => "ForgeManifest",
-            Self::WorkspaceManifest => "WorkspaceManifest",
-            Self::Cargo => "Cargo",
-            Self::ManifestJson => "ManifestJson",
-        };
-        json!({"finite": {"type": "FileName", "variant": variant}})
-    }
-}
-
-impl FileName {
-    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
-        match finite_variant(value)? {
-            "Other" => Ok(Self::Other),
-            "ForgeManifest" => Ok(Self::ForgeManifest),
-            "WorkspaceManifest" => Ok(Self::WorkspaceManifest),
-            "Cargo" => Ok(Self::Cargo),
-            "ManifestJson" => Ok(Self::ManifestJson),
-            other => Err(EmbedError::new(
-                "binding_decode",
-                format!("unknown FileName variant {other}"),
             )),
         }
     }
@@ -2055,7 +1988,7 @@ pub struct DirectoryDecisionInput {
     pub follow_symlink: bool,
     pub is_symlink: bool,
     pub max_depth: u64,
-    pub name: DirectoryName,
+    pub name: NameView,
 }
 
 impl HostValue for DirectoryDecisionInput {
@@ -2105,7 +2038,7 @@ impl DirectoryDecisionInput {
                 .get("max_depth")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
-        let name = DirectoryName::from_host_value(
+        let name = NameView::from_host_value(
             fields
                 .get("name")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
@@ -2460,8 +2393,8 @@ impl FailureIdentityMaterial {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileClassInput {
-    pub extension: FileExtension,
-    pub name: FileName,
+    pub extension: TextView,
+    pub name: NameView,
 }
 
 impl HostValue for FileClassInput {
@@ -2476,12 +2409,12 @@ impl HostValue for FileClassInput {
 impl FileClassInput {
     fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
         let fields = record_fields(value)?;
-        let extension = FileExtension::from_host_value(
+        let extension = TextView::from_host_value(
             fields
                 .get("extension")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
-        let name = FileName::from_host_value(
+        let name = NameView::from_host_value(
             fields
                 .get("name")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
@@ -2943,6 +2876,38 @@ impl ModelInput {
             content_identity,
             schema,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameView {
+    pub prefix: TextView,
+    pub suffix: TextView,
+}
+
+impl HostValue for NameView {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "NameView", "fields": {
+            "prefix": self.prefix.host_value(),
+            "suffix": self.suffix.host_value(),
+        }}})
+    }
+}
+
+impl NameView {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let prefix = TextView::from_host_value(
+            fields
+                .get("prefix")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        let suffix = TextView::from_host_value(
+            fields
+                .get("suffix")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { prefix, suffix })
     }
 }
 
@@ -5067,6 +5032,41 @@ impl Text64 {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TextView {
+    pub bytes: Vec<u8>,
+    pub length: u64,
+}
+
+impl HostValue for TextView {
+    fn host_value(&self) -> Value {
+        json!({"record": {"type": "TextView", "fields": {
+            "bytes": json!({"sequence": {"values": self.bytes.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}),
+            "length": json!({"integer": {"value": self.length, "type": {"bits": 64, "signed": false}}}),
+        }}})
+    }
+}
+
+impl TextView {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        let fields = record_fields(value)?;
+        let bytes = sequence_values(
+            fields
+                .get("bytes")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?
+        .iter()
+        .map(|item| decode_u8(item))
+        .collect::<Result<Vec<_>, _>>()?;
+        let length = decode_u64(
+            fields
+                .get("length")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
+        Ok(Self { bytes, length })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TransactionTargetInput {
     pub actual_present: bool,
     pub expected_present: bool,
@@ -5851,6 +5851,24 @@ pub fn classify(
     Ok(VersionClass::from_host_value(&value)?)
 }
 
+pub fn classify_directory_name(
+    session: &Session,
+    input: NameView,
+    options: CallOptions,
+) -> Result<DirectoryName, EmbedError> {
+    let arguments = serde_json::to_string(&vec![input.host_value()])
+        .map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "classify_directory_name",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(DirectoryName::from_host_value(&value)?)
+}
+
 pub fn classify_process_verdict(
     session: &Session,
     input: StatusInput,
@@ -6467,6 +6485,26 @@ pub fn ends_with(
     Ok(decode_bool(&value)?)
 }
 
+pub fn ends_with__spec_4a7a36ba(
+    session: &Session,
+    hay: Vec<u8>,
+    hay_length: u64,
+    needle: Vec<u8>,
+    needle_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": hay.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": hay_length, "type": {"bits": 64, "signed": false}}}), json!({"sequence": {"values": needle.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": needle_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_scan.v1",
+        "ends_with__spec_4a7a36ba",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn ends_with__spec_f10cf230(
     session: &Session,
     hay: Vec<u8>,
@@ -6480,6 +6518,25 @@ pub fn ends_with__spec_f10cf230(
         session,
         "mncs.std.text_scan.v1",
         "ends_with__spec_f10cf230",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn ends_with_text(
+    session: &Session,
+    value: TextView,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![value.host_value(), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "ends_with_text",
         &arguments,
         options,
     )?;
@@ -6551,6 +6608,46 @@ pub fn equals(
     Ok(decode_bool(&value)?)
 }
 
+pub fn equals__spec_d7875244(
+    session: &Session,
+    value: Vec<u8>,
+    value_length: u64,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": value.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": value_length, "type": {"bits": 64, "signed": false}}}), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_scan.v1",
+        "equals__spec_d7875244",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn equals__spec_e590e033(
+    session: &Session,
+    value: Vec<u8>,
+    value_length: u64,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": value.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": value_length, "type": {"bits": 64, "signed": false}}}), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_scan.v1",
+        "equals__spec_e590e033",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
 pub fn equals__spec_f10cf230(
     session: &Session,
     value: Vec<u8>,
@@ -6564,6 +6661,44 @@ pub fn equals__spec_f10cf230(
         session,
         "mncs.std.text_scan.v1",
         "equals__spec_f10cf230",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn equals_directory_text(
+    session: &Session,
+    value: TextView,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![value.host_value(), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "equals_directory_text",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn equals_file_text(
+    session: &Session,
+    value: TextView,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![value.host_value(), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "equals_file_text",
         &arguments,
         options,
     )?;
@@ -6604,6 +6739,25 @@ pub fn equals_folded__spec_f10cf230(
         session,
         "mncs.std.text_scan.v1",
         "equals_folded__spec_f10cf230",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn equals_folded_text(
+    session: &Session,
+    value: TextView,
+    target: Vec<u8>,
+    target_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![value.host_value(), json!({"sequence": {"values": target.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": target_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.discovery.v1",
+        "equals_folded_text",
         &arguments,
         options,
     )?;
@@ -8624,6 +8778,27 @@ pub fn window_equal(
         session,
         "mncs.std.text_scan.v1",
         "window_equal",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(decode_bool(&value)?)
+}
+
+pub fn window_equal__spec_4a7a36ba(
+    session: &Session,
+    hay: Vec<u8>,
+    hay_length: u64,
+    start: u64,
+    needle: Vec<u8>,
+    needle_length: u64,
+    options: CallOptions,
+) -> Result<bool, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": hay.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": hay_length, "type": {"bits": 64, "signed": false}}}), json!({"integer": {"value": start, "type": {"bits": 64, "signed": false}}}), json!({"sequence": {"values": needle.iter().map(|item| json!({"byte": {"value": item}})).collect::<Vec<_>>()}}), json!({"integer": {"value": needle_length, "type": {"bits": 64, "signed": false}}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "mncs.std.text_scan.v1",
+        "window_equal__spec_4a7a36ba",
         &arguments,
         options,
     )?;

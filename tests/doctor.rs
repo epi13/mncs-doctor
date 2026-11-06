@@ -5,6 +5,8 @@ use std::fs;
 mod common;
 
 use common::{read_bytes, run, stage, stdout_json};
+use mncs_doctor::discovery::{discover, discover_with_policy, DiscoveryOptions};
+use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
 
 #[test]
 fn healthy_repo_reports_two_files() {
@@ -60,6 +62,75 @@ fn healthy_repo_reports_two_files() {
             assert_ne!(diag["severity"], "error", "{diag:?}");
         }
     }
+}
+
+#[test]
+fn production_discovery_classifies_raw_names_with_native_policy() {
+    let root = stage("repos/healthy");
+    fs::create_dir_all(root.join("target")).unwrap();
+    fs::write(root.join("target/ignored.mncs"), "not a source tree\n").unwrap();
+    fs::write(
+        root.join("native-uppercase.MNCS"),
+        "mncs 0.18;\nmodule native_uppercase;\n",
+    )
+    .unwrap();
+
+    // Compare the native production policy against the independent Rust
+    // reference over the same real directory entries before invoking the CLI.
+    let options = DiscoveryOptions::default();
+    let reference = discover(&root, &options).unwrap();
+    let policy = DoctorMncsRuntime::new().unwrap();
+    let native = discover_with_policy(
+        &root,
+        &options,
+        &|facts| {
+            policy
+                .discovery_directory_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_file_class(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_symlink_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    assert_eq!(native.topology, reference.topology);
+    assert_eq!(native.manifests, reference.manifests);
+    assert_eq!(
+        native
+            .sources
+            .iter()
+            .map(|source| (&source.relative, &source.sha256))
+            .collect::<Vec<_>>(),
+        reference
+            .sources
+            .iter()
+            .map(|source| (&source.relative, &source.sha256))
+            .collect::<Vec<_>>()
+    );
+
+    let out = run(&root, &["doctor", "--root", ".", "--json"]);
+    assert!(
+        out.status.success(),
+        "status: {}; stderr: {}; stdout: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let report = stdout_json(&out);
+    assert_eq!(report["inventory"]["files_checked"], 3);
+    assert_eq!(report["inventory"]["skipped_dirs"], 1);
+    assert!(report["policy"]["entrypoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entrypoint| entrypoint == "doctor.discovery.v1::file_class"));
 }
 
 #[cfg(unix)]

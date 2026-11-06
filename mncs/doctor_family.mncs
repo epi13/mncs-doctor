@@ -19,9 +19,21 @@ use doctor.verify_process.v1 as verify_process;
 use doctor.version.v1 as version;
 
 fn discovery_code() -> (result: discovery.FileClass) {
+    let filename: discovery.TextView = discovery.TextView {
+        bytes: [99, 97, 110, 100, 105, 100, 97, 116, 101, 46, 109, 110, 99, 115],
+        length: 14,
+    };
+    let extension: discovery.TextView = discovery.TextView {
+        bytes: [109, 110, 99, 115],
+        length: 4,
+    };
+    let name: discovery.NameView = discovery.NameView {
+        prefix: filename,
+        suffix: filename,
+    };
     return discovery.file_class(discovery.FileClassInput {
-        name: discovery.FileName.Other,
-        extension: discovery.FileExtension.Mncs,
+        name: name,
+        extension: extension,
     });
 }
 

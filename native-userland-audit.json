@@ -1,11 +1,18 @@
 {
   "schema_version": "mncs.native-userland-audit/1",
   "repository": "mncs-doctor",
-  "status": "host_bootstrap",
+  "status": "hybrid",
   "canonical_mncs_surfaces": [
-    "doctor policy modules and remediation contracts"
+    "doctor policy modules and remediation contracts",
+    "directory name exclusion classification over bounded text views",
+    "manifest and source file classification through shared Stdlib text scanning"
   ],
   "host_canonical_responsibilities": [
+    {
+      "area": "directory-entry name and extension classification",
+      "classification": "native production policy with retained independent Rust oracle",
+      "eliminating_capability": "completed by doctor.discovery.v1 using mncs.std.text_scan.v1"
+    },
     {
       "area": "Rust application CLI, traversal, metadata, permissions, and symlink inspection",
       "classification": "missing_reusable_runtime_capability",
@@ -29,6 +36,10 @@
     "MNCS-TOOLING-B665F138D324",
     "MNCS-TOOLING-146FB6F4BBC6"
   ],
-  "migration_order": 4,
-  "next_native_slice": "native path-surface policy over runtime filesystem effects"
+  "migration_order": 5,
+  "runtime_effect_dogfood": {
+    "path_names": "production discovery passes bounded leading and trailing name views plus the raw extension to MNCS; host retains enumeration, metadata, configured exclusion membership, and byte reads",
+    "shared_text": "mncs.std.text_scan.v1 supplies exact equality, bounded suffix matching, and ASCII case-folded extension comparison"
+  },
+  "next_native_slice": "native no-follow metadata/traversal and temporary-resource policy"
 }

@@ -11,8 +11,8 @@ use std::sync::OnceLock;
 
 use mncs_doctor::diagnostics::{Diagnostic, DiagnosticSource, LanguageBackend, Severity, Span};
 use mncs_doctor::discovery::{
-    DirectoryDecision, DirectoryFacts, DirectoryName, FileClass, FileExtension, FileFacts,
-    FileName, SymlinkDecision, SymlinkFacts, SymlinkTargetKind,
+    DirectoryDecision, DirectoryFacts, FileClass, FileFacts, SymlinkDecision, SymlinkFacts,
+    SymlinkTargetKind,
 };
 use mncs_doctor::edits::{EditSet, TextEdit};
 use mncs_doctor::fix::{Applicability, StopReason};
@@ -539,40 +539,92 @@ fn parity_transaction_target_policy() {
 fn parity_discovery_fact_classification() {
     let directory_cases = [
         (
-            (DirectoryName::Other, false, false, false, false, 0, 64),
+            "",
+            false,
+            false,
+            false,
+            false,
+            0,
+            64,
             DirectoryDecision::Descend,
         ),
         (
-            (DirectoryName::Target, false, false, false, false, 1, 64),
+            "target",
+            false,
+            false,
+            false,
+            false,
+            1,
+            64,
             DirectoryDecision::SkipExcluded,
         ),
         (
-            (DirectoryName::Other, false, true, false, false, 1, 64),
+            "link",
+            false,
+            true,
+            false,
+            false,
+            1,
+            64,
             DirectoryDecision::SkipSymlink,
         ),
         (
-            (DirectoryName::Other, false, true, true, true, 1, 64),
+            "link",
+            false,
+            true,
+            true,
+            true,
+            1,
+            64,
             DirectoryDecision::SkipCycle,
         ),
         (
-            (DirectoryName::Other, false, false, false, false, 65, 64),
+            "",
+            false,
+            false,
+            false,
+            false,
+            65,
+            64,
             DirectoryDecision::SkipDepth,
         ),
         (
-            (DirectoryName::Other, true, false, false, false, 1, 64),
+            "custom",
+            true,
+            false,
+            false,
+            false,
+            1,
+            64,
             DirectoryDecision::SkipExcluded,
         ),
         (
-            (DirectoryName::DotVenv, false, false, false, false, 1, 64),
+            ".venv",
+            false,
+            false,
+            false,
+            false,
+            1,
+            64,
             DirectoryDecision::SkipExcluded,
+        ),
+        (
+            "target-cache",
+            false,
+            false,
+            false,
+            false,
+            1,
+            64,
+            DirectoryDecision::Descend,
         ),
     ];
     let runtime = DoctorMncsRuntime::new().unwrap();
-    for ((name, extra, symlink, follow, cycle, depth, max_depth), expected) in directory_cases {
+    for (name, extra, symlink, follow, cycle, depth, max_depth, expected) in directory_cases {
         assert_eq!(
             runtime
                 .discovery_directory_decision(DirectoryFacts {
-                    name,
+                    name: name.to_owned(),
                     extra_excluded: extra,
                     is_symlink: symlink,
                     follow_symlink: follow,
@@ -584,27 +636,82 @@ fn parity_discovery_fact_classification() {
             expected
         );
     }
-    let file_cases = [
-        // Recognised manifest names take precedence over the extension fact.
-        (
-            (FileName::ForgeManifest, FileExtension::Mncs),
-            FileClass::ForgeManifest,
-        ),
-        (
-            (FileName::ForgeManifest, FileExtension::Other),
-            FileClass::ForgeManifest,
-        ),
-        (
-            (FileName::ManifestJson, FileExtension::Other),
-            FileClass::ManifestJson,
-        ),
-        ((FileName::Other, FileExtension::Mncs), FileClass::Source),
-        ((FileName::Other, FileExtension::Other), FileClass::Ignore),
-    ];
-    for ((name, extension), expected) in file_cases {
+    let overlong_target = format!("target{}", "x".repeat(64));
+    assert_eq!(
+        runtime
+            .discovery_directory_decision(DirectoryFacts {
+                name: overlong_target,
+                extra_excluded: false,
+                is_symlink: false,
+                follow_symlink: false,
+                cycle: false,
+                depth: 1,
+                max_depth: 64,
+            })
+            .unwrap(),
+        DirectoryDecision::Descend
+    );
+    for name in [
+        ".git",
+        ".hg",
+        ".svn",
+        "target",
+        "node_modules",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        "dist",
+        ".worktrees",
+        ".tox",
+        ".idea",
+        ".vscode",
+        ".atlas-joern-baseline",
+        ".venv",
+    ] {
         assert_eq!(
             runtime
-                .discovery_file_class(FileFacts { name, extension })
+                .discovery_directory_decision(DirectoryFacts {
+                    name: name.to_owned(),
+                    extra_excluded: false,
+                    is_symlink: false,
+                    follow_symlink: false,
+                    cycle: false,
+                    depth: 1,
+                    max_depth: 64,
+                })
+                .unwrap(),
+            DirectoryDecision::SkipExcluded,
+            "directory spelling {name:?}"
+        );
+    }
+    let long_manifest = format!("{}{}", "x".repeat(80), ".mncs.json");
+    let long_manifest_prefix = format!("mncs-forge.toml{}.MNCS", "x".repeat(80));
+    let long_extension = format!("{}mncs", "x".repeat(64));
+    let file_cases = [
+        // Manifest spelling takes precedence over the extension fact.
+        ("mncs-forge.toml", "mncs", FileClass::ForgeManifest),
+        ("mncs-forge.toml", "txt", FileClass::ForgeManifest),
+        ("mncs-workspace.toml", "", FileClass::WorkspaceManifest),
+        ("Cargo.toml", "", FileClass::Cargo),
+        ("manifest.mncs.json", "", FileClass::ManifestJson),
+        (long_manifest.as_str(), "", FileClass::ManifestJson),
+        ("example.mncs", "mncs", FileClass::Source),
+        ("example.MNCS", "MNCS", FileClass::Source),
+        (long_manifest_prefix.as_str(), "MNCS", FileClass::Source),
+        ("example.x", long_extension.as_str(), FileClass::Ignore),
+        ("example.txt", "txt", FileClass::Ignore),
+        ("example.MNCS.JSON", "", FileClass::Ignore),
+        ("cargo.toml", "", FileClass::Ignore),
+    ];
+    for (name, extension, expected) in file_cases {
+        assert_eq!(
+            runtime
+                .discovery_file_class(FileFacts {
+                    name: name.to_owned(),
+                    extension: extension.to_owned(),
+                })
                 .unwrap(),
             expected
         );

@@ -1,10 +1,31 @@
 {
   "schema_version": "mncs.native-userland-status/1",
   "repository_id": "mncs-doctor",
-  "status": "host_bootstrap",
+  "status": "hybrid",
   "canonical_entrypoint": "mncs-doctor",
-  "native_sources": {},
+  "native_sources": {
+    "discovery-path-surface": "mncs/doctor/discovery.mncs"
+  },
+  "canonical_mncs_surfaces": [
+    "directory exclusion classification over bounded name views",
+    "manifest and source file classification over bounded name and extension views",
+    "shared Stdlib byte equality, suffix matching, and ASCII case-folding"
+  ],
+  "compatibility_surfaces": {
+    "retained_differential_oracle": "src/discovery.rs::discover",
+    "retained_host_responsibilities": "filesystem enumeration, metadata, path handling, configured exclusion membership, and source-byte acquisition"
+  },
   "host_paths": [
+    {
+      "path": "src/main.rs",
+      "role": "canonical CLI and native policy orchestration",
+      "canonical": true
+    },
+    {
+      "path": "src/discovery.rs",
+      "role": "filesystem effects, bounded text projection, and independent Rust reference policy",
+      "canonical": false
+    },
     {
       "path": "src/verify.rs",
       "role": "canonical filesystem/process/bootstrap orchestration",

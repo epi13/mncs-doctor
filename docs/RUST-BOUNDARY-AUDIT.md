@@ -136,9 +136,18 @@ Production `doctor.discovery.v1` decides directory exclusion/traversal,
 symlink path handling, and file classes from host-acquired facts. Its native
 symlink policy classifies file, directory, other, and unresolved targets;
 applies file/directory follow settings; and resolves directory-link depth and
-cycle outcomes. The Rust walker retains target metadata and directory
-identity acquisition, deterministic ordering, recursion, and file reads.
-The independent Rust decisions remain available as a differential reference.
+cycle outcomes. Directory names, file basenames/suffixes, and extensions now
+cross as bounded raw byte views. The policy classifies those views through the
+shared `mncs.std.text_scan.v1` equality, suffix, and ASCII-folded equality
+operations; Rust no longer maps them to nominal name/extension enums before
+the production call. The adapter keeps at most 64 leading and trailing bytes
+and the full leading-view length. Configured exclusion-list membership remains
+a host-observed boolean. Rust retains target metadata and directory identity
+acquisition, deterministic ordering, recursion, and file reads. The independent
+Rust name and traversal decisions remain available as a differential reference.
+Parity tests compare both discovery results on the same filesystem tree, and a
+CLI test confirms that an excluded `target/` and an uppercase `.MNCS` file use
+the native production path.
 Mechanism (directory enumeration beyond one level, metadata, symlink
 inspection) is B (DOC-P-008…014). `fs_list` covers one level with kinds
 (file/dir/other); multi-level navigation handles are not exposed.

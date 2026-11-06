@@ -43,6 +43,31 @@ const POLICY_STEP_BUDGET: u64 = 32_768;
 const DELIMITER_STATE_WIDTH: usize = 1_024;
 const DELIMITER_WINDOW_WIDTH: usize = 64;
 const FAMILY_ARTIFACT: &[u8] = include_bytes!("../mncs/doctor/family.backend.json");
+const DISCOVERY_TEXT_WIDTH: usize = 64;
+
+fn discovery_prefix(value: &str) -> doctor_version::TextView {
+    let bytes = value.as_bytes();
+    doctor_version::TextView {
+        bytes: bytes[..bytes.len().min(DISCOVERY_TEXT_WIDTH)].to_vec(),
+        length: bytes.len() as u64,
+    }
+}
+
+fn discovery_suffix(value: &str) -> doctor_version::TextView {
+    let bytes = value.as_bytes();
+    let start = bytes.len().saturating_sub(DISCOVERY_TEXT_WIDTH);
+    doctor_version::TextView {
+        bytes: bytes[start..].to_vec(),
+        length: bytes.len().saturating_sub(start) as u64,
+    }
+}
+
+fn discovery_name(value: &str) -> doctor_version::NameView {
+    doctor_version::NameView {
+        prefix: discovery_prefix(value),
+        suffix: discovery_suffix(value),
+    }
+}
 
 struct ModuleSpec {
     key: &'static str,
@@ -925,7 +950,8 @@ impl DoctorMncsRuntime {
         }
     }
 
-    /// Decide directory traversal policy from host-acquired facts.
+    /// Decide directory traversal policy from host-acquired facts. MNCS
+    /// classifies the bounded name view through the shared Stdlib scanner.
     pub fn discovery_directory_decision(
         &self,
         facts: DirectoryFacts,
@@ -933,7 +959,7 @@ impl DoctorMncsRuntime {
         let decision = doctor_version::directory_decision(
             &self.session,
             doctor_version::DirectoryDecisionInput {
-                name: facts.name,
+                name: discovery_name(&facts.name),
                 extra_excluded: facts.extra_excluded,
                 is_symlink: facts.is_symlink,
                 follow_symlink: facts.follow_symlink,
@@ -989,13 +1015,13 @@ impl DoctorMncsRuntime {
         }
     }
 
-    /// Classify a host-observed file name/extension pair.
+    /// Classify a host-observed file name/extension pair in MNCS.
     pub fn discovery_file_class(&self, facts: FileFacts) -> Result<FileClass, RuntimeError> {
         let class = doctor_version::file_class(
             &self.session,
             doctor_version::FileClassInput {
-                name: facts.name,
-                extension: facts.extension,
+                name: discovery_name(&facts.name),
+                extension: discovery_prefix(&facts.extension),
             },
             mncs_embed::CallOptions::budgeted(POLICY_STEP_BUDGET),
         )
