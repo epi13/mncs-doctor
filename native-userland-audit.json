@@ -5,13 +5,19 @@
   "canonical_mncs_surfaces": [
     "doctor policy modules and remediation contracts",
     "directory name exclusion classification over bounded text views",
-    "manifest and source file classification through shared Stdlib text scanning"
+    "manifest and source file classification through shared Stdlib text scanning",
+    "doctor.scanner.v1 BOM and newline classification consumed by production inventory and health checks"
   ],
   "host_canonical_responsibilities": [
     {
       "area": "directory-entry name and extension classification",
       "classification": "native production policy with retained independent Rust oracle",
       "eliminating_capability": "completed by doctor.discovery.v1 using mncs.std.text_scan.v1"
+    },
+    {
+      "area": "source BOM and newline-style classification",
+      "classification": "native production scanner with retained independent Rust oracle",
+      "eliminating_capability": "completed by doctor.scanner.v1; its result feeds discovery and health"
     },
     {
       "area": "Rust application CLI, traversal, metadata, permissions, and symlink inspection",

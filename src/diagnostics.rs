@@ -719,6 +719,7 @@ mod tests {
             len: bytes.len() as u64,
             newline: detect_newline(&bytes),
             has_bom: false,
+            native_scan: None,
             mode: None,
             is_symlink: false,
             text: Some(text.to_owned()),

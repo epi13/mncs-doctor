@@ -569,6 +569,7 @@ mod tests {
             len: 200,
             newline: crate::discovery::NewlineStyle::None,
             has_bom: false,
+            native_scan: None,
             mode: None,
             is_symlink: false,
         };
@@ -599,6 +600,7 @@ mod tests {
             len: 0,
             newline: crate::discovery::NewlineStyle::None,
             has_bom: false,
+            native_scan: None,
             mode: None,
             is_symlink: false,
         };

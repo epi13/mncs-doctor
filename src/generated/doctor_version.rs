@@ -6,10 +6,10 @@ use serde_json::{json, Map, Value};
 pub const GENERATOR_VERSION: &str = "mncs-host-bindings/0.3";
 pub const MODULE_IDENTITY: &str = "doctor.family.v1";
 pub const INTERFACE_IDENTITY: &str =
-    "5e2df94f05514d2168158e0aa97b83fb29273832b79f65bcdf8331f2c539c13c";
+    "e278e9d295a8852ee8b44fe0550ed6860603c4e6fb6eb3847c75b59d892a0c36";
 pub const TYPED_CALL_SCHEMA_VERSION: &str = "mncs.typed-call/1";
 pub const BINDING_CONTENT_IDENTITY: &str =
-    "97c9b24533b9ca01ae522402beb535539f3be1a92a4d74ac65877e0a972df0b9";
+    "b9442ac9d8826494ad3f2260425942daf3a0ce4fae561f7d34853b686497fab0";
 
 trait HostValue {
     fn host_value(&self) -> Value;
@@ -769,6 +769,41 @@ impl RetryVerdict {
             other => Err(EmbedError::new(
                 "binding_decode",
                 format!("unknown RetryVerdict variant {other}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScannerNewlineStyle {
+    _None,
+    Lf,
+    Crlf,
+    Mixed,
+}
+
+impl HostValue for ScannerNewlineStyle {
+    fn host_value(&self) -> Value {
+        let variant = match self {
+            Self::_None => "None",
+            Self::Lf => "Lf",
+            Self::Crlf => "Crlf",
+            Self::Mixed => "Mixed",
+        };
+        json!({"finite": {"type": "ScannerNewlineStyle", "variant": variant}})
+    }
+}
+
+impl ScannerNewlineStyle {
+    fn from_host_value(value: &Value) -> Result<Self, EmbedError> {
+        match finite_variant(value)? {
+            "None" => Ok(Self::_None),
+            "Lf" => Ok(Self::Lf),
+            "Crlf" => Ok(Self::Crlf),
+            "Mixed" => Ok(Self::Mixed),
+            other => Err(EmbedError::new(
+                "binding_decode",
+                format!("unknown ScannerNewlineStyle variant {other}"),
             )),
         }
     }
@@ -4581,6 +4616,7 @@ impl ScalarStep {
 pub struct ScannerStreamResult {
     pub byte_state: Vec<u64>,
     pub header_result: HeaderScanResult,
+    pub newline_style: ScannerNewlineStyle,
 }
 
 impl HostValue for ScannerStreamResult {
@@ -4588,6 +4624,7 @@ impl HostValue for ScannerStreamResult {
         json!({"record": {"type": "ScannerStreamResult", "fields": {
             "byte_state": json!({"sequence": {"values": self.byte_state.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}}),
             "header_result": self.header_result.host_value(),
+            "newline_style": self.newline_style.host_value(),
         }}})
     }
 }
@@ -4608,9 +4645,15 @@ impl ScannerStreamResult {
                 .get("header_result")
                 .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
         )?;
+        let newline_style = ScannerNewlineStyle::from_host_value(
+            fields
+                .get("newline_style")
+                .ok_or_else(|| EmbedError::new("binding_decode", "missing record field"))?,
+        )?;
         Ok(Self {
             byte_state,
             header_result,
+            newline_style,
         })
     }
 }
@@ -5867,6 +5910,23 @@ pub fn classify_directory_name(
     )?;
     let value = returned_value(&output)?;
     Ok(DirectoryName::from_host_value(&value)?)
+}
+
+pub fn classify_newline(
+    session: &Session,
+    input: Vec<u64>,
+    options: CallOptions,
+) -> Result<ScannerNewlineStyle, EmbedError> {
+    let arguments = serde_json::to_string(&vec![json!({"sequence": {"values": input.iter().map(|item| json!({"integer": {"value": item, "type": {"bits": 64, "signed": false}}})).collect::<Vec<_>>()}})]).map_err(|error| EmbedError::new("binding_encode", error.to_string()))?;
+    let output = typed_call(
+        session,
+        "doctor.scanner.v1",
+        "classify_newline",
+        &arguments,
+        options,
+    )?;
+    let value = returned_value(&output)?;
+    Ok(ScannerNewlineStyle::from_host_value(&value)?)
 }
 
 pub fn classify_process_verdict(

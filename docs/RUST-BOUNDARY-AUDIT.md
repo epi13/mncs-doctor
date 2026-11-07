@@ -87,11 +87,13 @@ per 64-byte source window carries both newline and header state, so header
 facts reuse the existing byte-ingress pass. Its 1,016-entry opener stack
 reports capacity exhaustion as `DOC109`, never a balanced result. Rust retains
 Unicode span projection, diagnostic text, and semantic language
-diagnostics; independent host header and delimiter implementations are
-compiled only for tests and parity checks. Header parsing remains Doctor's
-hygiene contract; reusable semantic source-profile inference is still an
-upstream Language pressure (DOC-P-005), while deeper language diagnostics
-remain upstream-owned (DOC-P-001/020).
+diagnostics. Discovery stores the native BOM/newline classification in the
+inventory before health checks consume it, and diagnostics reuse the in-memory
+scan summary instead of repeating byte classification. The independent host
+newline, header, and delimiter implementations remain references for parity
+tests. Header parsing remains Doctor's hygiene contract; reusable semantic
+source-profile inference is still an upstream Language pressure (DOC-P-005),
+while deeper language diagnostics remain upstream-owned (DOC-P-001/020).
 
 ### `report.rs` — A (policy) + D (rendering)
 `exit_for` lives in `mncs/doctor/report.mncs` with parity over 8
@@ -143,8 +145,12 @@ operations; Rust no longer maps them to nominal name/extension enums before
 the production call. The adapter keeps at most 64 leading and trailing bytes
 and the full leading-view length. Configured exclusion-list membership remains
 a host-observed boolean. Rust retains target metadata and directory identity
-acquisition, deterministic ordering, recursion, and file reads. The independent
-Rust name and traversal decisions remain available as a differential reference.
+acquisition, deterministic ordering, recursion, and byte reads. The production
+reader sends acquired source bytes through `doctor.scanner.v1` and stores its
+BOM/newline result before downstream consumers inspect the inventory; the Rust
+`detect_newline` function remains an independent reference detector. The
+independent Rust name and traversal decisions also remain available as a
+differential reference.
 Parity tests compare both discovery results on the same filesystem tree, and a
 CLI test confirms that an excluded `target/` and an uppercase `.MNCS` file use
 the native production path.

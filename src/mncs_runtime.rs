@@ -1070,19 +1070,11 @@ impl DoctorMncsRuntime {
         self.record_entrypoint("doctor.scanner.v1", "stream_finish")?;
         let state: [u64; 6] = state_array(result.byte_state)?;
         let header = header_scan_result_from_native(result.header_result)?;
-        let styles = u64::from(state[2] > 0) + u64::from(state[3] > 0) + u64::from(state[4] > 0);
-        let newline = if styles == 0 {
-            NewlineStyle::None
-        } else if styles > 1 {
-            NewlineStyle::Mixed
-        } else if state[3] > 0 {
-            NewlineStyle::Crlf
-        } else if state[2] > 0 {
-            NewlineStyle::Lf
-        } else {
-            // The host newline enum has no native-only style; preserve its
-            // historical None result for a file containing only CR bytes.
-            NewlineStyle::None
+        let newline = match result.newline_style {
+            doctor_version::ScannerNewlineStyle::_None => NewlineStyle::None,
+            doctor_version::ScannerNewlineStyle::Lf => NewlineStyle::Lf,
+            doctor_version::ScannerNewlineStyle::Crlf => NewlineStyle::Crlf,
+            doctor_version::ScannerNewlineStyle::Mixed => NewlineStyle::Mixed,
         };
         Ok(ScanSummary {
             has_bom: state[1] == 1,
@@ -1792,6 +1784,40 @@ mod tests {
             .entrypoints
             .iter()
             .any(|entrypoint| entrypoint == "doctor.scanner.v1::stream_finish"));
+    }
+
+    #[test]
+    fn native_newline_style_matches_independent_edge_case_expectations() {
+        let runtime = DoctorMncsRuntime::new().expect("production policy runtime");
+        // Expectations are literal behavioral contracts, independent of the
+        // classifier implementation. Bare CR alone remains `none`; when it
+        // accompanies LF or CRLF it contributes to a mixed-style result.
+        let cases: &[(&[u8], NewlineStyle, u64, u64, u64, usize)] = &[
+            (b"", NewlineStyle::None, 0, 0, 0, 0),
+            (b"a\nb", NewlineStyle::Lf, 1, 0, 0, 1),
+            (b"a\r\nb", NewlineStyle::Crlf, 0, 1, 0, 1),
+            (b"a\r\nb\nc", NewlineStyle::Mixed, 1, 1, 0, 1),
+            (b"a\rb", NewlineStyle::None, 0, 0, 1, 1),
+            (b"a\nb\rc", NewlineStyle::Mixed, 1, 0, 1, 1),
+            (b"a\r\nb\rc", NewlineStyle::Mixed, 0, 1, 1, 1),
+        ];
+        for &(bytes, expected, lf, crlf, bare_cr, chunks) in cases {
+            let summary = runtime.scan_bytes(bytes).expect("scan newline sample");
+            assert_eq!(summary.newline, expected, "input {bytes:?}");
+            assert_eq!(summary.bare_lf, lf, "input {bytes:?}");
+            assert_eq!(summary.crlf, crlf, "input {bytes:?}");
+            assert_eq!(summary.bare_cr, bare_cr, "input {bytes:?}");
+            assert_eq!(summary.chunks, chunks, "input {bytes:?}");
+        }
+
+        let mut boundary = vec![b'x'; 63];
+        boundary.extend_from_slice(b"\r\n");
+        let summary = runtime.scan_bytes(&boundary).expect("scan split CRLF");
+        assert_eq!(summary.newline, NewlineStyle::Crlf);
+        assert_eq!(summary.crlf, 1);
+        assert_eq!(summary.bare_lf, 0);
+        assert_eq!(summary.bare_cr, 0);
+        assert_eq!(summary.chunks, 2);
     }
 
     #[test]

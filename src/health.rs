@@ -198,7 +198,7 @@ fn check_newline_encoding(
             ),
             (
                 "mixed line endings",
-                "Mixed LF/CRLF endings complicate diffs and spans.",
+                "Different LF, CRLF, or bare-CR endings complicate diffs and spans.",
                 "Normalize to LF.",
             ),
         ];
@@ -1063,6 +1063,7 @@ mod tests {
             len: bytes.len() as u64,
             newline,
             has_bom,
+            native_scan: None,
             mode: None,
             is_symlink: false,
         }
