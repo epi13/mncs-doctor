@@ -2,9 +2,10 @@
 //!
 //! Doctor owns project-level discovery: locating the workspace root,
 //! enumerating MNCS sources and manifests, applying exclusion policy, and
-//! producing a deterministic inventory. It never interprets file contents
-//! beyond the byte-level facts recorded here (newline style, BOM, size,
-//! content fingerprint); header semantics live in [`crate::diagnostics`].
+//! producing a deterministic inventory. The host acquires source bytes and
+//! filesystem facts; the production MNCS scanner classifies BOM, newline, and
+//! shallow header facts, while Rust retains its independent reference scan.
+//! Size, content digest, permissions, and paths remain host-acquired facts.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -15,6 +16,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::mncs_runtime::ScanSummary;
 
 /// Marker files that identify an MNCS workspace root (first hit wins, in
 /// walk-up order from the start directory).
@@ -204,7 +207,8 @@ impl fmt::Display for NewlineStyle {
     }
 }
 
-/// Detect newline style from raw bytes.
+/// Reference newline detector used by non-production discovery and parity
+/// tests. Production inventory uses the result of the MNCS source scanner.
 pub fn detect_newline(bytes: &[u8]) -> NewlineStyle {
     let mut crlf = 0usize;
     let mut lf = 0usize;
@@ -257,6 +261,11 @@ pub struct SourceFile {
     /// UTF-8 text when the file is valid UTF-8.
     #[serde(skip)]
     pub text: Option<String>,
+    /// Native scan facts captured during production discovery. The summary is
+    /// derived from `bytes`; it is omitted from the inventory cache and is
+    /// recomputed when a cached source is explicitly rescanned.
+    #[serde(skip)]
+    pub native_scan: Option<ScanSummary>,
     /// SHA-256 of `bytes`.
     pub sha256: String,
     /// Byte length.
@@ -455,15 +464,55 @@ pub fn discover(root: &Path, options: &DiscoveryOptions) -> Result<Inventory, Di
     )
 }
 
-/// Discover using explicit host-facts → policy callbacks. Production Doctor
-/// supplies MNCS callbacks; `discover` above keeps an independent Rust
-/// reference policy for differential tests and non-production callers.
+/// Discover using explicit host-facts → policy callbacks. This reference
+/// reader keeps the independently implemented Rust byte facts; production
+/// Doctor uses `discover_with_policy_and_scan` so native scan results enter
+/// the inventory before consumers read it.
 pub fn discover_with_policy(
     root: &Path,
     options: &DiscoveryOptions,
     directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
     file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
     symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
+) -> Result<Inventory, DiscoveryError> {
+    discover_with_policy_impl(
+        root,
+        options,
+        directory_policy,
+        file_policy,
+        symlink_policy,
+        None,
+    )
+}
+
+/// Discover with native source-byte facts returned by the caller's MNCS
+/// scanner. Filesystem traversal and byte acquisition remain host effects;
+/// scanner failures fail discovery and never fall back to Rust classification.
+pub fn discover_with_policy_and_scan(
+    root: &Path,
+    options: &DiscoveryOptions,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
+    scanner_policy: &dyn Fn(&[u8]) -> Result<ScanSummary, String>,
+) -> Result<Inventory, DiscoveryError> {
+    discover_with_policy_impl(
+        root,
+        options,
+        directory_policy,
+        file_policy,
+        symlink_policy,
+        Some(scanner_policy),
+    )
+}
+
+fn discover_with_policy_impl(
+    root: &Path,
+    options: &DiscoveryOptions,
+    directory_policy: &dyn Fn(DirectoryFacts) -> Result<DirectoryDecision, String>,
+    file_policy: &dyn Fn(FileFacts) -> Result<FileClass, String>,
+    symlink_policy: &dyn Fn(SymlinkFacts) -> Result<SymlinkDecision, String>,
+    scanner_policy: Option<&dyn Fn(&[u8]) -> Result<ScanSummary, String>>,
 ) -> Result<Inventory, DiscoveryError> {
     let topology = discover_topology_with_policy(
         root,
@@ -475,7 +524,13 @@ pub fn discover_with_policy(
     let mut sources = Vec::new();
     for candidate in &topology.sources {
         let path = root.join(&candidate.relative);
-        sources.push(read_source_file(root, &path, candidate.is_symlink)?);
+        let source = match scanner_policy {
+            Some(scanner) => {
+                read_source_file_with_scan(root, &path, candidate.is_symlink, scanner)?
+            }
+            None => read_source_file(root, &path, candidate.is_symlink)?,
+        };
+        sources.push(source);
     }
     sources.sort_by(|a: &SourceFile, b: &SourceFile| a.relative.cmp(&b.relative));
     let files_rescanned = sources.len();
@@ -929,27 +984,67 @@ fn rust_file_class(facts: FileFacts) -> FileClass {
     FileClass::Ignore
 }
 
-/// Read one already-identified source without traversing its repository.
+/// Read one source using the independent host reference scan. Production
+/// inventory uses `read_source_file_with_scan`.
 pub fn read_source_file(
     root: &Path,
     path: &Path,
     is_symlink: bool,
 ) -> Result<SourceFile, DiscoveryError> {
     let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
+    let newline = detect_newline(&bytes);
+    let has_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    Ok(source_file_from_bytes(
+        root, path, is_symlink, bytes, newline, has_bom, None,
+    ))
+}
+
+/// Read one identified source and record the native scanner result alongside
+/// the host-acquired bytes. A scanner failure is surfaced as a discovery
+/// policy error; no host newline or BOM fallback is used.
+pub fn read_source_file_with_scan(
+    root: &Path,
+    path: &Path,
+    is_symlink: bool,
+    scanner: &dyn Fn(&[u8]) -> Result<ScanSummary, String>,
+) -> Result<SourceFile, DiscoveryError> {
+    let bytes = fs::read(path).map_err(|e| io_err(path, e))?;
+    let scan = scanner(&bytes).map_err(DiscoveryError::Policy)?;
+    Ok(source_file_from_bytes(
+        root,
+        path,
+        is_symlink,
+        bytes,
+        scan.newline,
+        scan.has_bom,
+        Some(scan),
+    ))
+}
+
+fn source_file_from_bytes(
+    root: &Path,
+    path: &Path,
+    is_symlink: bool,
+    bytes: Vec<u8>,
+    newline: NewlineStyle,
+    has_bom: bool,
+    native_scan: Option<ScanSummary>,
+) -> SourceFile {
     let mode = file_mode(path);
     let text = String::from_utf8(bytes.clone()).ok();
-    Ok(SourceFile {
+    SourceFile {
         relative: rel_string(root, path),
         path: path.to_path_buf(),
         sha256: fingerprint(&bytes),
         len: bytes.len() as u64,
-        newline: detect_newline(&bytes),
-        has_bom: bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
+        newline,
+        has_bom,
         mode,
         is_symlink,
         bytes,
         text,
-    })
+        native_scan,
+    }
 }
 
 fn file_mode(path: &Path) -> Option<u32> {

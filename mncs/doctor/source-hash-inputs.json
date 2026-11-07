@@ -6,7 +6,7 @@
   "family_source": "mncs/doctor_family.mncs",
   "family_module": "doctor.family.v1",
   "family_artifact": "mncs/doctor/family.backend.json",
-  "family_artifact_sha256": "107e33b673d72abc82bb06e6dabb01cf8f686ce165cf0edb07940f051f11d74b",
+  "family_artifact_sha256": "71c3f417544676999fc0f822cf27ee77e93fa1ff1bac3dcada008fd64e414092",
   "digest_module": "mncs.std.sha256.v1",
   "digest_backend": "mncs-cranelift",
   "digest_artifact": "mncs/doctor/source-sha256.backend.json",

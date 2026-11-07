@@ -101,7 +101,22 @@ record ScannerStreamState {
 
 record ScannerStreamResult {
     byte_state: [u64; 6],
+    newline_style: ScannerNewlineStyle,
     header_result: HeaderScanResult
+}
+
+enum ScannerNewlineStyle { None, Lf, Crlf, Mixed }
+
+// The scanner owns newline-style classification. A CR-only file retains
+// Doctor's existing `none` result; bare CR contributes to `mixed` only when
+// another recognized line-ending form is present.
+fn classify_newline(state: [u64; 6]) -> (result: ScannerNewlineStyle) {
+    let styles: u64 = ((state[2] > 0) as u64) + ((state[3] > 0) as u64) + ((state[4] > 0) as u64);
+    if styles == 0 { return ScannerNewlineStyle.None; }
+    if styles > 1 { return ScannerNewlineStyle.Mixed; }
+    if state[3] > 0 { return ScannerNewlineStyle.Crlf; }
+    if state[2] > 0 { return ScannerNewlineStyle.Lf; }
+    return ScannerNewlineStyle.None;
 }
 
 fn header_init() -> (result: HeaderScanState) {
@@ -412,8 +427,10 @@ fn stream_feed(bytes: [byte; up_to 64], state: ScannerStreamState) -> (result: S
 }
 
 fn stream_finish(state: ScannerStreamState) -> (result: ScannerStreamResult) {
+    let byte_state: [u64; 6] = finish(state.byte_state);
     return ScannerStreamResult {
-        byte_state: finish(state.byte_state),
+        byte_state: byte_state,
+        newline_style: classify_newline(byte_state),
         header_result: header_finish(state.header_state)
     };
 }

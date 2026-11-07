@@ -5,7 +5,10 @@ use std::fs;
 mod common;
 
 use common::{read_bytes, run, stage, stdout_json};
-use mncs_doctor::discovery::{discover, discover_with_policy, DiscoveryOptions};
+use mncs_doctor::discovery::{
+    detect_newline, discover, discover_with_policy, discover_with_policy_and_scan,
+    DiscoveryOptions, NewlineStyle,
+};
 use mncs_doctor::mncs_runtime::DoctorMncsRuntime;
 
 #[test]
@@ -131,6 +134,67 @@ fn production_discovery_classifies_raw_names_with_native_policy() {
         .unwrap()
         .iter()
         .any(|entrypoint| entrypoint == "doctor.discovery.v1::file_class"));
+}
+
+#[test]
+fn production_inventory_and_health_use_native_newline_classification() {
+    let root = stage("repos/healthy");
+    let bytes = b"mncs 0.18;\r\nmodule native_newline;\r";
+    fs::write(root.join("src/native-newline.mncs"), bytes).unwrap();
+
+    // The independent Rust detector remains an oracle for its historical
+    // LF/CRLF contract. Production uses the scanner's explicit bare-CR rule.
+    assert_eq!(detect_newline(bytes), NewlineStyle::Crlf);
+    let options = DiscoveryOptions::default();
+    let policy = DoctorMncsRuntime::new().unwrap();
+    let inventory = discover_with_policy_and_scan(
+        &root,
+        &options,
+        &|facts| {
+            policy
+                .discovery_directory_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_file_class(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|facts| {
+            policy
+                .discovery_symlink_decision(facts)
+                .map_err(|error| error.to_string())
+        },
+        &|bytes| policy.scan_bytes(bytes).map_err(|error| error.to_string()),
+    )
+    .unwrap();
+    let source = inventory
+        .sources
+        .iter()
+        .find(|source| source.relative == "src/native-newline.mncs")
+        .expect("native newline source");
+    assert_eq!(source.newline, NewlineStyle::Mixed);
+    assert_eq!(source.native_scan.unwrap().newline, NewlineStyle::Mixed);
+
+    // The production CLI consumes the inventory fact in the health check,
+    // proving the native result reaches a real downstream consumer.
+    let out = run(&root, &["doctor", "--root", ".", "--json"]);
+    let report = stdout_json(&out);
+    let newline_check = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "newline-encoding")
+        .expect("newline health check");
+    assert_eq!(newline_check["status"], "warning");
+    assert!(newline_check["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|finding| {
+            finding["path"] == "src/native-newline.mncs"
+                && finding["message"] == "mixed line endings"
+        }));
 }
 
 #[cfg(unix)]

@@ -21,8 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use mncs_doctor::diagnostics::{Diagnostic, LanguageBackend, ScannerBackend};
 use mncs_doctor::discovery::{
-    discover_topology_with_policy, discover_with_policy, find_root, read_source_file,
-    DiscoveryOptions, Inventory, SourceFile, SymlinkFacts, TopologySnapshot,
+    discover_topology_with_policy, discover_with_policy_and_scan, find_root,
+    read_source_file_with_scan, DiscoveryOptions, Inventory, SourceFile, SymlinkFacts,
+    TopologySnapshot,
 };
 use mncs_doctor::fix::{
     plan_workspace_with_mncs_policy, providers_for_root, repair_to_fixpoint_with_diagnose,
@@ -234,7 +235,7 @@ fn discover_with_mncs_policy(
     options: &DiscoveryOptions,
     policy: &DoctorMncsRuntime,
 ) -> Result<mncs_doctor::discovery::Inventory, String> {
-    discover_with_policy(
+    discover_with_policy_and_scan(
         root,
         options,
         &|facts| {
@@ -252,6 +253,7 @@ fn discover_with_mncs_policy(
                 .discovery_symlink_decision(facts)
                 .map_err(|error| error.to_string())
         },
+        &|bytes| policy.scan_bytes(bytes).map_err(|error| error.to_string()),
     )
     .map_err(|error| error.to_string())
 }
@@ -470,19 +472,22 @@ fn discover_incremental_with_mncs_policy(
             || !cached_by_relative.contains_key(&candidate.relative);
         if should_rescan {
             let path = root.join(&candidate.relative);
-            let refreshed = match read_source_file(root, &path, candidate.is_symlink) {
-                Ok(source) => source,
-                Err(error) => {
-                    let mut inventory = discover_with_mncs_policy(root, options, policy)?;
-                    let identity = write_inventory_cache(root, &inventory, options, policy)?;
-                    inventory.metrics.cache_identity = Some(identity);
-                    inventory.metrics.invalidation_reason = Some(format!(
-                        "topology_changed:cannot rescan {}: {error}",
-                        candidate.relative
-                    ));
-                    return Ok(inventory);
-                }
-            };
+            let refreshed =
+                match read_source_file_with_scan(root, &path, candidate.is_symlink, &|bytes| {
+                    policy.scan_bytes(bytes).map_err(|error| error.to_string())
+                }) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        let mut inventory = discover_with_mncs_policy(root, options, policy)?;
+                        let identity = write_inventory_cache(root, &inventory, options, policy)?;
+                        inventory.metrics.cache_identity = Some(identity);
+                        inventory.metrics.invalidation_reason = Some(format!(
+                            "topology_changed:cannot rescan {}: {error}",
+                            candidate.relative
+                        ));
+                        return Ok(inventory);
+                    }
+                };
             sources.push(refreshed);
             rescanned += 1;
         } else if let Some(mut source) = cached_by_relative.get(&candidate.relative).cloned() {
@@ -553,9 +558,12 @@ fn diagnose_one_with_mncs_policy(
     policy: &DoctorMncsRuntime,
 ) -> Result<Vec<Diagnostic>, String> {
     let scanner = ScannerBackend;
-    let scan = policy
-        .scan_bytes(&file.bytes)
-        .map_err(|error| format!("MNCS byte scanner failed for {}: {error}", file.relative))?;
+    let scan = match file.native_scan {
+        Some(summary) => summary,
+        None => policy
+            .scan_bytes(&file.bytes)
+            .map_err(|error| format!("MNCS byte scanner failed for {}: {error}", file.relative))?,
+    };
     let delimiters = policy.scan_delimiters(&file.bytes).map_err(|error| {
         format!(
             "MNCS delimiter scanner failed for {}: {error}",
